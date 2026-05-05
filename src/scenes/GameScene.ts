@@ -153,13 +153,6 @@ export class GameScene extends Phaser.Scene {
       }).setOrigin(0.5, 0.5);
     }
 
-    // (dummy block to satisfy replacement — original forEach body closed here)
-    if (false) {
-      const layout = { x: 0, y: 0, rotation: 0, side: 'bottom' as const };
-      const tile = this.board.getTile(0);
-      void layout; void tile;
-      }
-
     // Center logo
     const cx = BOARD_ORIGIN_X + boardW / 2;
     const cy = BOARD_ORIGIN_Y + boardW / 2;
