@@ -62,7 +62,14 @@ export class Board {
 
     // Bottom row: tiles 0 (Go, right corner) → 10 (Jail, left corner), right-to-left
     for (let i = 0; i <= 10; i++) {
-      const x = BOARD_ORIGIN_X + boardW - (i === 0 ? CORNER_SIZE / 2 : CORNER_SIZE + (i - 1) * TILE_W + TILE_W / 2);
+      let x: number;
+      if (i === 0) {
+        x = BOARD_ORIGIN_X + boardW - CORNER_SIZE / 2;        // right corner
+      } else if (i === 10) {
+        x = BOARD_ORIGIN_X + CORNER_SIZE / 2;                 // left corner
+      } else {
+        x = BOARD_ORIGIN_X + boardW - CORNER_SIZE - (i - 1) * TILE_W - TILE_W / 2;
+      }
       layouts[i] = { x, y: BOARD_ORIGIN_Y + boardW - CORNER_SIZE / 2, rotation: 0, side: 'bottom' };
     }
 
@@ -74,7 +81,14 @@ export class Board {
 
     // Top row: tiles 20 (Free Parking) → 30 (Go to Jail), left-to-right
     for (let i = 20; i <= 30; i++) {
-      const x = BOARD_ORIGIN_X + (i === 20 ? CORNER_SIZE / 2 : CORNER_SIZE + (i - 21) * TILE_W + TILE_W / 2);
+      let x: number;
+      if (i === 20) {
+        x = BOARD_ORIGIN_X + CORNER_SIZE / 2;                 // left corner
+      } else if (i === 30) {
+        x = BOARD_ORIGIN_X + boardW - CORNER_SIZE / 2;        // right corner
+      } else {
+        x = BOARD_ORIGIN_X + CORNER_SIZE + (i - 21) * TILE_W + TILE_W / 2;
+      }
       layouts[i] = { x, y: BOARD_ORIGIN_Y + CORNER_SIZE / 2, rotation: 180, side: 'top' };
     }
 

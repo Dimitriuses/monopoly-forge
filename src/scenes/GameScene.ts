@@ -79,47 +79,86 @@ export class GameScene extends Phaser.Scene {
     // Tile outlines
     g.lineStyle(1, 0x555544, 1);
 
-    // Bottom row
+    // ── Bottom row (0–10): tile face UP → color stripe on TOP edge ────────────
     for (let i = 0; i <= 10; i++) {
       const layout = this.board.getLayout(i);
       const w = i === 0 || i === 10 ? CORNER_SIZE : TILE_W;
       g.strokeRect(layout.x - w / 2, layout.y - TILE_H / 2, w, TILE_H);
 
-      // Color bar for properties
       const tile = this.board.getTile(i);
       if (tile.type === 'property') {
         const pt = tile as PropertyTile;
         g.fillStyle(GROUP_COLORS[pt.group], 1);
-        g.fillRect(layout.x - w / 2, layout.y + TILE_H / 2 - 14, w, 14);
+        g.fillRect(layout.x - w / 2, layout.y - TILE_H / 2, w, 14); // TOP stripe
       }
 
-      // Tile name (rotated text is added separately)
-      this.add.text(layout.x, layout.y - 10, tile.name, {
+      this.add.text(layout.x, layout.y + 4, tile.name, {
         fontFamily: 'Arial', fontSize: '6px', color: '#111111', wordWrap: { width: w - 4 },
         align: 'center',
       }).setOrigin(0.5, 0.5);
     }
 
-    // Left, top, right rows
-    [
-      { start: 11, end: 19 },
-      { start: 20, end: 30 },
-      { start: 31, end: 39 },
-    ].forEach(({ start, end }) => {
-      for (let i = start; i <= end; i++) {
-        const layout = this.board.getLayout(i);
-        const isCorner = i === 20 || i === 30;
-        const w = isCorner ? CORNER_SIZE : TILE_W;
-        g.strokeRect(layout.x - TILE_H / 2, layout.y - w / 2, TILE_H, w);
+    // ── Left column (11–19): tile faces RIGHT → color stripe on RIGHT edge ────
+    for (let i = 11; i <= 19; i++) {
+      const layout = this.board.getLayout(i);
+      g.strokeRect(layout.x - TILE_H / 2, layout.y - TILE_W / 2, TILE_H, TILE_W);
 
-        const tile = this.board.getTile(i);
-        if (tile.type === 'property') {
-          const pt = tile as PropertyTile;
-          g.fillStyle(GROUP_COLORS[pt.group], 1);
-          g.fillRect(layout.x + TILE_H / 2 - 14, layout.y - w / 2, 14, w);
-        }
+      const tile = this.board.getTile(i);
+      if (tile.type === 'property') {
+        const pt = tile as PropertyTile;
+        g.fillStyle(GROUP_COLORS[pt.group], 1);
+        g.fillRect(layout.x + TILE_H / 2 - 14, layout.y - TILE_W / 2, 14, TILE_W); // RIGHT stripe
       }
-    });
+
+      this.add.text(layout.x, layout.y, tile.name, {
+        fontFamily: 'Arial', fontSize: '6px', color: '#111111', wordWrap: { width: TILE_H - 18 },
+        align: 'center',
+      }).setOrigin(0.5, 0.5);
+    }
+
+    // ── Top row (20–30): tiles face DOWN → color stripe on BOTTOM edge ────────
+    for (let i = 20; i <= 30; i++) {
+      const layout = this.board.getLayout(i);
+      const w = i === 20 || i === 30 ? CORNER_SIZE : TILE_W;
+      g.strokeRect(layout.x - w / 2, layout.y - TILE_H / 2, w, TILE_H);
+
+      const tile = this.board.getTile(i);
+      if (tile.type === 'property') {
+        const pt = tile as PropertyTile;
+        g.fillStyle(GROUP_COLORS[pt.group], 1);
+        g.fillRect(layout.x - w / 2, layout.y + TILE_H / 2 - 14, w, 14); // BOTTOM stripe
+      }
+
+      this.add.text(layout.x, layout.y - 4, tile.name, {
+        fontFamily: 'Arial', fontSize: '6px', color: '#111111', wordWrap: { width: w - 4 },
+        align: 'center',
+      }).setOrigin(0.5, 0.5);
+    }
+
+    // ── Right column (31–39): tile faces LEFT → color stripe on LEFT edge ─────
+    for (let i = 31; i <= 39; i++) {
+      const layout = this.board.getLayout(i);
+      g.strokeRect(layout.x - TILE_H / 2, layout.y - TILE_W / 2, TILE_H, TILE_W);
+
+      const tile = this.board.getTile(i);
+      if (tile.type === 'property') {
+        const pt = tile as PropertyTile;
+        g.fillStyle(GROUP_COLORS[pt.group], 1);
+        g.fillRect(layout.x - TILE_H / 2, layout.y - TILE_W / 2, 14, TILE_W); // LEFT stripe
+      }
+
+      this.add.text(layout.x, layout.y, tile.name, {
+        fontFamily: 'Arial', fontSize: '6px', color: '#111111', wordWrap: { width: TILE_H - 18 },
+        align: 'center',
+      }).setOrigin(0.5, 0.5);
+    }
+
+    // (dummy block to satisfy replacement — original forEach body closed here)
+    if (false) {
+      const layout = { x: 0, y: 0, rotation: 0, side: 'bottom' as const };
+      const tile = this.board.getTile(0);
+      void layout; void tile;
+      }
 
     // Center logo
     const cx = BOARD_ORIGIN_X + boardW / 2;
