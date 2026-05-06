@@ -9,21 +9,23 @@ export type TurnPhase =
   | 'MOVING'
   | 'LANDING'
   | 'AWAITING_BUY_DECISION'
-  | 'RESOLVING'
   | 'END_TURN';
 
 export class TurnManager {
   private players: Player[];
-  private board: Board;
-  private dice: Dice;
+  private board:   Board;
+  private dice:    Dice;
 
   currentPlayerIndex: number = 0;
   phase: TurnPhase = 'WAITING_FOR_ROLL';
 
+  // Re-entry guard: GameScene sets this; TurnManager checks it
+  private _turnEndedThisRound = false;
+
   constructor(players: Player[], board: Board, dice: Dice) {
     this.players = players;
-    this.board = board;
-    this.dice = dice;
+    this.board   = board;
+    this.dice    = dice;
   }
 
   get currentPlayer(): Player {
@@ -33,6 +35,7 @@ export class TurnManager {
   // ─── Public API ────────────────────────────────────────────────────────────
 
   startTurn(): void {
+    this._turnEndedThisRound = false;
     this.phase = 'WAITING_FOR_ROLL';
     bus.emit('turn:start', { playerId: this.currentPlayer.id });
   }
@@ -69,20 +72,15 @@ export class TurnManager {
   resolveLanding(): void {
     this.phase = 'LANDING';
     const player = this.currentPlayer;
-    const tile = this.board.getTile(player.position);
+    const tile   = this.board.getTile(player.position);
     tile.onLand(player.id);
-    // GameScene handles all resulting bus events and calls endTurn() when done.
   }
 
-  /** Player chose to buy the property they landed on */
   confirmBuy(): void {
-    this.phase = 'END_TURN';
     this.endTurn();
   }
 
-  /** Player declined to buy (auction is M5) */
   declineBuy(): void {
-    this.phase = 'END_TURN';
     this.endTurn();
   }
 
@@ -90,9 +88,9 @@ export class TurnManager {
   payJailFine(player: Player): void {
     if (!player.inJail) return;
     player.pay(50);
-    player.inJail = false;
+    player.inJail   = false;
     player.jailTurns = 0;
-    bus.emit('jail:exit', { playerId: player.id, method: 'fine' });
+    bus.emit('jail:exit',       { playerId: player.id, method: 'fine' });
     bus.emit('ui:notification', { message: `${player.name} paid $50 jail fine.`, type: 'warning' });
     this.phase = 'WAITING_FOR_ROLL';
   }
@@ -101,57 +99,74 @@ export class TurnManager {
   useGetOutOfJailCard(player: Player): void {
     if (!player.inJail || player.getOutOfJailCards <= 0) return;
     player.getOutOfJailCards--;
-    player.inJail = false;
+    player.inJail    = false;
     player.jailTurns = 0;
-    bus.emit('jail:exit', { playerId: player.id, method: 'card' });
+    bus.emit('jail:exit',       { playerId: player.id, method: 'card' });
     bus.emit('ui:notification', { message: `${player.name} used a Get Out of Jail Free card!`, type: 'success' });
     this.phase = 'WAITING_FOR_ROLL';
   }
 
-  /** GameScene calls this after resolving any non-buy landing */
+  /**
+   * The single point where a turn ends.
+   * All GameScene event handlers must call this through the guarded wrapper below.
+   */
   endTurn(): void {
+    if (this._turnEndedThisRound) return;   // ← re-entry guard
+    this._turnEndedThisRound = true;
     this.phase = 'END_TURN';
     bus.emit('turn:end', { playerId: this.currentPlayer.id });
 
     if (this.dice.lastResult?.isDoubles && !this.currentPlayer.inJail) {
+      // Same player rolls again
       this.startTurn();
     } else {
       this.advancePlayer();
     }
   }
 
+  /**
+   * DEV TOOL — force the active player to the given index.
+   * Only works when a tween isn't running (GameScene checks isAnimating first).
+   */
+  forcePlayerTurn(index: number): void {
+    if (index < 0 || index >= this.players.length) return;
+    if (this.players[index].isBankrupt) return;
+    this._turnEndedThisRound = true; // suppress any pending endTurn from the old turn
+    this.currentPlayerIndex  = index;
+    this.startTurn();
+  }
+
   // ─── Private ───────────────────────────────────────────────────────────────
 
   private movePlayer(player: Player, steps: number, isDoubles: boolean): void {
     this.phase = 'MOVING';
-
-    const from = player.position;                 // ← capture BEFORE mutating
+    const from            = player.position;
     const { to, passedGo } = this.board.move(from, steps);
 
     if (passedGo) {
-      this.board.getTile(0).onPass(player.id);    // emits rent:pay reason:'go'
+      this.board.getTile(0).onPass(player.id);  // emits rent:pay reason:'go'
     }
 
     player.position = to;
     bus.emit('player:move', { playerId: player.id, from, to, steps, isDoubles });
-    // GameScene animates, then calls resolveLanding().
   }
 
   private handleJailRoll(player: Player, isDoubles: boolean, _total: number): void {
     if (isDoubles) {
-      player.inJail = false;
-      player.jailTurns = 0;
+      player.inJail        = false;
+      player.jailTurns     = 0;
       player.doublesStreak = 0;
-      bus.emit('jail:exit', { playerId: player.id, method: 'doubles' });
+      bus.emit('jail:exit',       { playerId: player.id, method: 'doubles' });
       bus.emit('ui:notification', { message: `${player.name} rolled doubles — out of jail!`, type: 'success' });
+      // Move WITHOUT a doubles bonus turn (isDoubles=false prevents re-roll)
       this.movePlayer(player, this.dice.lastResult!.total, false);
     } else {
       player.jailTurns++;
       if (player.jailTurns >= 3) {
         player.pay(50);
-        player.inJail = false;
+        player.inJail    = false;
         player.jailTurns = 0;
-        bus.emit('jail:exit', { playerId: player.id, method: 'forced' });
+        bus.emit('jail:exit',       { playerId: player.id, method: 'forced' });
         bus.emit('ui:notification', { message: `${player.name} paid $50 forced jail fine.`, type: 'warning' });
         this.movePlayer(player, this.dice.lastResult!.total, false);
       } else {
@@ -159,19 +174,17 @@ export class TurnManager {
           message: `${player.name} stays in jail (turn ${player.jailTurns}/3).`,
           type: 'warning',
         });
-        this.phase = 'END_TURN';
         this.endTurn();
       }
     }
   }
 
   private sendToJail(player: Player): void {
-    const from = player.position;
-    player.inJail = true;
+    // NOTE: no player:move emitted here — GameScene snaps the token via jail:enter
+    player.inJail    = true;
     player.jailTurns = 0;
-    player.position = 10;
+    player.position  = 10;
     bus.emit('jail:enter', { playerId: player.id, reason: 'doubles' });
-    bus.emit('player:move', { playerId: player.id, from, to: 10, steps: 0, isDoubles: false });
   }
 
   private advancePlayer(): void {

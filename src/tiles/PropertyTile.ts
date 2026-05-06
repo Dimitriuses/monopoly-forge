@@ -11,7 +11,7 @@ export class PropertyTile extends Tile {
   readonly rentTiers: [number, number, number, number, number, number];
 
   ownerId: string | null = null;
-  houses: number = 0; // 0–4
+  houses: number = 0;
   hasHotel: boolean = false;
   isMortgaged: boolean = false;
 
@@ -20,41 +20,48 @@ export class PropertyTile extends Tile {
     if (!def.group || !def.price || !def.houseCost || !def.mortgage || !def.rent) {
       throw new Error(`PropertyTile "${def.name}" is missing required fields.`);
     }
-    this.group = def.group;
-    this.price = def.price;
+    this.group     = def.group;
+    this.price     = def.price;
     this.houseCost = def.houseCost;
-    this.mortgage = def.mortgage;
+    this.mortgage  = def.mortgage;
     this.rentTiers = def.rent;
   }
 
   get currentRent(): number {
     if (this.isMortgaged || !this.ownerId) return 0;
-    if (this.hasHotel) return this.rentTiers[5];
-    return this.rentTiers[this.houses]; // 0–4
+    return this.hasHotel ? this.rentTiers[5] : this.rentTiers[this.houses];
   }
 
   onLand(playerId: string): void {
-    if (!this.ownerId || this.isMortgaged) {
+    // ── Unowned: offer to buy ────────────────────────────────────────────────
+    if (!this.ownerId) {
       bus.emit('property:auction', { tileId: this.id, playerId });
       return;
     }
-    if (this.ownerId === playerId) return; // own property — free
+
+    // ── Mortgaged or own property: free, auto-end turn ───────────────────────
+    if (this.isMortgaged || this.ownerId === playerId) {
+      bus.emit('player:landed', { playerId, tileId: this.id });
+      return;
+    }
+
+    // ── Owned by someone else: pay rent ──────────────────────────────────────
     bus.emit('rent:pay', {
-      debtorId: playerId,
+      debtorId:   playerId,
       creditorId: this.ownerId,
-      amount: this.currentRent,
-      tileId: this.id,
+      amount:     this.currentRent,
+      tileId:     this.id,
     });
   }
 
   override toJSON() {
     return {
       ...super.toJSON(),
-      group: this.group,
-      ownerId: this.ownerId,
-      houses: this.houses,
-      hasHotel: this.hasHotel,
-      isMortgaged: this.isMortgaged,
+      group:      this.group,
+      ownerId:    this.ownerId,
+      houses:     this.houses,
+      hasHotel:   this.hasHotel,
+      isMortgaged:this.isMortgaged,
     };
   }
 }
