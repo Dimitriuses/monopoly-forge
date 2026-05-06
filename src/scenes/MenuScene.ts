@@ -114,6 +114,6 @@ export class MenuScene extends Phaser.Scene {
 
   private startGame(): void {
     this.scene.start('GameScene', { players: this.players });
-    this.scene.launch('UIScene');
+    // UIScene is launched by GameScene once the model is ready
   }
 }
