@@ -107,7 +107,7 @@ export class DiceView {
     // Pips
     const pips = PIP_LAYOUTS[value] ?? [];
     const padding = 7;
-    const cell = (s - padding * 2) / 2;
+    const cell = (s - padding * 2) / 3;  // 3 columns/rows in the pip grid
     const pr = 3.5;
 
     this.g.fillStyle(0x222222, 1);
