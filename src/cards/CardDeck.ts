@@ -35,12 +35,17 @@ export class CardDeck {
     this.draw = rng.shuffle([...cards]);
   }
 
-  drawCard(): Card {
+  drawCard(): Card | undefined {
     if (this.draw.length === 0) {
+      if (this.discard.length === 0) {
+        // All cards are currently held by players (GOOJ cards not yet returned).
+        console.warn('[CardDeck] Both draw and discard piles are empty.');
+        return undefined;
+      }
       this.draw = rng.shuffle(this.discard);
       this.discard = [];
     }
-    return this.draw.pop()!;
+    return this.draw.pop();
   }
 
   returnCard(card: Card): void {

@@ -381,10 +381,18 @@ export class GameScene extends Phaser.Scene {
       this.isAnimating = true;
       this.setRollEnabled(false);
 
-      this.moveTokenStepByStep(playerId, from, steps).then(() => {
-        this.isAnimating = false;
-        this.turnManager.resolveLanding();
-      });
+      this.moveTokenStepByStep(playerId, from, steps)
+        .then(() => {
+          this.isAnimating = false;
+          this.turnManager.resolveLanding();
+        })
+        .catch((err: unknown) => {
+          // Any error during movement or landing must never freeze the game.
+          console.error('[GameScene] Error during movement/landing:', err);
+          this.isAnimating = false;
+          this.notif.show('Something went wrong — skipping turn.', 'danger');
+          this.safeEndTurn(600);
+        });
     });
 
     // ── Dice ──────────────────────────────────────────────────────────────────
@@ -505,16 +513,24 @@ export class GameScene extends Phaser.Scene {
       const player = this.players.find((p) => p.id === playerId)!;
       const deck   = deckType === 'chance' ? this.chanceDeck : this.commDeck;
       const card   = deck.drawCard();
-      if (!card.isGetOutOfJail) deck.returnCard(card);
 
-      // Show the card FIRST — execute effects only after the player dismisses it.
-      // This prevents rent/movement/jail events from firing before the card is visible.
+      // Guard: drawCard() returns undefined when the deck is exhausted with no
+      // discard to refill from (e.g. all GOOJ cards held by players).
+      if (!card) {
+        console.error('[GameScene] drawCard() returned undefined for deck:', deckType);
+        this.safeEndTurn(300);
+        return;
+      }
+
+      // Show the card FIRST — execute effects + return card only after dismissal.
+      // Returning the card immediately (before effects) would allow it to be
+      // re-drawn during the same chain if a card effect lands on another card tile.
       this.scene.launch('CardScene', { card });
       this.scene.get('CardScene').events.once('shutdown', () => {
+        // Return non-GOOJ cards to the discard pile now that they've been used.
+        if (!card.isGetOutOfJail) deck.returnCard(card);
         this.cardEffects.execute(card, player);
         this.pushUIUpdate();
-        // Simple cash/repair effects don't emit their own safeEndTurn, so we
-        // schedule one here. The _turnEndedThisRound guard drops any duplicate.
         this.safeEndTurn(200);
       });
     });
