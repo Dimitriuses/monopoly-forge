@@ -74,11 +74,15 @@ export class CardEffects {
         player.jailTurns = 0;
         bus.emit('jail:enter', { playerId: player.id, reason: 'card' });
         break;
-      case 'goBack':
-        player.position = (player.position - a.spaces + 40) % 40;
-        bus.emit('player:move', { playerId: player.id, to: player.position });
-        this.board.getTile(player.position).onLand(player.id);
+      case 'goBack': {
+        const from = player.position;
+        const to   = (from - a.spaces + 40) % 40;
+        player.position = to;
+        // Pass steps so the animation walks backwards tile-by-tile
+        bus.emit('player:move', { playerId: player.id, from, to, steps: a.spaces, isDoubles: false });
+        // resolveLanding() fires after animation completes — do NOT call onLand here
         break;
+      }
       case 'collectFromBank':
         this.bank.payPlayer(player, a.amount);
         break;
@@ -115,14 +119,17 @@ export class CardEffects {
   }
 
   private advanceTo(player: Player, targetTile: number): void {
-    const from = player.position;
-    if (targetTile <= from && targetTile !== 0) {
-      // Passed Go
+    const from  = player.position;
+    const steps = (targetTile - from + 40) % 40;
+    if (steps === 0) return; // already on the target tile
+
+    // Passed Go when the path wraps around the board
+    if (from + steps >= 40) {
       this.board.getTile(0).onPass(player.id);
     }
     player.position = targetTile;
-    bus.emit('player:move', { playerId: player.id, from, to: targetTile });
-    this.board.getTile(targetTile).onLand(player.id);
+    bus.emit('player:move', { playerId: player.id, from, to: targetTile, steps, isDoubles: false });
+    // resolveLanding() fires after the animation completes — do NOT call onLand here
   }
 }
 

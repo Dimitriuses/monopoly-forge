@@ -51,6 +51,8 @@ export class GameScene extends Phaser.Scene {
   private buyPrompt!:   Phaser.GameObjects.Container;
   private notif!:       Notification;
 
+  /** Incremented on every turn:start — stale safeEndTurn timers check against this */
+  private turnGen = 0;
   /** True while a tween chain is running — blocks roll and force-switch */
   isAnimating = false;
 
@@ -353,18 +355,21 @@ export class GameScene extends Phaser.Scene {
     this.buyPrompt.setVisible(false);
   }
 
-  // ── Safe end-turn wrapper (re-entry protected) ────────────────────────────────
-
+  // ── Safe end-turn (generation-guarded) ───────────────────────────────────────
   /**
    * Schedule endTurn after `delay` ms.
-   * TurnManager's internal _turnEndedThisRound flag prevents double firing.
+   * Captures the current turn generation at call-time; if the generation has
+   * advanced by the time the timer fires (i.e. a new turn already started due
+   * to a faster path), the call is silently dropped.  This prevents stale
+   * delayedCall timers from previous turns from prematurely ending a new turn.
    */
   private safeEndTurn(delay = 0): void {
-    if (delay > 0) {
-      this.time.delayedCall(delay, () => this.turnManager.endTurn());
-    } else {
-      this.turnManager.endTurn();
-    }
+    const gen = this.turnGen;
+    const doEnd = () => {
+      if (this.turnGen === gen) this.turnManager.endTurn();
+    };
+    if (delay > 0) this.time.delayedCall(delay, doEnd);
+    else            doEnd();
   }
 
   // ── Bus event wiring ──────────────────────────────────────────────────────────
@@ -389,6 +394,7 @@ export class GameScene extends Phaser.Scene {
 
     // ── Turn bookkeeping ──────────────────────────────────────────────────────
     bus.on('turn:start', ({ playerId }: { playerId: string }) => {
+      this.turnGen++;                          // ← invalidate all timers from the previous turn
       const player = this.players.find((p) => p.id === playerId)!;
 
       this.setRollEnabled(true);
@@ -499,17 +505,16 @@ export class GameScene extends Phaser.Scene {
       const player = this.players.find((p) => p.id === playerId)!;
       const deck   = deckType === 'chance' ? this.chanceDeck : this.commDeck;
       const card   = deck.drawCard();
-
       if (!card.isGetOutOfJail) deck.returnCard(card);
 
-      // Execute FIRST — may emit jail:enter / rent:pay / tax:pay / player:move
-      // Each of those handlers will call safeEndTurn.
-      // CardScene close will also try safeEndTurn — the guard ignores the duplicate.
-      this.cardEffects.execute(card, player);
-      this.pushUIUpdate();
-
+      // Show the card FIRST — execute effects only after the player dismisses it.
+      // This prevents rent/movement/jail events from firing before the card is visible.
       this.scene.launch('CardScene', { card });
       this.scene.get('CardScene').events.once('shutdown', () => {
+        this.cardEffects.execute(card, player);
+        this.pushUIUpdate();
+        // Simple cash/repair effects don't emit their own safeEndTurn, so we
+        // schedule one here. The _turnEndedThisRound guard drops any duplicate.
         this.safeEndTurn(200);
       });
     });
