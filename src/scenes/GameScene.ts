@@ -273,10 +273,11 @@ export class GameScene extends Phaser.Scene {
   private showBuyPrompt(tileId: number, playerId: string, price: number, tileName: string, baseRent?: number): void {
     const player = this.players.find((p) => p.id === playerId)!;
 
-    // Rebuild dynamic children (keep bg at index 0)
+    // Rebuild dynamic children (keep bg at index 0).
+    // removeAt(1, true) removes AND destroys in one step — calling destroy() first
+    // already removes the child from the container, making a subsequent removeAt() OOB.
     while (this.buyPrompt.length > 1) {
-      (this.buyPrompt.getAt(1) as Phaser.GameObjects.GameObject).destroy();
-      this.buyPrompt.removeAt(1);
+      this.buyPrompt.removeAt(1, true);
     }
 
     const canAfford = player.canAfford(price);
