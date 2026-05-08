@@ -44,7 +44,6 @@ export class TurnManager {
     if (this.phase !== 'WAITING_FOR_ROLL') return;
 
     this.phase = 'ROLLING';
-    console.log(`${this.currentPlayer.name} rolls the dice...`);
     const result = this.dice.roll();
     bus.emit('dice:result', result);
 
@@ -72,9 +71,15 @@ export class TurnManager {
   /** Called by GameScene after the move tween completes */
   resolveLanding(): void {
     this.phase = 'LANDING';
-    console.log(`${this.currentPlayer.name} lands on ${this.board.getTile(this.currentPlayer.position).name}`);
     const player = this.currentPlayer;
-    const tile   = this.board.getTile(player.position);
+
+    // Guard: NaN, Infinity, or any out-of-range value must not reach getTile.
+    if (!Number.isFinite(player.position) || player.position < 0 || player.position > 39) {
+      console.error(`[TurnManager] resolveLanding: ${player.name} position=${player.position} — resetting to 0`);
+      player.position = 0;
+    }
+
+    const tile = this.board.getTile(player.position);
     tile.onLand(player.id);
   }
 
@@ -95,7 +100,6 @@ export class TurnManager {
     bus.emit('jail:exit',       { playerId: player.id, method: 'fine' });
     bus.emit('ui:notification', { message: `${player.name} paid $50 jail fine.`, type: 'warning' });
     this.phase = 'WAITING_FOR_ROLL';
-    console.log(`${player.name} pays $50 jail fine.`);
   }
 
   /** Use a Get Out of Jail Free card */
@@ -107,7 +111,6 @@ export class TurnManager {
     bus.emit('jail:exit',       { playerId: player.id, method: 'card' });
     bus.emit('ui:notification', { message: `${player.name} used a Get Out of Jail Free card!`, type: 'success' });
     this.phase = 'WAITING_FOR_ROLL';
-    console.log(`${player.name} uses a Get Out of Jail Free card.`);
   }
 
   /**
@@ -118,7 +121,6 @@ export class TurnManager {
     if (this._turnEndedThisRound) return;   // ← re-entry guard
     this._turnEndedThisRound = true;
     this.phase = 'END_TURN';
-    console.log(`${this.currentPlayer.name} ends their turn.`);
     bus.emit('turn:end', { playerId: this.currentPlayer.id });
 
     if (this.dice.lastResult?.isDoubles && !this.currentPlayer.inJail) {
@@ -145,7 +147,13 @@ export class TurnManager {
 
   private movePlayer(player: Player, steps: number, isDoubles: boolean): void {
     this.phase = 'MOVING';
-    console.log(`${player.name} moves ${steps} steps.`);
+
+    // Sanitise position — NaN, Infinity, or any out-of-range value cascades.
+    if (!Number.isFinite(player.position) || player.position < 0 || player.position > 39) {
+      console.error(`[TurnManager] movePlayer: ${player.name} position=${player.position} — resetting to 0`);
+      player.position = 0;
+    }
+
     const from            = player.position;
     const { to, passedGo } = this.board.move(from, steps);
 

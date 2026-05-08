@@ -30,27 +30,48 @@ export class Board {
         case 'goToJail':      return new GoToJailTile(def);
         case 'go':            return new GoTile(def);
         case 'freeParking':   return new FreeParkingTile(def);
+        default:
+          throw new Error(
+            `[Board] Unknown tile type "${(def as { type: string }).type}" for id ${def.id}`,
+          );
       }
     });
     this.layoutCache = this.computeLayout();
   }
 
   getTile(index: number): Tile {
-    return this.tiles[index % 40];
+    if (!Number.isFinite(index)) {
+      throw new Error(`[Board] getTile: non-finite index ${index}`);
+    }
+    const i = Math.floor(index) % 40;
+    const tile = this.tiles[i];
+    if (tile === undefined) {
+      throw new Error(`[Board] getTile(${index}): slot ${i} is undefined (tiles.length=${this.tiles.length})`);
+    }
+    return tile;
   }
 
   getLayout(index: number): TileLayout {
-    return this.layoutCache[index % 40];
+    if (!Number.isFinite(index)) {
+      throw new Error(`[Board] getLayout: non-finite index ${index}`);
+    }
+    const i = Math.floor(index) % 40;
+    const layout = this.layoutCache[i];
+    if (layout === undefined) {
+      throw new Error(`[Board] getLayout(${index}): slot ${i} is undefined`);
+    }
+    return layout;
   }
 
-  /**
-   * Returns the board index a player lands on after moving `steps` from `from`,
-   * and flags whether they passed Go.
-   */
   move(from: number, steps: number): { to: number; passedGo: boolean } {
-    const to = (from + steps) % 40;
-    const passedGo = from + steps >= 40;
-    return { to, passedGo };
+    if (!Number.isFinite(from) || !Number.isFinite(steps)) {
+      throw new Error(`[Board] move() non-finite: from=${from}, steps=${steps}`);
+    }
+    const f = Math.floor(from);
+    const s = Math.floor(steps);
+    // Use positive-modulo so negatives never leak through (JS % preserves sign).
+    const to = ((f + s) % 40 + 40) % 40;
+    return { to, passedGo: f + s >= 40 };
   }
 
   // ─── Layout math ─────────────────────────────────────────────────────────────
