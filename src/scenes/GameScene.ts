@@ -378,12 +378,40 @@ export class GameScene extends Phaser.Scene {
   private registerBusListeners(): void {
 
     // ── Movement ──────────────────────────────────────────────────────────────
-    bus.on<MovePayload>('player:move', ({ playerId, from, steps }) => {
+    bus.on<MovePayload>('player:move', ({ playerId, from, to, steps }) => {
+      const mover = this.players.find((p) => p.id === playerId);
+      const moverName = mover?.name ?? playerId;
+      console.log(
+        `[GameScene] player:move received: player=${moverName}, from=${from}, to=${to}, steps=${steps} | ` +
+        `currentTurnPlayer=${this.turnManager.currentPlayer.name}`,
+      );
+      if (mover && mover.id !== this.turnManager.currentPlayer.id) {
+        console.warn(
+          `[GameScene] ⚠️  player:move for ${moverName} but currentPlayer is ` +
+          `${this.turnManager.currentPlayer.name} — card-triggered move on a completed turn?`,
+        );
+      }
       this.isAnimating = true;
       this.setRollEnabled(false);
 
       this.moveTokenStepByStep(playerId, from, steps)
         .then(() => {
+          const currentTurnPlayer = this.turnManager.currentPlayer;
+          const movedPlayer       = this.players.find((p) => p.id === playerId);
+          console.log(
+            `[GameScene] Animation complete: animatedPlayer=${moverName} (pos=${movedPlayer?.position}), ` +
+            `currentTurnPlayer=${currentTurnPlayer.name} (pos=${currentTurnPlayer.position})`,
+          );
+          if (movedPlayer && movedPlayer.id !== currentTurnPlayer.id) {
+            console.error(
+              `[GameScene] 🔴 BUG DETECTED — animation finished for ${moverName} ` +
+              `but turn has already advanced to ${currentTurnPlayer.name}. ` +
+              `resolveLanding() will fire on tile[${currentTurnPlayer.position}] ` +
+              `"${this.board.getTile(currentTurnPlayer.position).name}" ` +
+              `instead of tile[${movedPlayer.position}] ` +
+              `"${this.board.getTile(movedPlayer.position).name}".`,
+            );
+          }
           this.isAnimating = false;
           this.turnManager.resolveLanding();
         })
@@ -523,15 +551,37 @@ export class GameScene extends Phaser.Scene {
         return;
       }
 
-      // Show the card FIRST — execute effects + return card only after dismissal.
-      // Returning the card immediately (before effects) would allow it to be
-      // re-drawn during the same chain if a card effect lands on another card tile.
+      // Return non-GOOJ cards to the discard immediately so the deck is always
+      // self-consistent. Deferring this to the shutdown callback is fragile:
+      // if CardScene never shuts down (stuck / launch no-op on a running scene)
+      // the card is never returned and the deck exhausts after enough draws.
+      if (!card.isGetOutOfJail) deck.returnCard(card);
+
+      // Stop any currently-running CardScene before launching a new one.
+      // This prevents stale once('shutdown') callbacks from previous turns
+      // accumulating on the same scene events object and firing all at once.
+      if (this.scene.isActive('CardScene')) this.scene.stop('CardScene');
+
       this.scene.launch('CardScene', { card });
       this.scene.get('CardScene').events.once('shutdown', () => {
-        // Return non-GOOJ cards to the discard pile now that they've been used.
-        if (!card.isGetOutOfJail) deck.returnCard(card);
+        console.log(`[GameScene] CardScene shutdown → executing card "${card.description}" for ${player.name}`);
         this.cardEffects.execute(card, player);
         this.pushUIUpdate();
+
+        // ⚠️  Cards that trigger movement (advanceTo/advanceToGo/goBack) emit
+        // player:move, which starts an animation. The animation + resolveLanding()
+        // together take (steps × 110 ms). safeEndTurn(200) below fires at a fixed
+        // 200 ms — if steps > 1, it fires before resolveLanding(), advancing the
+        // turn to the next player and causing onLand to fire on the wrong player.
+        const movementTypes = ['advanceTo', 'advanceToGo', 'goBack'];
+        const triggersMove  = movementTypes.includes(card.action.type);
+        if (triggersMove) {
+          console.warn(
+            `[GameScene] ⚠️  Card "${card.description}" (action=${card.action.type}) triggers ` +
+            `a player:move animation. safeEndTurn(200) is scheduled but may fire ` +
+            `BEFORE the animation + resolveLanding() complete, advancing the turn prematurely.`,
+          );
+        }
         this.safeEndTurn(200);
       });
     });

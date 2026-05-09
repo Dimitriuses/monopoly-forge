@@ -37,6 +37,7 @@ export class TurnManager {
   startTurn(): void {
     this._turnEndedThisRound = false;
     this.phase = 'WAITING_FOR_ROLL';
+    console.log(`[TurnManager] startTurn: player=${this.currentPlayer.name} (${this.currentPlayer.id}), position=${this.currentPlayer.position}`);
     bus.emit('turn:start', { playerId: this.currentPlayer.id });
   }
 
@@ -73,6 +74,11 @@ export class TurnManager {
     this.phase = 'LANDING';
     const player = this.currentPlayer;
 
+    console.log(
+      `[TurnManager] resolveLanding: currentPlayer=${player.name} (${player.id}), ` +
+      `position=${player.position}, phase=${this.phase}`,
+    );
+
     // Guard: NaN, Infinity, or any out-of-range value must not reach getTile.
     if (!Number.isFinite(player.position) || player.position < 0 || player.position > 39) {
       console.error(`[TurnManager] resolveLanding: ${player.name} position=${player.position} — resetting to 0`);
@@ -80,6 +86,10 @@ export class TurnManager {
     }
 
     const tile = this.board.getTile(player.position);
+    console.log(
+      `[TurnManager] onLand → tile[${player.position}] "${tile.name}" (${tile.type}) ` +
+      `for player=${player.name}`,
+    );
     tile.onLand(player.id);
   }
 
@@ -118,7 +128,14 @@ export class TurnManager {
    * All GameScene event handlers must call this through the guarded wrapper below.
    */
   endTurn(): void {
-    if (this._turnEndedThisRound) return;   // ← re-entry guard
+    if (this._turnEndedThisRound) {
+      console.warn(
+        `[TurnManager] endTurn BLOCKED by re-entry guard — ` +
+        `player=${this.currentPlayer.name}, phase=${this.phase}`,
+      );
+      return;
+    }
+    console.log(`[TurnManager] endTurn: player=${this.currentPlayer.name}, phase=${this.phase}`);
     this._turnEndedThisRound = true;
     this.phase = 'END_TURN';
     bus.emit('turn:end', { playerId: this.currentPlayer.id });
@@ -156,6 +173,13 @@ export class TurnManager {
 
     const from            = player.position;
     const { to, passedGo } = this.board.move(from, steps);
+
+    console.log(
+      `[TurnManager] movePlayer: ${player.name} | ` +
+      `pos ${from} + ${steps} steps → ${to}` +
+      (passedGo ? ' (passed GO)' : '') +
+      (isDoubles ? ' [doubles]' : ''),
+    );
 
     if (passedGo) {
       this.board.getTile(0).onPass(player.id);  // emits rent:pay reason:'go'

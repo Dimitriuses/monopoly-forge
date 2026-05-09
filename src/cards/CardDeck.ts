@@ -64,6 +64,10 @@ export class CardEffects {
 
   execute(card: Card, player: Player): void {
     const a = card.action;
+    console.log(
+      `[CardEffects] execute: card="${card.description}", action=${a.type}, ` +
+      `player=${player.name}, position=${player.position}`,
+    );
     bus.emit('card:execute', { cardId: card.id, playerId: player.id });
 
     switch (a.type) {
@@ -77,11 +81,24 @@ export class CardEffects {
         player.position = 10;
         player.inJail = true;
         player.jailTurns = 0;
+        console.log(`[CardEffects] goToJail: ${player.name} → position=10`);
         bus.emit('jail:enter', { playerId: player.id, reason: 'card' });
         break;
       case 'goBack': {
         const from = player.position;
         const to   = (from - a.spaces + 40) % 40;
+        const destTile = this.board.getTile(to);
+        console.log(
+          `[CardEffects] goBack ${a.spaces} spaces: ${player.name} pos ${from} → ${to} ` +
+          `(tile: "${destTile.name}" [${destTile.type}])`,
+        );
+        console.warn(
+          `[CardEffects] ⚠️  goBack emits player:move with steps=${a.spaces} and from=${from}. ` +
+          `moveTokenStepByStep animates FORWARD ((from + s) % 40), so the token will visually ` +
+          `walk to tile ${(from + a.spaces) % 40} instead of backward to ${to}. ` +
+          `player.position is correctly set to ${to}, so resolveLanding() will fire on the ` +
+          `right tile — but the token graphic will be in the wrong place.`,
+        );
         player.position = to;
         // Pass steps so the animation walks backwards tile-by-tile
         bus.emit('player:move', { playerId: player.id, from, to, steps: a.spaces, isDoubles: false });
@@ -89,17 +106,21 @@ export class CardEffects {
         break;
       }
       case 'collectFromBank':
+        console.log(`[CardEffects] collectFromBank: ${player.name} collects $${a.amount}`);
         this.bank.payPlayer(player, a.amount);
         break;
       case 'payBank':
+        console.log(`[CardEffects] payBank: ${player.name} pays $${a.amount}`);
         this.bank.collectTax(player, a.amount);
         break;
       case 'collectFromAll':
+        console.log(`[CardEffects] collectFromAll: ${player.name} collects $${a.amount} from each player`);
         this.players.filter((p) => p.id !== player.id && !p.isBankrupt).forEach((p) => {
           this.bank.transferBetweenPlayers(p, player, a.amount);
         });
         break;
       case 'payAll':
+        console.log(`[CardEffects] payAll: ${player.name} pays $${a.amount} to each player`);
         this.players.filter((p) => p.id !== player.id && !p.isBankrupt).forEach((p) => {
           this.bank.transferBetweenPlayers(player, p, a.amount);
         });
@@ -114,10 +135,12 @@ export class CardEffects {
             total += pt.houses * a.houseCost + (pt.hasHotel ? a.hotelCost : 0);
           }
         });
+        console.log(`[CardEffects] repairs: ${player.name} pays $${total} (houses×$${a.houseCost}, hotels×$${a.hotelCost})`);
         this.bank.collectTax(player, total);
         break;
       }
       case 'getOutOfJail':
+        console.log(`[CardEffects] getOutOfJail: ${player.name} now holds ${player.getOutOfJailCards + 1} GOOJ card(s)`);
         player.getOutOfJailCards++;
         break;
     }
@@ -126,10 +149,20 @@ export class CardEffects {
   private advanceTo(player: Player, targetTile: number): void {
     const from  = player.position;
     const steps = (targetTile - from + 40) % 40;
-    if (steps === 0) return; // already on the target tile
+    if (steps === 0) {
+      console.log(`[CardEffects] advanceTo tile=${targetTile}: ${player.name} already there — no move`);
+      return; // already on the target tile
+    }
+
+    const passedGo = from + steps >= 40;
+    const destTile = this.board.getTile(targetTile);
+    console.log(
+      `[CardEffects] advanceTo: ${player.name} pos ${from} → tile ${targetTile} ` +
+      `"${destTile.name}" (${steps} steps${passedGo ? ', passes GO' : ''})`,
+    );
 
     // Passed Go when the path wraps around the board
-    if (from + steps >= 40) {
+    if (passedGo) {
       this.board.getTile(0).onPass(player.id);
     }
     player.position = targetTile;
