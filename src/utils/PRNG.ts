@@ -14,7 +14,7 @@ export class PRNG {
     this.state = (this.state + 0x6d2b79f5) | 0;
     let z = Math.imul(this.state ^ (this.state >>> 15), 1 | this.state);
     z = (z ^ (z + Math.imul(z ^ (z >>> 7), 61 | z))) >>> 0;
-    return (z ^ (z >>> 14)) / 0x100000000;
+    return ((z ^ (z >>> 14)) >>> 0) / 0x100000000;
   }
 
   /** Returns an integer in [min, max] inclusive */

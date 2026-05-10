@@ -174,6 +174,15 @@ export class TurnManager {
     const from            = player.position;
     const { to, passedGo } = this.board.move(from, steps);
 
+    if (steps <= 0) {
+      console.error(
+        `[TurnManager] movePlayer: ${player.name} received invalid steps=${steps} — move aborted. ` +
+        `Check Dice.roll() / PRNG.next() output.`,
+      );
+      this.endTurn();
+      return;
+    }
+
     console.log(
       `[TurnManager] movePlayer: ${player.name} | ` +
       `pos ${from} + ${steps} steps → ${to}` +
