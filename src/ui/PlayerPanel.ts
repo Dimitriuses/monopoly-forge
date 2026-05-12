@@ -1,7 +1,6 @@
 import Phaser from 'phaser';
 import type { Player } from '@/game/Player';
 import { TOKEN_LABELS } from '@/config';
-import { bus } from '@/utils/EventBus';
 
 const TOKEN_COLORS: Record<string, number> = {
   topHat:      0x444444,
@@ -22,7 +21,6 @@ interface Row {
   nameText:   Phaser.GameObjects.Text;
   cashText:   Phaser.GameObjects.Text;
   statusText: Phaser.GameObjects.Text;
-  switchBtn:  Phaser.GameObjects.Text;
 }
 
 export class PlayerPanel {
@@ -47,7 +45,7 @@ export class PlayerPanel {
     this.rows.forEach((r) => {
       r.bg.destroy(); r.activeLine.destroy(); r.dot.destroy();
       r.tokenText.destroy(); r.nameText.destroy();
-      r.cashText.destroy(); r.statusText.destroy(); r.switchBtn.destroy();
+      r.cashText.destroy(); r.statusText.destroy();
     });
     this.rows = [];
 
@@ -93,21 +91,7 @@ export class PlayerPanel {
         { fontFamily: 'Georgia, serif', fontSize: '9px', color: '#aaaaaa' },
       ).setOrigin(1, 0);
 
-      // "▶" switch button — bottom-right
-      const switchBtn = this.scene.add.text(cx - 4, ry + this.rowH - 16, '▶ TAKE TURN',
-        {
-          fontFamily: 'Georgia, serif', fontSize: '9px', color: '#7799cc',
-          backgroundColor: '#1e3055', padding: { x: 5, y: 3 },
-        },
-      ).setOrigin(1, 1).setInteractive({ useHandCursor: true });
-
-      switchBtn.on('pointerover', () => switchBtn.setStyle({ color: '#aaccff' }));
-      switchBtn.on('pointerout',  () => switchBtn.setStyle({ color: '#7799cc' }));
-      switchBtn.on('pointerdown', () => {
-        bus.emit('debug:forcePlayer', { index: i });
-      });
-
-      this.rows.push({ bg, activeLine, dot, tokenText, nameText, cashText, statusText, switchBtn });
+      this.rows.push({ bg, activeLine, dot, tokenText, nameText, cashText, statusText });
     });
   }
 
@@ -130,7 +114,7 @@ export class PlayerPanel {
       // Name colour
       row.nameText.setColor(isBankrupt ? '#555566' : isActive ? '#ffffff' : '#ddeeff');
 
-      // Status
+      // Status tag: bankrupt > jail > active > idle
       const status = isBankrupt ? '💀 bankrupt'
                    : p.inJail   ? '🔒 jail'
                    : isActive   ? '▶ active'
@@ -141,9 +125,6 @@ export class PlayerPanel {
         p.inJail   ? '#cc9900' :
         isActive   ? '#44ff88' : '#aaaaaa',
       );
-
-      // Hide switch button for active/bankrupt player
-      row.switchBtn.setVisible(!isActive && !isBankrupt);
     });
   }
 }

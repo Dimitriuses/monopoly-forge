@@ -236,10 +236,10 @@ export class GameScene extends Phaser.Scene {
     this.rollBtn.on('pointerover', () => this.rollBtn.setStyle({ backgroundColor: '#e74c3c' }));
     this.rollBtn.on('pointerout',  () => this.rollBtn.setStyle({ backgroundColor: '#c0392b' }));
 
-    this.jailBtn = this.add.text(512, 778, '🔓  Pay $50 to leave jail', {
+    this.jailBtn = this.add.text(710, 738, '🔓  Pay $50 to leave jail', {
       fontFamily: 'Georgia, serif', fontSize: '14px', color: '#ffffff',
       backgroundColor: '#7d6608', padding: { x: 14, y: 7 },
-    }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setDepth(20).setVisible(false);
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setDepth(10).setVisible(false).disableInteractive();
 
     this.jailBtn.on('pointerdown', () => {
       const p = this.turnManager.currentPlayer;
@@ -248,7 +248,7 @@ export class GameScene extends Phaser.Scene {
       } else {
         this.turnManager.payJailFine(p);
       }
-      this.jailBtn.setVisible(false);
+      this.setJailBtnVisible(false);
       this.pushUIUpdate();
     });
   }
@@ -257,6 +257,15 @@ export class GameScene extends Phaser.Scene {
     this.rollBtn.setAlpha(on ? 1 : 0.4);
     if (on) this.rollBtn.setInteractive({ useHandCursor: true });
     else    this.rollBtn.removeInteractive();
+  }
+
+  /** Always pair visibility with interactivity — setVisible(false) alone does not
+   *  remove the object from Phaser's hit list, so invisible buttons can still fire. */
+  private setJailBtnVisible(on: boolean, label?: string): void {
+    if (label) this.jailBtn.setText(label);
+    this.jailBtn.setVisible(on);
+    if (on) this.jailBtn.setInteractive({ useHandCursor: true });
+    else    this.jailBtn.disableInteractive();
   }
 
   // ── Buy Prompt ────────────────────────────────────────────────────────────────
@@ -438,17 +447,15 @@ export class GameScene extends Phaser.Scene {
       this.hideBuyPrompt();
 
       const jailActAvail = player.inJail && (player.getOutOfJailCards > 0 || player.cash >= 50);
-      this.jailBtn.setVisible(jailActAvail);
-      if (jailActAvail) {
-        this.jailBtn.setText(player.getOutOfJailCards > 0 ? '🃏  Use Card' : '🔓  Pay $50');
-      }
+      const jailLabel    = player.getOutOfJailCards > 0 ? '🃏  Use Card' : '🔓  Pay $50';
+      this.setJailBtnVisible(jailActAvail, jailActAvail ? jailLabel : undefined);
 
       this.scene.get('UIScene').events.emit('turn:start', { player, players: this.players });
     });
 
     bus.on('turn:end', () => {
       this.setRollEnabled(false);
-      this.jailBtn.setVisible(false);
+      this.setJailBtnVisible(false);
     });
 
     // ── Free landing (Go, Just Visiting, Free Parking, own property) ──────────
@@ -537,6 +544,26 @@ export class GameScene extends Phaser.Scene {
       this.safeEndTurn(800);
     });
 
+    // Fired by TurnManager when a jailed player rolls non-doubles and still has
+    // attempts left.  We deliberately DO NOT call endTurn() synchronously in
+    // TurnManager because that entire chain (endTurn → advancePlayer → startTurn
+    // → setRollEnabled(true) → rollBtn.setInteractive()) fires inside rollBtn's
+    // own pointerdown callback.  Re-registering rollBtn with Phaser's InputPlugin
+    // mid-event leaves the next player's roll button silently unresponsive until
+    // the jailed player finally exits.  Deferring via safeEndTurn(100) moves
+    // everything outside the current pointer-event frame.
+    bus.on('jail:stay', ({ playerId }: { playerId: string }) => {
+      const player = this.players.find((p) => p.id === playerId);
+      console.log(
+        `[GameScene] jail:stay received for ${player?.name ?? playerId} — ` +
+        `disabling rollBtn now, scheduling safeEndTurn(100)`,
+      );
+      // Prevent the jailed player from rolling again during the 100 ms window.
+      this.setRollEnabled(false);
+      this.setJailBtnVisible(false);
+      this.safeEndTurn(100);
+    });
+
     // ── Card draw ─────────────────────────────────────────────────────────────
     bus.on('card:draw', ({ playerId, deckType }: { playerId: string; deckType: string }) => {
       const player = this.players.find((p) => p.id === playerId)!;
@@ -568,21 +595,23 @@ export class GameScene extends Phaser.Scene {
         this.cardEffects.execute(card, player);
         this.pushUIUpdate();
 
-        // ⚠️  Cards that trigger movement (advanceTo/advanceToGo/goBack) emit
-        // player:move, which starts an animation. The animation + resolveLanding()
-        // together take (steps × 110 ms). safeEndTurn(200) below fires at a fixed
-        // 200 ms — if steps > 1, it fires before resolveLanding(), advancing the
-        // turn to the next player and causing onLand to fire on the wrong player.
-        const movementTypes = ['advanceTo', 'advanceToGo', 'goBack'];
-        const triggersMove  = movementTypes.includes(card.action.type);
-        if (triggersMove) {
-          console.warn(
-            `[GameScene] ⚠️  Card "${card.description}" (action=${card.action.type}) triggers ` +
-            `a player:move animation. safeEndTurn(200) is scheduled but may fire ` +
-            `BEFORE the animation + resolveLanding() complete, advancing the turn prematurely.`,
-          );
+        // Cards that emit player:move handle turn-end themselves: the animation
+        // resolves → resolveLanding() → tile.onLand() → safeEndTurn from the tile.
+        // Calling safeEndTurn(200) here races against the animation
+        // (N steps × 110 ms > 200 ms for N > 1) and fires before resolveLanding,
+        // advancing the turn so onLand executes on the wrong current player.
+        //
+        // goToJail emits jail:enter → the jail:enter listener schedules
+        // safeEndTurn(800) itself.
+        //
+        // Only static cards (money transfers, get-out-of-jail card) need us to
+        // close the turn here.
+        const selfTerminating = ['advanceTo', 'advanceToGo', 'goBack', 'goToJail'];
+        if (selfTerminating.includes(card.action.type)) {
+          console.log(`[GameScene] Card action "${card.action.type}" is self-terminating — skipping safeEndTurn(200)`);
+        } else {
+          this.safeEndTurn(200);
         }
-        this.safeEndTurn(200);
       });
     });
 
@@ -594,6 +623,11 @@ export class GameScene extends Phaser.Scene {
 
     // ── Force player switch (debug tool from UIScene) ─────────────────────────
     bus.on('debug:forcePlayer', ({ index }: { index: number }) => {
+      const target = this.players[index];
+      console.log(
+        `[GameScene] debug:forcePlayer received: index=${index} (${target?.name ?? 'unknown'}) | ` +
+        `currentPlayer=${this.turnManager.currentPlayer.name}, phase=${this.turnManager.phase}`,
+      );
       if (this.isAnimating) {
         this.notif.show('Cannot switch — animation in progress.', 'warning');
         return;

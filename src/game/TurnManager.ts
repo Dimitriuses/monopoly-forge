@@ -26,6 +26,27 @@ export class TurnManager {
     this.players = players;
     this.board   = board;
     this.dice    = dice;
+
+    // GoToJailTile (and cards with action 'goToJail') emit jail:enter without
+    // going through sendToJail(), so player.inJail / position / jailTurns never
+    // get set.  When sendToJail() fires (3-doubles case) it sets inJail=true
+    // BEFORE emitting, so we guard on !player.inJail to avoid double-applying.
+    bus.on('jail:enter', ({ playerId }: { playerId: string }) => {
+      const player = this.players.find((p) => p.id === playerId);
+      if (!player) return;
+      if (player.inJail) {
+        // Already jailed by sendToJail() (3-doubles path) — nothing to do.
+        console.log(`[TurnManager] jail:enter received for ${player.name} — state already set by sendToJail()`);
+        return;
+      }
+      console.log(
+        `[TurnManager] jail:enter received for ${player.name} (external trigger — tile or card). ` +
+        `Setting inJail=true, position=10, jailTurns=0 (was position=${player.position})`,
+      );
+      player.inJail    = true;
+      player.jailTurns = 0;
+      player.position  = 10;
+    });
   }
 
   get currentPlayer(): Player {
@@ -221,7 +242,17 @@ export class TurnManager {
           message: `${player.name} stays in jail (turn ${player.jailTurns}/3).`,
           type: 'warning',
         });
-        this.endTurn();
+        // Do NOT call endTurn() directly here. This method is called from within
+        // rollBtn's pointerdown callback. Calling endTurn() → advancePlayer() →
+        // startTurn() → setRollEnabled(true) → rollBtn.setInteractive() all
+        // synchronously inside that callback leaves Phaser's input system in a
+        // broken state: rollBtn is re-registered mid-event, and the next player's
+        // roll button is silently dead until the jailed player exits jail (at which
+        // point endTurn fires asynchronously from an animation callback).
+        // Emitting jail:stay lets GameScene call safeEndTurn(100), moving the
+        // entire turn-advance out of the pointerdown call stack.
+        console.log(`[TurnManager] jail:stay emitted for ${player.name} — deferring endTurn to GameScene`);
+        bus.emit('jail:stay', { playerId: player.id });
       }
     }
   }
