@@ -14,14 +14,13 @@ there — see [Where this is going](#where-this-is-going--from-game-to-engine).
 [![Vite](https://img.shields.io/badge/Vite-7-646cff)](https://vite.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![status: active](https://img.shields.io/badge/status-active-brightgreen)](ROADMAP.md)
+[![Play demo](https://img.shields.io/badge/▶_play-demo-f0c040)](https://dimitriuses.github.io/monopoly-forge/)
 
-<!--
-  ▶ LIVE DEMO — uncomment this line after the first green Pages deploy:
-  (Settings → Pages → Source: GitHub Actions, then push. Load the URL once before
-  publishing it — a dead demo link is worse than no link.)
+## **[▶ Play the demo](https://dimitriuses.github.io/monopoly-forge/)**
 
-**[▶ Play it in the browser](https://dimitriuses.github.io/monopoly-forge/)**
--->
+No install, no sign-up — it runs in the browser. Pick 2–6 players and hit **START
+GAME**; the [controls](#controls) are below. Add `?seed=20260512` to replay an
+identical game, or `?debug=1` to watch the full turn trace in the console.
 
 ---
 
