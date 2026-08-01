@@ -340,3 +340,53 @@ final positions and cash exactly, run to run.
 - **Logging** — 32 `console.log`/`warn` calls now route through `src/utils/log.ts`,
   silent unless `?debug=1` or the dev server. `console.error` untouched.
 - Menu setup rows centred under the title instead of hanging off to the left.
+
+---
+
+## CI install failure — 2026-08-01 (same day, after the first push)
+
+Every CI job failed at step 4, `npm ci`, on all three matrix legs plus the Pages
+deploy:
+
+```
+npm error `npm ci` can only install packages when your package.json and
+npm error package-lock.json are in sync.
+npm error Missing: esbuild@0.28.1 from lock file
+npm error Missing: @esbuild/aix-ppc64@0.28.1 from lock file        (27 in total)
+```
+
+**Why it passed locally and failed on CI.** The lockfile had been verified with a
+clean `rm -rf node_modules && npm ci` — but with **npm 11.11.0**. `actions/setup-node`
+with `node-version: 22` installs Node 22.23.2, which bundles **npm 10.9.8**. A
+lockfile is only valid for the npm that consumes it, and these two disagreed.
+
+**Root cause, which was a genuine dependency conflict.** `npm install -D vitest@latest`
+installed vitest 4, which requires `vite ^6 || ^7 || ^8`, while `package.json`
+pinned `vite ^5.2.11`. npm 11 resolved this by installing a *nested*
+`node_modules/vitest/node_modules/vite@8.2.0` — so the app was building on Vite 5
+while the test runner ran on Vite 8 — and then wrote a lockfile that recorded the
+nested Vite but omitted its entire `esbuild@0.28.1` subtree. npm 11 reinstalls
+from that incomplete lockfile without complaint; npm 10 recomputes the required
+tree, finds the 27 packages missing, and refuses.
+
+**Fix:** align the majors instead of letting npm nest a second copy — `vite ^7.0.0`,
+which is what vitest 4 supports. One Vite, one esbuild, a complete lockfile that
+**both** npm 10 and npm 11 accept. Side effects: `npm audit` went 3 advisories → 0
+(the moderate esbuild and high postcss advisories were Vite 5's), the dependency
+count dropped 62 → 51, and the Phaser chunk shrank 1,478 kB → 1,208 kB under
+Rollup 4. Game behaviour is unchanged: the seeded playtest returns identical
+positions and cash before and after.
+
+**Guard added:** `tools/verify-install.mjs` (`npm run verify:install`). It fetches
+the npm bundled with the Node major in `.nvmrc` and runs three checks with it:
+
+1. `npm ci --dry-run` — does CI's npm accept this lockfile? (non-destructive)
+2. `npm ls --all` — invalid or missing edges in the installed tree
+3. any declared dependency installed at two different majors — the root cause,
+   catchable before a lockfile is even written
+
+Verified against a checkout of the broken commit: check 1 reproduces the exact CI
+error and check 3 names the cause (`vite 5.4.21` at `node_modules/vite` vs
+`vite 8.2.0` at `node_modules/vitest/node_modules/vite`). Both workflows now
+resolve Node from `.nvmrc` and print `node --version && npm --version` before
+installing, so the next such failure is diagnosable from the log alone.

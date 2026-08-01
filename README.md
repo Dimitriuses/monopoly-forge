@@ -6,7 +6,7 @@ A hot-seat Monopoly game for 2–6 players, built from scratch in **TypeScript**
 [![CI](https://github.com/Dimitriuses/monopoly-forge/actions/workflows/ci.yml/badge.svg)](https://github.com/Dimitriuses/monopoly-forge/actions/workflows/ci.yml)
 [![Phaser](https://img.shields.io/badge/Phaser-3.90-blueviolet)](https://phaser.io/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6)](https://www.typescriptlang.org/)
-[![Vite](https://img.shields.io/badge/Vite-5-646cff)](https://vite.dev/)
+[![Vite](https://img.shields.io/badge/Vite-7-646cff)](https://vite.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![status: active](https://img.shields.io/badge/status-active-brightgreen)](ROADMAP.md)
 
@@ -164,7 +164,7 @@ tools/playtest.mjs        Plays the built game in a real browser
 
 ## Quick start
 
-Requires **Node 22+**.
+Requires **Node 22.12+** (see [.nvmrc](.nvmrc)); any bundled npm 10 or 11 works.
 
 ```bash
 npm install
@@ -191,10 +191,11 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test           # 100 unit tests, plain Node, ~8 s
-npm run typecheck  # tsc --noEmit
-npm run playtest   # build first: plays 30 seeded turns in a headless browser
+npm test                # 100 unit tests, plain Node, ~7 s
+npm run typecheck       # tsc --noEmit
+npm run playtest        # build first: plays 30 seeded turns in a headless browser
 npm run screenshots
+npm run verify:install  # would CI's npm accept this lockfile?
 ```
 
 **Unit tests** (`tests/`) cover the model, and lean deliberately towards the bugs
@@ -207,6 +208,13 @@ turn.
 it in headless Chromium, clicks its way through a seeded game, and fails on any
 console error, page exception, failed request or inconsistent end state. Both run
 in CI, on Linux and Windows.
+
+**`verify:install`** (`tools/verify-install.mjs`) answers a question a local
+`npm ci` cannot: *would CI's npm accept this lockfile?* It fetches the npm bundled
+with the Node version in `.nvmrc` — which is not necessarily the npm you develop
+with — and checks lockfile agreement, tree consistency, and whether any declared
+dependency has been installed at two different majors. Run it whenever
+`package.json` or `package-lock.json` changes.
 
 ---
 

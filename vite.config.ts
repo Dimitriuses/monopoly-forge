@@ -20,7 +20,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
-    // Phaser alone is ~1.48 MB minified and is split into its own chunk below;
+    // Phaser alone is ~1.2 MB minified and is split into its own chunk below;
     // the default 500 kB limit can never be met with it bundled. Raised so a
     // clean build reports zero warnings and a real regression would stand out.
     chunkSizeWarningLimit: 1600,

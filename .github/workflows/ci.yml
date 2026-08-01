@@ -22,8 +22,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
+
+      # Printed before the install so a future `npm ci` failure is diagnosable
+      # from the log alone — the npm major that consumes the lockfile is exactly
+      # what broke this workflow once before. See tools/verify-install.mjs.
+      - name: Toolchain versions
+        run: node --version && npm --version
 
       - run: npm ci
 
@@ -47,8 +53,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
+
+      # Printed before the install so a future `npm ci` failure is diagnosable
+      # from the log alone — the npm major that consumes the lockfile is exactly
+      # what broke this workflow once before. See tools/verify-install.mjs.
+      - name: Toolchain versions
+        run: node --version && npm --version
 
       - run: npm ci
 

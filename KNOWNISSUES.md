@@ -124,12 +124,24 @@ houses and owner markers need drawing per tile.
 
 ## Tooling
 
-### `npm audit` reports advisories in the dev toolchain
+### The lockfile is only valid for the npm that wrote it
 
-Three at the time of writing (one moderate, two high), all in build-time
-dependencies (`esbuild`/`vite` dev server, `postcss`). None reach the browser
-bundle — the only runtime dependency is Phaser. `npm audit fix --force` would
-pull a breaking Vite major and is deliberately not run.
+`npm ci` must be validated with **the npm major CI uses**, which is the one
+bundled with the Node version in `.nvmrc` — not necessarily the npm on your
+machine. This has already broken every CI job once: a lockfile written by npm 11
+was missing 27 packages that npm 10 requires, and npm 11 reinstalled from its own
+incomplete lockfile without complaint.
+
+`npm run verify:install` is the guard. Run it after any dependency change; a
+plain local `npm ci` is not sufficient evidence.
+
+### `npm audit` is clean, and that is a moving target
+
+Currently **0 vulnerabilities**. It was three (one moderate, two high, all in
+`esbuild`/`postcss` under Vite 5) until the Vite 7 upgrade removed them. None
+reached the browser bundle in either case — the only runtime dependency is
+Phaser. Never run `npm audit fix --force`: it makes breaking major upgrades
+silently.
 
 ### The playtest harness clicks fixed canvas coordinates
 

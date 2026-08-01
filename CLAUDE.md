@@ -15,6 +15,7 @@ npm test             # Vitest, model only, plain Node (~8 s)
 npm run test:watch
 npm run playtest     # needs a build first — drives dist/ in headless Chromium
 npm run screenshots  # playtest + writes screenshots/*.png
+npm run verify:install  # would CI's npm accept package-lock.json?
 ```
 
 `npm run playtest` accepts `--turns N`, `--seed N`, `--headed` (watch it play) and
@@ -108,6 +109,30 @@ cascade into every subsequent roll.
 - `setVisible(false)` does not remove an object from the input hit list — pair it
   with `disableInteractive()`, as `setJailBtnVisible` does, or invisible buttons
   still fire.
+
+### A local `npm ci` does not prove CI will install
+
+**Run `npm run verify:install` after any dependency change.** A passing local
+`npm ci` is not evidence, because it uses *your* npm, and the lockfile is only
+valid for the npm that consumes it.
+
+This broke every CI job once. `npm install -D vitest@latest` brought in vitest 4,
+which requires `vite ^6 || ^7 || ^8` while `package.json` pinned `vite ^5`. npm 11
+resolved that by nesting a second Vite (the app built on Vite 5 while the tests
+ran on a nested Vite 8) and then wrote a lockfile that recorded the nested Vite
+but **not** its `esbuild@0.28.1` subtree. npm 11 reinstalls happily from its own
+incomplete lockfile; npm 10 — bundled with Node 22, therefore the npm on the
+runners — recomputed the tree, found 27 packages absent, and refused with
+`Missing: esbuild@0.28.1 from lock file`.
+
+Two rules follow:
+
+- **Keep dependency majors aligned.** If a dev tool wants a different major of
+  something `package.json` already pins, fix the range rather than letting npm
+  nest a second copy. Check 3 of `verify:install` fails on exactly that.
+- **Node and npm come as a pair.** CI resolves Node from `.nvmrc`
+  (`node-version-file`), so the npm major is whatever that Node bundles. Both
+  workflows print `node --version && npm --version` before installing.
 
 ### The playtest harness clicks fixed coordinates
 
