@@ -286,6 +286,7 @@ src/
 | M5 — Multiplayer UI (trade dialog, auction system) | 🔲 Not started |
 | M6 — Polish (animations, sound, save/load, house rules) | 🔲 Not started — save/load blocked, see ROADMAP |
 | M7 — QA (AI opponent, edge-case testing, balance) | 🟡 100 unit tests + a headless playtest in CI; no AI |
+| **M8 — Engine** (configurable maps, rules and presentation) | 🔲 The destination — see [ROADMAP.md](ROADMAP.md). Groundwork in place: Phaser-free core, event-decoupled renderer, data-driven tiles |
 
 ---
 

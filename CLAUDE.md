@@ -23,6 +23,12 @@ npm run verify:install  # would CI's npm accept package-lock.json?
 
 ## Invariants
 
+These are not style preferences. The project's destination is M8 — an engine for
+Monopoly-style games with configurable maps, rules and presentation
+([ROADMAP.md](ROADMAP.md)) — and invariants 1 and 2 are what keep that reachable:
+a rules core that runs headlessly, and a renderer that can be replaced without
+touching the rules. Breaking either forecloses the engine.
+
 **1. The model must not import Phaser.** Everything under `game/`, `tiles/`,
 `cards/` and `utils/` runs in plain Node — that is what makes it unit-testable
 with no jsdom and no canvas. `src/config.ts` is the load-bearing part: it is
@@ -38,6 +44,11 @@ testable and the renderer replaceable.
 shuffles draw from the shared seeded Mulberry32 in `src/utils/PRNG.ts`. A stray
 `Math.random` silently destroys reproducibility — and the playtest harness, which
 relies on a seed producing the same game every run.
+
+**6. Prefer `board.length` and named anchors over `40` and `10`.** Both literals
+are still hardcoded in several places (9 and 4 respectively, catalogued in
+ROADMAP M8a). Do not add more: new code should read the board's length and ask for
+a tile's role rather than assuming the classic layout.
 
 **4. Use `dlog` / `dwarn`, not `console.log`.** `src/utils/log.ts` is silent
 unless switched on (dev server, or `?debug=1` on any build). `console.error` is

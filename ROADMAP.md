@@ -8,6 +8,12 @@ seeded 45-turn game runs with no console errors (`npm run playtest`). The next
 milestone is what turns a working rules engine into a game worth finishing:
 visible ownership and property development.
 
+**The destination is M8: an engine for Monopoly-style games** — configurable maps,
+rules and presentation. M1–M7 build the classic game that the engine has to be able
+to express; M8 generalises it. Some M8 groundwork is already deliberate (a
+Phaser-free core, an event-decoupled renderer, data-driven tiles), and some of it
+is cheaper to do early — see the sequencing note at the end.
+
 ---
 
 ## M3 — Ownership and development · next
@@ -76,6 +82,75 @@ the rule enforcement around it.
       how often the bank runs out of houses.
 - [ ] **Extend the playtest harness** to assert on richer invariants (total cash
       conservation across the whole table, deck census over a long game).
+
+## M8 — Monopoly Forge as an engine · the destination
+
+Turn the game into something that *runs* games: bring your own map, rules and
+artwork, and never edit engine code to do it. Each item below names the code that
+currently prevents it, so none of this is an estimate.
+
+### 8a — The board stops being 40 tiles in a square
+
+- [ ] **Take board length from the map.** `% 40` is hardcoded in 9 places across
+      `Board.getTile`, `Board.getLayout`, `Board.move`, `Board.computeLayout`,
+      `TurnManager` (two `position > 39` guards), `CardEffects.advanceTo`,
+      `CardEffects.goBack` and `GameScene.moveTokenStepByStep`. `config.ts` already
+      exports `BOARD_SIZE = 40` and **nothing reads it** — that constant becoming
+      `board.length` is most of this task.
+- [ ] **Stop assuming a square.** `Board.computeLayout()` and
+      `GameScene.drawBoard()` each hold four loops over literal ranges (0–10,
+      11–19, 20–30, 31–39) with `boardW = CORNER_SIZE * 2 + TILE_W * 9`. Replace
+      with geometry derived from a side/segment description, or supplied as
+      per-tile coordinates in the map.
+- [ ] **Name the anchors.** Jail is the literal `10` in `TurnManager` (twice),
+      `CardEffects.goToJail` and `GameScene`'s `jail:enter` handler. A map should
+      declare which tile plays each role (`start`, `jail`, `goToJail`), and the
+      rules should ask for the role.
+- [ ] **A map is a file.** `TileDefinition[]` is already plain data; give it a
+      schema, a loader and validation (every referenced tile exists, groups are
+      consistent, anchors resolve), then ship the classic board as the first map
+      rather than as `BOARD_TILES` in `config.ts`.
+
+### 8b — Rules become registrable instead of switch statements
+
+- [ ] **Tile-type registry.** `Board`'s constructor `switch` closes the set of tile
+      types; a `registerTileType(name, factory)` opens it. `Tile.onLand()` is
+      already the right extension point.
+- [ ] **Card-effect registry.** `CardEffects.execute()` is a second closed switch
+      over the `CardAction` union. Same treatment, so a game can add an effect
+      without touching the engine.
+- [ ] **A real rule set.** Start by making the four existing `HouseRules` flags do
+      something (they are read by nothing today), then widen it to the things the
+      classic rules currently hardcode: starting cash, GO salary, jail term and
+      fine, doubles-to-jail count, build rules, win condition.
+- [ ] **Generalise the turn structure.** `TurnManager`'s phase FSM is the hardest
+      piece to open up and should come last — a phase pipeline a rule set can
+      extend, rather than a fixed enum.
+
+### 8c — Presentation becomes a theme
+
+- [ ] **Extract `BoardRenderer`** from `GameScene` (683 lines, drawing everything
+      inline). It was in the original plan and never written.
+- [ ] **A theme object** for colours, fonts and tile decoration, replacing the
+      `GROUP_COLORS` / `TOKEN_HEX` constants.
+- [ ] **Per-element draw overrides**, so a game can replace how one tile type or
+      token renders without forking the renderer.
+- [ ] **Use the asset pipeline** `BootScene` already half-provides — it generates
+      `house`, `hotel` and token textures that nothing draws.
+
+### Sequencing — why some of this should not wait
+
+Extracting a renderer gets more expensive with every feature drawn inside
+`drawBoard()`, and un-hardcoding the board gets more expensive with every rule that
+assumes 40 tiles. M3 is about to add ownership markers, houses and hotels to
+exactly those places.
+
+So the cheap order is: do **8a** (board length + geometry + anchors) and the
+`BoardRenderer` extraction from **8c** *alongside* M3, while the surface is small,
+and leave 8b's registries and the rule set until the classic rules are complete
+enough to know what needs to vary. The 100 unit tests are the safety net that makes
+this refactor-first order safe — they pin the classic behaviour, so a
+parameterisation that breaks it fails loudly.
 
 ---
 

@@ -3,6 +3,11 @@
 A hot-seat Monopoly game for 2–6 players, built from scratch in **TypeScript** on
 **Phaser 3** — with a rules engine that runs, and is tested, without a browser.
 
+The longer goal is in the name: an **engine for Monopoly-style board games**, where
+the map, the rules and the look of every element are things you configure rather
+than things you edit. Building the classic game first is the deliberate route
+there — see [Where this is going](#where-this-is-going--from-game-to-engine).
+
 [![CI](https://github.com/Dimitriuses/monopoly-forge/actions/workflows/ci.yml/badge.svg)](https://github.com/Dimitriuses/monopoly-forge/actions/workflows/ci.yml)
 [![Phaser](https://img.shields.io/badge/Phaser-3.90-blueviolet)](https://phaser.io/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6)](https://www.typescriptlang.org/)
@@ -97,6 +102,67 @@ headless browser — see [tools/playtest.mjs](tools/playtest.mjs).
 | **Buy prompt** — price, base rent, your cash | **Cards** — Chance and Community Chest |
 | ![Jail](screenshots/5-jail.png) | ![Late game](screenshots/6-late-game.png) |
 | **Jail** — entered by card, HUD shows the state | **Later** — cash diverging through rent and tax |
+
+---
+
+## Where this is going — from game to engine
+
+Monopoly Forge is meant to end up as an **engine for Monopoly-style games**: bring
+your own board, your own rules, your own artwork, and the engine runs the game.
+Three axes of customisation, none of which should require editing engine code:
+
+| Axis | What you should be able to supply |
+|---|---|
+| **Maps** | A board of any length and shape — not 40 tiles in a square — with your own tiles, groups, prices and named anchors (where "jail" is, where "start" is) |
+| **Rules** | New tile types and card effects registered from outside, and a rule set that decides turn order, jail terms, building rules and win conditions |
+| **Presentation** | How each element draws — tiles, tokens, cards, HUD — swapped per theme, without touching the rules |
+
+**Writing the classic game first was the point, not a detour.** A configurable
+engine whose only consumer is a toy proves nothing; the standard board is the
+reference implementation that says what the engine has to be able to express, and
+it is what the 100 unit tests pin down.
+
+### What already supports it
+
+Some of the groundwork is deliberately in place — it is why the architecture below
+looks the way it does:
+
+- **The rules core has no Phaser and no DOM**, so an engine consumer can run a
+  whole game headlessly — to validate a custom rule set, or simulate thousands of
+  games — with no renderer at all.
+- **The renderer only listens to events.** A different presentation layer
+  subscribes to the same bus; it does not subclass or import the model.
+- **Tiles are already data.** `TileDefinition` is a plain object and the board is
+  an array of them, which is most of the way to a map being a file.
+- **Tiles are already polymorphic** — `Tile.onLand()` is a real extension point.
+- **Games are deterministic from a seed**, which is what makes comparing two rule
+  sets, or reproducing a custom-map bug, tractable.
+
+### What has to change first
+
+Honestly measured against the current code, not estimated:
+
+- **The number 40 is hardcoded in 9 places** across `Board`, `TurnManager`,
+  `CardDeck` and `GameScene` — and `config.ts` already exports a `BOARD_SIZE`
+  constant that *nothing reads*. Board length has to come from the map.
+- **The board's shape is hardcoded twice** — `Board.computeLayout()` and
+  `GameScene.drawBoard()` each contain four loops over literal index ranges
+  (0–10, 11–19, 20–30, 31–39) assuming a square with 11 tiles a side. Geometry
+  needs to be computed from, or supplied by, the map.
+- **Jail is the literal tile 10 in 4 places.** Anchors must be named roles, not
+  indices.
+- **Two closed `switch` statements** decide what can exist: tile construction in
+  `Board`, and card effects in `CardEffects.execute()`. Both need to become
+  registries so a game can add a type without editing the engine.
+- **Rendering is one 683-line scene.** `BoardRenderer` was in the original plan and
+  was never written; it is the seam a theme would plug into.
+
+None of that is a rewrite — it is parameterising code that already has the right
+shape. The sequencing matters more than the size, though: every new thing drawn
+inside `drawBoard()` raises the cost of extracting a renderer later, so the board
+geometry and the renderer split are best done **alongside** the ownership work in
+M3 rather than after M7. That reasoning, and the full breakdown, is in
+[ROADMAP.md](ROADMAP.md).
 
 ---
 
