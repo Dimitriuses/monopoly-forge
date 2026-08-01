@@ -7,6 +7,7 @@ import { TurnManager } from '@/game/TurnManager';
 import { CardDeck, CardEffects, CHANCE_CARDS, COMMUNITY_CHEST_CARDS } from '@/cards/CardDeck';
 import { bus } from '@/utils/EventBus';
 import { rng } from '@/utils/PRNG';
+import { dlog, dwarn, isDebugLogging } from '@/utils/log';
 import { Notification } from '@/ui/Notification';
 import {
   BOARD_ORIGIN_X, BOARD_ORIGIN_Y, CORNER_SIZE, TILE_W, TILE_H,
@@ -61,7 +62,7 @@ export class GameScene extends Phaser.Scene {
   // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
   init(data: SceneData): void {
-    if (data.seed) rng['state'] = data.seed;
+    if (data.seed !== undefined) rng.seed(data.seed);
     bus.clear();
 
     this.board        = new Board();
@@ -84,6 +85,24 @@ export class GameScene extends Phaser.Scene {
 
     this.scene.launch('UIScene', { players: this.players });
     this.turnManager.startTurn();
+    this.exposeDebugHandle();
+  }
+
+  /**
+   * Read-only state hook for tools/playtest.mjs, which drives the real canvas and
+   * needs to know what the model did. Gated on the same switch as debug logging
+   * (dev server, or ?debug=1), so a plain production load exposes nothing.
+   */
+  private exposeDebugHandle(): void {
+    if (!isDebugLogging()) return;
+    (window as unknown as Record<string, unknown>).__forge = {
+      state:       () => this.serialize(),
+      phase:       () => this.turnManager.phase,
+      isAnimating: () => this.isAnimating,
+      activeId:    () => this.turnManager.currentPlayer.id,
+      buyPromptOpen: () => this.buyPrompt.visible,
+      cardOpen:    () => this.scene.isActive('CardScene'),
+    };
   }
 
   // ── Board drawing ─────────────────────────────────────────────────────────────
@@ -390,12 +409,12 @@ export class GameScene extends Phaser.Scene {
     bus.on<MovePayload>('player:move', ({ playerId, from, to, steps }) => {
       const mover = this.players.find((p) => p.id === playerId);
       const moverName = mover?.name ?? playerId;
-      console.log(
+      dlog(
         `[GameScene] player:move received: player=${moverName}, from=${from}, to=${to}, steps=${steps} | ` +
         `currentTurnPlayer=${this.turnManager.currentPlayer.name}`,
       );
       if (mover && mover.id !== this.turnManager.currentPlayer.id) {
-        console.warn(
+        dwarn(
           `[GameScene] ⚠️  player:move for ${moverName} but currentPlayer is ` +
           `${this.turnManager.currentPlayer.name} — card-triggered move on a completed turn?`,
         );
@@ -407,7 +426,7 @@ export class GameScene extends Phaser.Scene {
         .then(() => {
           const currentTurnPlayer = this.turnManager.currentPlayer;
           const movedPlayer       = this.players.find((p) => p.id === playerId);
-          console.log(
+          dlog(
             `[GameScene] Animation complete: animatedPlayer=${moverName} (pos=${movedPlayer?.position}), ` +
             `currentTurnPlayer=${currentTurnPlayer.name} (pos=${currentTurnPlayer.position})`,
           );
@@ -554,7 +573,7 @@ export class GameScene extends Phaser.Scene {
     // everything outside the current pointer-event frame.
     bus.on('jail:stay', ({ playerId }: { playerId: string }) => {
       const player = this.players.find((p) => p.id === playerId);
-      console.log(
+      dlog(
         `[GameScene] jail:stay received for ${player?.name ?? playerId} — ` +
         `disabling rollBtn now, scheduling safeEndTurn(100)`,
       );
@@ -591,7 +610,7 @@ export class GameScene extends Phaser.Scene {
 
       this.scene.launch('CardScene', { card });
       this.scene.get('CardScene').events.once('shutdown', () => {
-        console.log(`[GameScene] CardScene shutdown → executing card "${card.description}" for ${player.name}`);
+        dlog(`[GameScene] CardScene shutdown → executing card "${card.description}" for ${player.name}`);
         this.cardEffects.execute(card, player);
         this.pushUIUpdate();
 
@@ -608,7 +627,7 @@ export class GameScene extends Phaser.Scene {
         // close the turn here.
         const selfTerminating = ['advanceTo', 'advanceToGo', 'goBack', 'goToJail'];
         if (selfTerminating.includes(card.action.type)) {
-          console.log(`[GameScene] Card action "${card.action.type}" is self-terminating — skipping safeEndTurn(200)`);
+          dlog(`[GameScene] Card action "${card.action.type}" is self-terminating — skipping safeEndTurn(200)`);
         } else {
           this.safeEndTurn(200);
         }
@@ -624,7 +643,7 @@ export class GameScene extends Phaser.Scene {
     // ── Force player switch (debug tool from UIScene) ─────────────────────────
     bus.on('debug:forcePlayer', ({ index }: { index: number }) => {
       const target = this.players[index];
-      console.log(
+      dlog(
         `[GameScene] debug:forcePlayer received: index=${index} (${target?.name ?? 'unknown'}) | ` +
         `currentPlayer=${this.turnManager.currentPlayer.name}, phase=${this.turnManager.phase}`,
       );

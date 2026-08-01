@@ -1,16 +1,14 @@
-import Phaser from 'phaser';
 import type { TileDefinition } from '@/tiles/Tile';
 
-// ─── Phaser game config ────────────────────────────────────────────────────────
-export const GAME_CONFIG: Phaser.Types.Core.GameConfig = {
-  type: Phaser.AUTO,
-  width: 1280,
-  height: 800,
-  backgroundColor: '#1a1a2e',
-  parent: 'game-container',
-  dom: { createContainer: true },
-  physics: { default: 'arcade' },
-};
+// This module must stay free of Phaser imports. Everything under game/, tiles/,
+// cards/ and utils/ reaches the rules through it, and that is what keeps the
+// model runnable — and unit-testable — in plain Node, with no DOM or canvas.
+// The Phaser.Game options live in main.ts for the same reason.
+
+// ─── Canvas size ───────────────────────────────────────────────────────────────
+// Also consumed by main.ts when building the Phaser config.
+export const GAME_WIDTH = 1280;
+export const GAME_HEIGHT = 800;
 
 // ─── Board geometry ────────────────────────────────────────────────────────────
 export const BOARD_SIZE = 40;

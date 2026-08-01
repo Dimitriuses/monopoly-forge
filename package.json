@@ -2,17 +2,24 @@
   "name": "monopoly-forge",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "playtest": "node tools/playtest.mjs",
+    "screenshots": "node tools/playtest.mjs --shots"
   },
   "dependencies": {
     "phaser": "^3.87.0"
   },
   "devDependencies": {
+    "playwright": "^1.62.1",
     "typescript": "^5.4.5",
-    "vite": "^5.2.11"
+    "vite": "^5.2.11",
+    "vitest": "^4.1.10"
   }
 }

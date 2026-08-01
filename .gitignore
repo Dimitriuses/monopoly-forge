@@ -3,3 +3,11 @@ dist/
 .vite/
 *.local
 .DS_Store
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# Playwright
+test-results/
+playwright-report/

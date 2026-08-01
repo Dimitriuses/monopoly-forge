@@ -1,4 +1,5 @@
 import { bus } from '@/utils/EventBus';
+import { dlog, dwarn } from '@/utils/log';
 import type { Player } from './Player';
 import type { Board } from './Board';
 import type { Dice } from './Dice';
@@ -36,10 +37,10 @@ export class TurnManager {
       if (!player) return;
       if (player.inJail) {
         // Already jailed by sendToJail() (3-doubles path) — nothing to do.
-        console.log(`[TurnManager] jail:enter received for ${player.name} — state already set by sendToJail()`);
+        dlog(`[TurnManager] jail:enter received for ${player.name} — state already set by sendToJail()`);
         return;
       }
-      console.log(
+      dlog(
         `[TurnManager] jail:enter received for ${player.name} (external trigger — tile or card). ` +
         `Setting inJail=true, position=10, jailTurns=0 (was position=${player.position})`,
       );
@@ -58,7 +59,7 @@ export class TurnManager {
   startTurn(): void {
     this._turnEndedThisRound = false;
     this.phase = 'WAITING_FOR_ROLL';
-    console.log(`[TurnManager] startTurn: player=${this.currentPlayer.name} (${this.currentPlayer.id}), position=${this.currentPlayer.position}`);
+    dlog(`[TurnManager] startTurn: player=${this.currentPlayer.name} (${this.currentPlayer.id}), position=${this.currentPlayer.position}`);
     bus.emit('turn:start', { playerId: this.currentPlayer.id });
   }
 
@@ -95,7 +96,7 @@ export class TurnManager {
     this.phase = 'LANDING';
     const player = this.currentPlayer;
 
-    console.log(
+    dlog(
       `[TurnManager] resolveLanding: currentPlayer=${player.name} (${player.id}), ` +
       `position=${player.position}, phase=${this.phase}`,
     );
@@ -107,7 +108,7 @@ export class TurnManager {
     }
 
     const tile = this.board.getTile(player.position);
-    console.log(
+    dlog(
       `[TurnManager] onLand → tile[${player.position}] "${tile.name}" (${tile.type}) ` +
       `for player=${player.name}`,
     );
@@ -150,13 +151,13 @@ export class TurnManager {
    */
   endTurn(): void {
     if (this._turnEndedThisRound) {
-      console.warn(
+      dwarn(
         `[TurnManager] endTurn BLOCKED by re-entry guard — ` +
         `player=${this.currentPlayer.name}, phase=${this.phase}`,
       );
       return;
     }
-    console.log(`[TurnManager] endTurn: player=${this.currentPlayer.name}, phase=${this.phase}`);
+    dlog(`[TurnManager] endTurn: player=${this.currentPlayer.name}, phase=${this.phase}`);
     this._turnEndedThisRound = true;
     this.phase = 'END_TURN';
     bus.emit('turn:end', { playerId: this.currentPlayer.id });
@@ -204,7 +205,7 @@ export class TurnManager {
       return;
     }
 
-    console.log(
+    dlog(
       `[TurnManager] movePlayer: ${player.name} | ` +
       `pos ${from} + ${steps} steps → ${to}` +
       (passedGo ? ' (passed GO)' : '') +
@@ -251,7 +252,7 @@ export class TurnManager {
         // point endTurn fires asynchronously from an animation callback).
         // Emitting jail:stay lets GameScene call safeEndTurn(100), moving the
         // entire turn-advance out of the pointerdown call stack.
-        console.log(`[TurnManager] jail:stay emitted for ${player.name} — deferring endTurn to GameScene`);
+        dlog(`[TurnManager] jail:stay emitted for ${player.name} — deferring endTurn to GameScene`);
         bus.emit('jail:stay', { playerId: player.id });
       }
     }

@@ -16,8 +16,15 @@ during the collaborative development of this project.
 | Build tool | Vite |
 | State | Custom EventBus + plain classes |
 
-The game supports 2–6 players, all standard Monopoly rules, a full card system,
-buy/auction prompts, jail logic, and a dev-mode player switcher for testing.
+The game supports 2–6 players, the full turn loop (dice, doubles, movement, rent,
+tax, GO salary), both card decks, buy/pass prompts and complete jail logic.
+
+*Corrected 2026-08-01:* this paragraph used to claim "all standard Monopoly
+rules" and "buy/auction prompts", and to advertise a dev-mode player switcher.
+There is no auction — declining a property simply ends the turn — houses, hotels
+and mortgages have no interface, and the switcher buttons were removed in
+`a18490a`. See [KNOWNISSUES.md](KNOWNISSUES.md) for the measured current state
+and [ROADMAP.md](ROADMAP.md) for what is planned.
 
 ---
 
@@ -274,8 +281,62 @@ src/
 |---|---|
 | M1 — Foundation | ✅ Complete |
 | M2 — Core Loop | ✅ Complete |
-| M3 — Ownership (houses/hotels, mortgage, color-group enforcement) | 🔲 Pending |
-| M4 — Cards & Jail (all edge cases) | 🔲 Pending |
-| M5 — Multiplayer UI (trade dialog, auction system) | 🔲 Pending |
-| M6 — Polish (animations, sound, save/load, house rules) | 🔲 Pending |
-| M7 — QA (AI opponent, edge-case testing, balance) | 🔲 Pending |
+| M3 — Ownership (houses/hotels, mortgage, color-group enforcement) | 🟡 Model written and tested; **no UI**, no group rules |
+| M4 — Cards & Jail (all edge cases) | 🟡 Decks and jail work; `goBack` animation and "nearest railroad" outstanding |
+| M5 — Multiplayer UI (trade dialog, auction system) | 🔲 Not started |
+| M6 — Polish (animations, sound, save/load, house rules) | 🔲 Not started — save/load blocked, see ROADMAP |
+| M7 — QA (AI opponent, edge-case testing, balance) | 🟡 100 unit tests + a headless playtest in CI; no AI |
+
+---
+
+## Hardening pass — 2026-08-01
+
+Portfolio pass over the whole repo. No gameplay rules were changed.
+
+### The build was broken and nobody knew
+
+`npm run build` (`tsc && vite build`) **failed on a clean checkout** with three
+`TS2353` errors in `BootScene`: `this.make.graphics({ add: false })` no longer
+type-checks, because Phaser dropped `add` from `Graphics.Options` in favour of an
+`addToScene` second argument. The runtime still honours `config.add`, so the dev
+server worked perfectly — Vite transpiles without type-checking — and the type
+error only ever surfaced in a command nobody ran. There had therefore never been
+a production build, which is also why there was no demo.
+
+Fixed to `this.make.graphics({}, false)`, which is behaviour-identical.
+
+### The model no longer depends on Phaser
+
+`config.ts` imported Phaser purely to type `GAME_CONFIG`, which dragged Phaser —
+and therefore a DOM requirement — into every model file that reads the rules. The
+Phaser options moved to `main.ts`, leaving `game/`, `tiles/`, `cards/` and
+`utils/` runnable under plain Node. That is what made the unit suite possible
+without jsdom or a canvas shim.
+
+### Tests
+
+100 Vitest tests over the model, weighted towards the bugs in this log: the
+positive-modulo fix, dice staying in 1–6, deck exhaustion and reshuffling, the
+jail state machine, bank stock conservation, and the turn-end guards. One test
+deliberately documents that `_turnEndedThisRound` **cannot** block a stale
+`endTurn` — that is `GameScene.turnGen`'s job — so the counter cannot be removed
+later as apparent duplication.
+
+`tools/playtest.mjs` drives the built game in headless Chromium: 45 seeded turns,
+failing on any console error or inconsistent state. A given seed reproduces the
+final positions and cash exactly, run to run.
+
+### Smaller fixes
+
+- **Menu player-count highlight** never updated: clicking "3" rebuilt the rows but
+  left "2" highlighted, because the button colours were set once at creation.
+- **Stale HUD caption** — the sidebar still read "▶ TAKE TURN = switch active
+  player" after `a18490a` deleted those buttons. Removed; the debug switch is now
+  reachable as `bus.emit('debug:forcePlayer', { index })` in dev builds.
+- **Seeding was unreachable.** `GameScene` accepted `data.seed` but `MenuScene`
+  never passed one, so the documented "reproducible games" feature could not be
+  used. Now read from `?seed=` in the URL, and `PRNG.seed()` replaces the
+  `rng['state']` private-field poke.
+- **Logging** — 32 `console.log`/`warn` calls now route through `src/utils/log.ts`,
+  silent unless `?debug=1` or the dev server. `console.error` untouched.
+- Menu setup rows centred under the title instead of hanging off to the left.

@@ -71,12 +71,6 @@ export class UIScene extends Phaser.Scene {
       this.playerPanel.update(data.players, data.players[0].id);
     }
 
-    // ── Dev note ──────────────────────────────────────────────────────────────
-    this.add.text(this.CX, 760, '▶ TAKE TURN = switch active player', {
-      fontFamily: 'Georgia, serif', fontSize: '8px', color: '#2a3a55',
-      wordWrap: { width: this.PW - 10 }, align: 'center',
-    }).setOrigin(0.5, 1);
-
     // ── Event listeners ───────────────────────────────────────────────────────
     this.events.on('dice:result',    this.onDiceResult,    this);
     this.events.on('turn:start',     this.onTurnStart,     this);

@@ -1,3 +1,5 @@
+import { dlog, dwarn } from '@/utils/log';
+
 // ─── SaveLoad ─────────────────────────────────────────────────────────────────
 // Serialises and deserialises the full game state to/from JSON.
 // The GameScene calls these when the player uses the save/load UI.
@@ -25,7 +27,7 @@ export const SaveLoad = {
     };
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-      console.info('[SaveLoad] Game saved.');
+      dlog('[SaveLoad] Game saved.');
     } catch (e) {
       console.error('[SaveLoad] Failed to save:', e);
     }
@@ -37,7 +39,7 @@ export const SaveLoad = {
       if (!raw) return null;
       const data = JSON.parse(raw) as SerializedGame;
       if (data.version !== VERSION) {
-        console.warn('[SaveLoad] Version mismatch — save data discarded.');
+        dwarn('[SaveLoad] Version mismatch — save data discarded.');
         return null;
       }
       return data;

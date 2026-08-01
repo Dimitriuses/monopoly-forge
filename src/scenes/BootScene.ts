@@ -31,8 +31,11 @@ export class BootScene extends Phaser.Scene {
       topHat: 0x222222, car: 0xe74c3c, dog: 0xe67e22, battleship: 0x3498db,
       iron: 0x95a5a6,   boot: 0x8b4513, wheelbarrow: 0x2ecc71, thimble: 0xf1c40f,
     };
+    // `make.graphics` takes `addToScene` as its second argument; passing
+    // `{ add: false }` inside the config still works at runtime but no longer
+    // type-checks against Phaser 3.87's `Graphics.Options`.
     Object.entries(tokenColors).forEach(([name, color]) => {
-      const g = this.make.graphics({ add: false });
+      const g = this.make.graphics({}, false);
       g.fillStyle(color, 1);
       g.fillCircle(16, 16, 14);
       g.generateTexture(`token_${name}`, 32, 32);
@@ -40,14 +43,14 @@ export class BootScene extends Phaser.Scene {
     });
 
     // House / hotel
-    const houseG = this.make.graphics({ add: false });
+    const houseG = this.make.graphics({}, false);
     houseG.fillStyle(0x27ae60, 1);
     houseG.fillRect(2, 6, 16, 12);
     houseG.fillTriangle(0, 6, 10, 0, 20, 6);
     houseG.generateTexture('house', 20, 18);
     houseG.destroy();
 
-    const hotelG = this.make.graphics({ add: false });
+    const hotelG = this.make.graphics({}, false);
     hotelG.fillStyle(0xe74c3c, 1);
     hotelG.fillRect(2, 6, 22, 14);
     hotelG.fillTriangle(0, 6, 13, 0, 26, 6);

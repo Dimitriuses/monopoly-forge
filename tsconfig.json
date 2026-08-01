@@ -4,6 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": ["ES2020", "DOM"],
+    "types": ["vite/client"],
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,

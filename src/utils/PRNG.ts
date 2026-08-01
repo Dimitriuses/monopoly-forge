@@ -8,6 +8,11 @@ export class PRNG {
     this.state = seed ?? Math.floor(Math.random() * 0xffffffff);
   }
 
+  /** Re-seed in place. Two PRNGs given the same seed emit the same sequence. */
+  seed(value: number): void {
+    this.state = value | 0;
+  }
+
   /** Returns a float in [0, 1) */
   next(): number {
     this.state |= 0;

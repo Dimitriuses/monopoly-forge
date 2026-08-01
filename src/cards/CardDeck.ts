@@ -1,5 +1,6 @@
 import { rng } from '@/utils/PRNG';
 import { bus } from '@/utils/EventBus';
+import { dlog, dwarn } from '@/utils/log';
 import type { Player } from '@/game/Player';
 import type { Board } from '@/game/Board';
 import type { Bank } from '@/game/Bank';
@@ -39,7 +40,7 @@ export class CardDeck {
     if (this.draw.length === 0) {
       if (this.discard.length === 0) {
         // All cards are currently held by players (GOOJ cards not yet returned).
-        console.warn('[CardDeck] Both draw and discard piles are empty.');
+        dwarn('[CardDeck] Both draw and discard piles are empty.');
         return undefined;
       }
       this.draw = rng.shuffle(this.discard);
@@ -64,7 +65,7 @@ export class CardEffects {
 
   execute(card: Card, player: Player): void {
     const a = card.action;
-    console.log(
+    dlog(
       `[CardEffects] execute: card="${card.description}", action=${a.type}, ` +
       `player=${player.name}, position=${player.position}`,
     );
@@ -81,18 +82,18 @@ export class CardEffects {
         player.position = 10;
         player.inJail = true;
         player.jailTurns = 0;
-        console.log(`[CardEffects] goToJail: ${player.name} → position=10`);
+        dlog(`[CardEffects] goToJail: ${player.name} → position=10`);
         bus.emit('jail:enter', { playerId: player.id, reason: 'card' });
         break;
       case 'goBack': {
         const from = player.position;
         const to   = (from - a.spaces + 40) % 40;
         const destTile = this.board.getTile(to);
-        console.log(
+        dlog(
           `[CardEffects] goBack ${a.spaces} spaces: ${player.name} pos ${from} → ${to} ` +
           `(tile: "${destTile.name}" [${destTile.type}])`,
         );
-        console.warn(
+        dwarn(
           `[CardEffects] ⚠️  goBack emits player:move with steps=${a.spaces} and from=${from}. ` +
           `moveTokenStepByStep animates FORWARD ((from + s) % 40), so the token will visually ` +
           `walk to tile ${(from + a.spaces) % 40} instead of backward to ${to}. ` +
@@ -106,21 +107,21 @@ export class CardEffects {
         break;
       }
       case 'collectFromBank':
-        console.log(`[CardEffects] collectFromBank: ${player.name} collects $${a.amount}`);
+        dlog(`[CardEffects] collectFromBank: ${player.name} collects $${a.amount}`);
         this.bank.payPlayer(player, a.amount);
         break;
       case 'payBank':
-        console.log(`[CardEffects] payBank: ${player.name} pays $${a.amount}`);
+        dlog(`[CardEffects] payBank: ${player.name} pays $${a.amount}`);
         this.bank.collectTax(player, a.amount);
         break;
       case 'collectFromAll':
-        console.log(`[CardEffects] collectFromAll: ${player.name} collects $${a.amount} from each player`);
+        dlog(`[CardEffects] collectFromAll: ${player.name} collects $${a.amount} from each player`);
         this.players.filter((p) => p.id !== player.id && !p.isBankrupt).forEach((p) => {
           this.bank.transferBetweenPlayers(p, player, a.amount);
         });
         break;
       case 'payAll':
-        console.log(`[CardEffects] payAll: ${player.name} pays $${a.amount} to each player`);
+        dlog(`[CardEffects] payAll: ${player.name} pays $${a.amount} to each player`);
         this.players.filter((p) => p.id !== player.id && !p.isBankrupt).forEach((p) => {
           this.bank.transferBetweenPlayers(player, p, a.amount);
         });
@@ -135,12 +136,12 @@ export class CardEffects {
             total += pt.houses * a.houseCost + (pt.hasHotel ? a.hotelCost : 0);
           }
         });
-        console.log(`[CardEffects] repairs: ${player.name} pays $${total} (houses×$${a.houseCost}, hotels×$${a.hotelCost})`);
+        dlog(`[CardEffects] repairs: ${player.name} pays $${total} (houses×$${a.houseCost}, hotels×$${a.hotelCost})`);
         this.bank.collectTax(player, total);
         break;
       }
       case 'getOutOfJail':
-        console.log(`[CardEffects] getOutOfJail: ${player.name} now holds ${player.getOutOfJailCards + 1} GOOJ card(s)`);
+        dlog(`[CardEffects] getOutOfJail: ${player.name} now holds ${player.getOutOfJailCards + 1} GOOJ card(s)`);
         player.getOutOfJailCards++;
         break;
     }
@@ -150,13 +151,13 @@ export class CardEffects {
     const from  = player.position;
     const steps = (targetTile - from + 40) % 40;
     if (steps === 0) {
-      console.log(`[CardEffects] advanceTo tile=${targetTile}: ${player.name} already there — no move`);
+      dlog(`[CardEffects] advanceTo tile=${targetTile}: ${player.name} already there — no move`);
       return; // already on the target tile
     }
 
     const passedGo = from + steps >= 40;
     const destTile = this.board.getTile(targetTile);
-    console.log(
+    dlog(
       `[CardEffects] advanceTo: ${player.name} pos ${from} → tile ${targetTile} ` +
       `"${destTile.name}" (${steps} steps${passedGo ? ', passes GO' : ''})`,
     );
