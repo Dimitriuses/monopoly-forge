@@ -16,10 +16,17 @@ const BORDER_COLORS: Record<NotifType, number> = {
   danger:  0xe74c3c,
 };
 
-const TOAST_W = 320;
+// Toasts live in the column between the board (which ends at x=760) and the HUD
+// (which starts at x=1055), aligned with the property panel above them. They used
+// to be centred under the board at y=760, directly on top of the ROLL DICE button
+// at y=738 — every notification covered the control you were about to press.
+//
+// The property panel occupies the top of this column down to y=480, so the stack
+// has room for five toasts before it would reach it; they expire long before that.
+const TOAST_W = 270;
 const TOAST_H = 54;
-const TOAST_X = 520;   // center of board area
-const TOAST_BASE_Y = 760;
+const TOAST_X = 905;   // centre of the 770–1045 column
+const TOAST_BASE_Y = 750;
 
 interface Toast {
   container: Phaser.GameObjects.Container;

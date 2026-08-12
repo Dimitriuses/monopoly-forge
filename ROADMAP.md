@@ -112,14 +112,17 @@ Not done, and moved to M6: auctioning houses when the bank runs short of them.
       matches the limited-supply rule; what is missing is the other half, where
       several players want the last few houses and the standard rules auction
       them. M5's `Auction` is the machinery, but it bids on a tile, not on stock.
-- [ ] **Fill the rest of the right-hand column.** The property panel now occupies
-      x=770–1045 down to y=480; the turn log belongs underneath it.
-- [ ] **Stop toasts covering the roll button.** Notifications stack upward from
-      y=760, directly over the ROLL DICE button at y=738.
-- [ ] **Update the property panel instead of rebuilding it.** `PropertyPanel.show`
-      destroys and re-creates every text object, and `refreshPanel()` calls it
-      after each build, sale, mortgage and turn change. Not measurable at this
-      size, but it is churn where a diff would do.
+- [ ] **Fill the rest of the right-hand column.** The property panel holds
+      y=40–480 of it and the toast stack rises from y=750; a turn log belongs in
+      the gap between them, and would want the toasts to become its newest entries
+      rather than a second, parallel notification system.
+- [x] **Stop toasts covering the roll button.** Notifications moved out of the
+      board's centre line and into the right-hand column (x=770–1040, stacking up
+      from y=750), aligned under the property panel and clear of every button.
+- [ ] **Update the panels instead of rebuilding them.** `PropertyPanel.show`,
+      `AuctionPanel.show` and `TradePanel.show` each destroy and re-create every
+      child, on every build, sale, mortgage, bid and offer edit. Not measurable at
+      this size, but it is churn where a diff would do.
 - [ ] Sound effects, and a proper token sprite instead of a coloured circle.
 
 ## M7 — Quality

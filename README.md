@@ -74,7 +74,7 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 - **Auctions** — a declined property goes under the hammer: round-robin bidding, a pass forfeits, and a per-bidder clock passes for anyone who lets it run out
 - **Trading** — deeds, cash and jail cards in one offer, with propose / accept / decline / counter, netted cash, and buildings blocking the lots they stand on
 - **Bankruptcy that settles** — a debt is met from cash, then by selling buildings and mortgaging deeds, and only then does the player go under, handing their whole estate to the creditor. The last solvent player wins
-- **HUD** — animated dice, per-player cash, active-player highlight, jail markers, stacking toast notifications
+- **HUD** — animated dice, per-player cash, active-player highlight, jail markers, and toast notifications stacking in the column beside the board, clear of the controls
 - **Determinism** — `?seed=12345` replays an identical game
 
 ### Not implemented yet
