@@ -8,20 +8,6 @@ reproducible; anything merely *planned* lives in [ROADMAP.md](ROADMAP.md) instea
 
 ## Gameplay
 
-### "Go Back 3 Spaces" animates the wrong way round
-
-**Severity:** visual only — the game state stays correct.
-
-`CardEffects.goBack` sets `player.position` backwards correctly, then emits
-`player:move` with `steps: 3`. `GameScene.moveTokenStepByStep` always walks
-*forward* (`(from + s) % 40`), so the token visibly travels three tiles clockwise
-and then jumps back to the right tile when the next redraw happens. Landing
-resolves on the correct tile, so rent, cards and taxes are all charged properly.
-
-The code warns about this on the console (`dwarn` in `CardEffects.goBack`), which
-is how it was found. Fixing it needs a signed step direction threaded through the
-`player:move` payload and the animation loop.
-
 ### Declining a property does not open an auction
 
 Under tournament rules, a declined property goes to auction between all players.
@@ -39,18 +25,9 @@ misleading; renaming it is a small, safe cleanup.
   the tiles stay owned by a player who is out of the game, and keep charging rent;
 - there is no chance to mortgage or sell to raise the money first;
 - `Player.pay` clamps at zero (`Math.max(0, …)`), so a player can never actually
-  owe more than they hold, which is why partial payment silently "works".
-
-### Rent does not double on an unimproved colour group
-
-Under the standard rules, owning every lot in a colour group doubles the bare-lot
-rent until houses go up. `PropertyTile.currentRent` returns `rentTiers[houses]`
-with no view of the board, so it cannot know. The property panel *does* show
-`★ Group complete`, which makes the omission easy to spot in play.
-
-Fixing it means resolving rent where the board is in scope — the `rent:pay`
-handler in `GameScene`, which already resolves railroad and utility rent —
-using `ownsWholeGroup` from `BuildRules`.
+  owe more than they hold, which is why partial payment silently "works";
+- a Get Out of Jail Free card in their hand is not returned to its deck. Spending
+  one puts it back (M4); going bankrupt holding one still takes it out of play.
 
 ### Building is only offered on the owner's own turn
 
@@ -66,14 +43,6 @@ are gated.
 the lot silently ends up bare and the buildings vanish. Rather than change the
 bank, `BuildRules.canSellHotel` refuses the sale in that case and says why. The
 standard rules would instead force an auction of the scarce houses.
-
-### The two "nearest Railroad" Chance cards are fixed destinations
-
-`ch4` and `ch5` advance to tiles 5 and 15 unconditionally rather than to the
-railroad nearest the player, and `ch12` ("Advance to Reading Railroad") also
-targets tile 5, so two of the sixteen Chance cards have the same effect. The
-standard deck also charges double rent on a railroad reached this way; that is
-not implemented.
 
 ### Duplicate tokens are allowed
 
@@ -122,6 +91,10 @@ ending the turn (`safeEndTurn(300)`, `(400)`, `(700)`, `(800)`, `(100)`). The
 delays are tuned by feel against animation lengths rather than sequenced from
 completion callbacks, so changing an animation duration can reorder events. It
 has been stable across long playtests, but it is timing-coupled by construction.
+
+*Narrowed in M4:* how much rent a tile charges is no longer among those side
+effects — it moved to `game/Rent.ts` and is unit-tested. What remains in the
+scene handlers is the sequencing: who pays whom, when, and how long to wait.
 
 ### The property panel is rebuilt from scratch on every refresh
 

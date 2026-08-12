@@ -138,10 +138,12 @@ export class TurnManager {
   /** Use a Get Out of Jail Free card */
   useGetOutOfJailCard(player: Player): void {
     if (!player.inJail || player.getOutOfJailCards <= 0) return;
-    player.getOutOfJailCards--;
+    // The card goes out with the event so it can be put back in its deck —
+    // GameScene owns the decks and does that. Nothing else consumes it.
+    const card = player.jailCards.pop();
     player.inJail    = false;
     player.jailTurns = 0;
-    bus.emit('jail:exit',       { playerId: player.id, method: 'card' });
+    bus.emit('jail:exit',       { playerId: player.id, method: 'card', card });
     bus.emit('ui:notification', { message: `${player.name} used a Get Out of Jail Free card!`, type: 'success' });
     this.phase = 'WAITING_FOR_ROLL';
   }

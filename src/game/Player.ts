@@ -1,5 +1,6 @@
 import type { TokenType } from '@/config';
 import { STARTING_CASH } from '@/config';
+import type { Card } from '@/cards/CardDeck';
 
 export class Player {
   readonly id: string;
@@ -7,10 +8,12 @@ export class Player {
   readonly token: TokenType;
 
   cash: number;
-  position: number;        // board index 0–39
+  position: number;        // board index, 0 … board.size - 1
   inJail: boolean;
   jailTurns: number;       // consecutive turns spent in jail (0–3)
-  getOutOfJailCards: number;
+  /** The actual Get Out of Jail Free cards held, so spending one can return it
+   *  to the deck it came from rather than withdrawing it from the game. */
+  jailCards: Card[];
   ownedTileIds: Set<number>;
   isBankrupt: boolean;
   doublesStreak: number;   // consecutive doubles this turn (resets on non-double or jail)
@@ -23,10 +26,14 @@ export class Player {
     this.position = 0;
     this.inJail = false;
     this.jailTurns = 0;
-    this.getOutOfJailCards = 0;
+    this.jailCards = [];
     this.ownedTileIds = new Set();
     this.isBankrupt = false;
     this.doublesStreak = 0;
+  }
+
+  get getOutOfJailCards(): number {
+    return this.jailCards.length;
   }
 
   get netWorth(): number {

@@ -64,8 +64,8 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 - **Turn engine** — phase FSM (`WAITING_FOR_ROLL → ROLLING → MOVING → LANDING → END_TURN`), doubles grant another roll, three in a row send you to jail
 - **Board** — all 40 tiles with correct groups, prices, rent tiers and mortgage values, drawn procedurally
 - **Movement** — tile-by-tile animated walk, GO salary paid on passing (and on landing exactly)
-- **Property** — buy prompt for streets, railroads and utilities; rent from the tier table; railroad rent by how many the owner holds; utility rent at 4× or 10× the dice
-- **Cards** — 16 Chance and 17 Community Chest, with advance / go-back / jail / collect / pay / pay-per-house effects, drawn from a shuffled deck with a discard pile that reshuffles
+- **Property** — buy prompt for streets, railroads and utilities; rent from the tier table, doubled on an unimproved complete colour group; railroad rent by how many the owner holds; utility rent at 4× or 10× the dice
+- **Cards** — 16 Chance and 17 Community Chest, with advance / go-back / jail / collect / pay / pay-per-house effects, drawn from a shuffled deck with a discard pile that reshuffles. "Nearest railroad" and "nearest utility" search the board rather than naming a tile, and charge the double / ten-times-dice rate for arriving by card; a spent Get Out of Jail Free card goes back under its own deck
 - **Jail** — enter by tile, card or three doubles; leave by doubles, a $50 fine, a Get Out of Jail Free card, or the forced fine after three turns
 - **Ownership on the board** — an owner-coloured band with the owner's seat number on every owned tile, `M` when it is mortgaged, houses and hotels drawn along the colour stripe
 - **Development** — click a tile for its rent ladder, costs and owner; build and sell houses and hotels, mortgage and redeem, with the colour-group and even-building rules enforced and every refusal explained
@@ -76,11 +76,9 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 
 Named honestly, because the board looks more finished than it is:
 
-- **Rent does not double on an unimproved colour group.** The panel tells you the
-  group is complete; the rent charged does not yet reflect it.
+- **No auctions and no trading.** Declining a property just ends the turn.
 - **Building is offered only on your own turn**, where the real game lets you
   develop at almost any point.
-- **No auctions and no trading.** Declining a property just ends the turn.
 - **Bankruptcy does not settle the estate** — a broke player is skipped, but their
   properties are not transferred.
 - **Save/load is not wired up**, though the serialiser exists.
@@ -123,7 +121,7 @@ Three axes of customisation, none of which should require editing engine code:
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 129 unit tests pin down.
+it is what the 154 unit tests pin down.
 
 ### What already supports it
 
@@ -199,7 +197,7 @@ Three consequences worth the trouble:
 **The model runs in Node.** `src/config.ts` deliberately contains no Phaser
 import — the `Phaser.Game` options live in `main.ts` instead — so everything under
 `game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 129 unit tests run in ~8 s with no jsdom, and it is the seam a
+That is what lets 154 unit tests run in ~8 s with no jsdom, and it is the seam a
 headless AI opponent would plug into.
 
 **Games are reproducible.** Every dice roll and both deck shuffles draw from one
@@ -224,6 +222,7 @@ src/
 │   ├── Dice.ts           Rolls via the seeded PRNG
 │   ├── Bank.ts           Transfers, purchase, mortgage, house/hotel stock
 │   ├── BuildRules.ts     Colour-group, even-building and mortgage legality
+│   ├── Rent.ts           What a tile charges: monopolies, railroads, utilities
 │   └── TurnManager.ts    Phase FSM, doubles, jail, turn order
 ├── tiles/                Tile base class ▸ PropertyTile, SpecialTiles, Ownable
 ├── cards/CardDeck.ts     Deck, discard/reshuffle, CardEffects, both decks
@@ -265,7 +264,7 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test                # 129 unit tests, plain Node, ~8 s
+npm test                # 154 unit tests, plain Node, ~8 s
 npm run typecheck       # tsc --noEmit
 npm run playtest        # build first: plays 30 seeded turns in a headless browser
 npm run screenshots

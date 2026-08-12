@@ -5,9 +5,9 @@ Where Monopoly Forge is going. Defects that exist *today* are listed separately 
 
 **Status:** active. The turn loop, cards, jail, rent and property development all
 work end to end — a seeded game runs with no console errors (`npm run playtest`).
-M3 is done: ownership is drawn on the board, tiles are clickable, and houses,
-hotels and mortgages are reachable from the property panel. Next is M4's card and
-jail edge cases.
+M3 put ownership on the board and made houses, hotels and mortgages reachable;
+M4 closed the card, jail and rent rules behind them. What is left before this is
+a game you can *finish* is M5: auctions, trading and a real bankruptcy settlement.
 
 **The destination is M8: an engine for Monopoly-style games** — configurable maps,
 rules and presentation. M1–M7 build the classic game that the engine has to be able
@@ -37,28 +37,56 @@ is cheaper to do early — see the sequencing note at the end.
 - [x] **Render houses and hotels.** `BootScene`'s `house` and `hotel` textures are
       drawn along each lot's colour stripe, on whichever side of the board it sits.
 
-Deliberately left out of M3, and now listed in KNOWNISSUES: rent does not double on
-an unimproved lot in a complete group, and building is only offered on the owner's
-own turn.
+Three gaps found while building it are listed in KNOWNISSUES and scheduled above:
+rent not doubling on an unimproved complete group (M4), building being offered
+only on the owner's own turn and the hotel sale blocked by a house shortage (both
+M5, which brings the machinery they need), and the panel rebuilding itself on
+every refresh (M6).
 
-## M4 — Cards and jail edge cases · next
+## M4 — Cards, jail and rent edge cases · done
 
-- [ ] **Fix the `goBack` animation direction** — thread a signed direction through
-      `player:move` so the token walks backwards.
-- [ ] **Real "nearest railroad" / "nearest utility" cards**, replacing the two
-      hard-coded destinations, including the doubled railroad rent when arriving
-      by card.
-- [ ] **Get Out of Jail Free cards return to the bottom of their deck** when
-      spent. They are currently withheld from the deck for the rest of the game;
-      `CardDeck` handles the resulting shortage gracefully, but it is not correct.
+- [x] **Fix the `goBack` animation direction.** `player:move` carries
+      `direction: 1 | -1`, and `moveTokenStepByStep` walks
+      `board.move(from, s * direction)`. Verified against the real canvas: the
+      token now walks 7 → 6 → 5 → 4 instead of travelling forwards to 10 and
+      snapping back.
+- [x] **Real "nearest railroad" / "nearest utility" cards.** A new
+      `advanceToNearest` action scans forward from where the player stands
+      (skipping the tile they are on), so it needs no hard-coded index and works
+      on any map. Chance `ch4` is the railroad, `ch5` the utility — which also
+      ends `ch5` duplicating "Advance to Reading Railroad".
+- [x] **The rent a card imposes.** Arriving by card charges double on a railroad
+      and ten times the dice on a utility however many the owner holds. The rule
+      travels as a `rent:modifier` event emitted before the move and is consumed
+      by the landing it causes; it is cleared at `turn:start` so it can never
+      leak into another turn.
+- [x] **Get Out of Jail Free cards return to the bottom of their deck** when
+      spent. `Player` holds the card itself rather than a tally, `jail:exit`
+      carries it out, and `CardDeck.owns` tells `GameScene` which deck to put it
+      under. They are no longer withdrawn from the game.
+- [x] **Double the rent on an unimproved colour group** — the gap M3's panel made
+      visible by showing `★ Group complete` on a group charging single rent.
 
-## M5 — Multiplayer interaction
+Rent resolution moved out of `GameScene` and into `game/Rent.ts` to make those
+last two rules testable: `quoteRent` is where a railroad, a utility or an
+unimproved monopoly works out what it charges, and it runs in plain Node.
+
+## M5 — Multiplayer interaction · next
 
 - [ ] **Auctions.** The event is already named `property:auction`; only the
       Buy/Pass prompt exists. Needs round-robin bidding with a per-turn timer and
-      a pass-forfeits rule.
+      a pass-forfeits rule. The same machinery settles the house shortage:
+      `BuildRules.canSellHotel` currently *refuses* to break a hotel when the bank
+      holds fewer than four houses (because `Bank.sellHotel` would silently
+      destroy them), where the standard rules auction the scarce houses instead.
 - [ ] **Trading.** Offer/counter-offer over properties, cash and jail cards, with
       both sides confirming.
+- [ ] **Let players manage their estate outside their own turn.** M3's panel only
+      offers build / sell / mortgage buttons to `turnManager.currentPlayer`
+      (`GameScene.actionsFor`); the real game allows it at almost any point.
+      Inspecting a tile already works at any time — only the actions are gated,
+      and ungating them needs the same "who is acting right now" notion as
+      auctions and trading.
 - [ ] **Proper bankruptcy settlement** — forced mortgaging and selling before
       being declared bankrupt, then transferring the whole estate to the creditor.
       This is a prerequisite for the win condition meaning anything.
@@ -74,6 +102,10 @@ own turn.
       x=770–1045 down to y=480; the turn log belongs underneath it.
 - [ ] **Stop toasts covering the roll button.** Notifications stack upward from
       y=760, directly over the ROLL DICE button at y=738.
+- [ ] **Update the property panel instead of rebuilding it.** `PropertyPanel.show`
+      destroys and re-creates every text object, and `refreshPanel()` calls it
+      after each build, sale, mortgage and turn change. Not measurable at this
+      size, but it is churn where a diff would do.
 - [ ] Sound effects, and a proper token sprite instead of a coloured circle.
 
 ## M7 — Quality

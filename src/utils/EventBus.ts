@@ -62,6 +62,7 @@ export type GameEvent =
   | 'property:sellHouse'
   | 'property:sellHotel'
   | 'rent:pay'
+  | 'rent:modifier'
   | 'tax:pay'
   | 'card:draw'
   | 'card:execute'

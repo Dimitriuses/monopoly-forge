@@ -58,6 +58,12 @@ put a house on a lot whose colour group you do not own. Legality lives in
 there first. The checks return a *reason*, which is what the property panel shows
 when a button is dead.
 
+**8. A tile does not price itself.** `PropertyTile.currentRent` is the tier table
+and nothing more. What is actually charged — doubled for an unimproved colour
+group, scaled by how many railroads the owner holds, ten times the dice when a
+card sent the player there — comes from `quoteRent` in `game/Rent.ts`. Resolve
+rent there, not in a scene handler, so it stays testable in Node.
+
 **4. Use `dlog` / `dwarn`, not `console.log`.** `src/utils/log.ts` is silent
 unless switched on (dev server, or `?debug=1` on any build). `console.error` is
 deliberately *not* routed through it — real faults should always surface.
@@ -89,10 +95,22 @@ re-registering the button with Phaser's input plugin mid-event — after which t
 next player's roll button is silently dead. `GameScene` defers with
 `safeEndTurn(100)` to get out of the pointer-event frame.
 
+### A card's rent rate has to survive the walk to the tile
+
+"Advance to the nearest railroad" charges double, and the tile it sends you to has
+no idea how you arrived. `CardEffects` emits `rent:modifier` *before* `player:move`;
+`GameScene` holds it in `arrivalRent` through the animation, hands it to
+`quoteRent` at the landing, and clears it. It is also cleared at `turn:start`, so a
+card whose tile turns out to be unowned cannot overcharge somebody next turn.
+
+The GO salary fires *during* that walk (`onPass` → `rent:pay` with `reason: 'go'`),
+so that branch must return before anything consumes `arrivalRent`.
+
 ### Cards that move the player must not also end the turn
 
 In the `card:draw` handler, actions in `selfTerminating`
-(`advanceTo`, `advanceToGo`, `goBack`, `goToJail`) resolve their own turn end via
+(`advanceTo`, `advanceToNearest`, `advanceToGo`, `goBack`, `goToJail`) resolve
+their own turn end via
 the movement animation → `resolveLanding()` → `onLand()`, or via `jail:enter`.
 Calling `safeEndTurn` for them as well races the animation (N tiles × 110 ms) and
 lands `onLand` on the *next* player.

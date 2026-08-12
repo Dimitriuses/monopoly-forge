@@ -9,6 +9,7 @@ import type { Bank } from '@/game/Bank';
 
 export type CardAction =
   | { type: 'advanceTo';      tile: number }
+  | { type: 'advanceToNearest'; kind: 'railroad' | 'utility' }
   | { type: 'advanceToGo' }
   | { type: 'goToJail' }
   | { type: 'goBack';         spaces: number }
@@ -31,9 +32,22 @@ export interface Card {
 export class CardDeck {
   private draw: Card[];
   private discard: Card[] = [];
+  private readonly source: readonly Card[];
 
   constructor(cards: Card[]) {
+    this.source = cards;
     this.draw = rng.shuffle([...cards]);
+  }
+
+  /** Whether this deck is where a card came from — how a spent Get Out of Jail
+   *  Free card finds its way home without carrying its origin around. */
+  owns(card: Card): boolean {
+    return this.source.includes(card);
+  }
+
+  /** Put a card back underneath the draw pile, so it returns without a reshuffle. */
+  returnToBottom(card: Card): void {
+    this.draw.unshift(card);
   }
 
   drawCard(): Card | undefined {
@@ -75,8 +89,27 @@ export class CardEffects {
       case 'advanceTo':
         this.advanceTo(player, a.tile);
         break;
+      case 'advanceToNearest': {
+        const target = this.nearest(player.position, a.kind);
+        if (target === null) {
+          dwarn(`[CardEffects] advanceToNearest: this map has no ${a.kind} — card ignored`);
+          break;
+        }
+        // Arriving by card changes what the tile charges: a railroad costs twice
+        // its usual rate, a utility ten times the dice however many the owner
+        // holds. The tile cannot know how the player got there, so the rule
+        // travels with the move and is consumed by whoever resolves the rent.
+        bus.emit('rent:modifier', {
+          playerId: player.id,
+          tileId:   target,
+          rule:     a.kind === 'railroad' ? 'railroadDouble' : 'utilityTenTimes',
+        });
+        dlog(`[CardEffects] advanceToNearest ${a.kind}: ${player.name} pos ${player.position} → ${target}`);
+        this.advanceTo(player, target);
+        break;
+      }
       case 'advanceToGo':
-        this.advanceTo(player, 0);
+        this.advanceTo(player, this.board.anchor('start'));
         break;
       case 'goToJail':
         player.position = this.board.anchor('jail');
@@ -93,16 +126,13 @@ export class CardEffects {
           `[CardEffects] goBack ${a.spaces} spaces: ${player.name} pos ${from} → ${to} ` +
           `(tile: "${destTile.name}" [${destTile.type}])`,
         );
-        dwarn(
-          `[CardEffects] ⚠️  goBack emits player:move with steps=${a.spaces} and from=${from}. ` +
-          `moveTokenStepByStep animates FORWARD, so the token will visually ` +
-          `walk to tile ${this.board.move(from, a.spaces).to} instead of backward to ${to}. ` +
-          `player.position is correctly set to ${to}, so resolveLanding() will fire on the ` +
-          `right tile — but the token graphic will be in the wrong place.`,
-        );
         player.position = to;
-        // Pass steps so the animation walks backwards tile-by-tile
-        bus.emit('player:move', { playerId: player.id, from, to, steps: a.spaces, isDoubles: false });
+        // direction: -1 makes the animation walk the tiles backwards. Without it
+        // the token used to travel three tiles clockwise and then snap back.
+        // Going back past GO does NOT pay the salary, so no onPass here.
+        bus.emit('player:move', {
+          playerId: player.id, from, to, steps: a.spaces, isDoubles: false, direction: -1,
+        });
         // resolveLanding() fires after animation completes — do NOT call onLand here
         break;
       }
@@ -141,10 +171,21 @@ export class CardEffects {
         break;
       }
       case 'getOutOfJail':
-        dlog(`[CardEffects] getOutOfJail: ${player.name} now holds ${player.getOutOfJailCards + 1} GOOJ card(s)`);
-        player.getOutOfJailCards++;
+        // Hold the card itself: spending it returns it to the deck it came from.
+        player.jailCards.push(card);
+        dlog(`[CardEffects] getOutOfJail: ${player.name} now holds ${player.getOutOfJailCards} GOOJ card(s)`);
         break;
     }
+  }
+
+  /** The next tile of this type going forwards, or null if the map has none.
+   *  Starts one step ahead, so standing on a railroad sends you to the next. */
+  private nearest(from: number, type: 'railroad' | 'utility'): number | null {
+    for (let s = 1; s <= this.board.size; s++) {
+      const index = this.board.move(from, s).to;
+      if (this.board.getTile(index).type === type) return index;
+    }
+    return null;
   }
 
   private advanceTo(player: Player, targetTile: number): void {
@@ -178,8 +219,8 @@ export const CHANCE_CARDS: Card[] = [
   { id: 'ch1',  description: 'Advance to Go. Collect $200.',                          action: { type: 'advanceToGo' } },
   { id: 'ch2',  description: 'Advance to Illinois Ave.',                              action: { type: 'advanceTo', tile: 24 } },
   { id: 'ch3',  description: 'Advance to St. Charles Place.',                         action: { type: 'advanceTo', tile: 11 } },
-  { id: 'ch4',  description: 'Advance to nearest Railroad.',                          action: { type: 'advanceTo', tile: 5 } },
-  { id: 'ch5',  description: 'Advance to nearest Railroad (2).',                      action: { type: 'advanceTo', tile: 15 } },
+  { id: 'ch4',  description: 'Advance to the nearest Railroad. Pay the owner twice the rent.', action: { type: 'advanceToNearest', kind: 'railroad' } },
+  { id: 'ch5',  description: 'Advance to the nearest Utility. Pay the owner ten times the dice.', action: { type: 'advanceToNearest', kind: 'utility' } },
   { id: 'ch6',  description: 'Bank pays you dividend of $50.',                        action: { type: 'collectFromBank', amount: 50 } },
   { id: 'ch7',  description: 'Get Out of Jail Free.',                                 action: { type: 'getOutOfJail' }, isGetOutOfJail: true },
   { id: 'ch8',  description: 'Go Back 3 Spaces.',                                     action: { type: 'goBack', spaces: 3 } },

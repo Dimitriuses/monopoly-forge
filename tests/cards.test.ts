@@ -37,6 +37,22 @@ describe('Standard decks — data integrity', () => {
       }
     }
   });
+
+  // Two Chance cards used to advance to fixed tiles 5 and 15, which made one of
+  // them a duplicate of "Advance to Reading Railroad".
+  it('gives no two Chance cards the same destination', () => {
+    const fixed = CHANCE_CARDS
+      .filter((c) => c.action.type === 'advanceTo')
+      .map((c) => (c.action as { tile: number }).tile);
+    expect(new Set(fixed).size).toBe(fixed.length);
+  });
+
+  it('reaches railroads and utilities by proximity, not by index', () => {
+    const kinds = CHANCE_CARDS
+      .filter((c) => c.action.type === 'advanceToNearest')
+      .map((c) => (c.action as { kind: string }).kind);
+    expect(kinds.sort()).toEqual(['railroad', 'utility']);
+  });
 });
 
 describe('CardDeck — draw / discard cycling', () => {
@@ -62,6 +78,24 @@ describe('CardDeck — draw / discard cycling', () => {
       expect(card).toBeDefined();
       deck.returnCard(card!);
     }
+  });
+
+  it('knows which cards are its own', () => {
+    const chance = new CardDeck(CHANCE_CARDS);
+    expect(chance.owns(CHANCE_CARDS[0])).toBe(true);
+    expect(chance.owns(COMMUNITY_CHEST_CARDS[0])).toBe(false);
+  });
+
+  // A returned Get Out of Jail Free card goes *under* the pile, so it comes back
+  // into play in its own time rather than waiting for a reshuffle.
+  it('puts a card returned to the bottom back on the last draw', () => {
+    const deck = new CardDeck(CHANCE_CARDS);
+    const held = deck.drawCard()!;
+    deck.returnToBottom(held);
+
+    const rest = Array.from({ length: 15 }, () => deck.drawCard()!.id);
+    expect(rest).not.toContain(held.id);
+    expect(deck.drawCard()!.id).toBe(held.id);
   });
 
   it('withholds only the cards a player keeps', () => {
@@ -173,6 +207,67 @@ describe('CardEffects', () => {
     expect(players[1].position).toBe(38);
   });
 
+  // The token used to walk three tiles *clockwise* and snap back, because the
+  // animation only knew how many steps, not which way.
+  it('tells the animation to walk backwards, and pays no GO salary doing it', () => {
+    players[0].position = 1;
+    run({ type: 'goBack', spaces: 3 });
+
+    const move = events.find((e) => e.name === 'player:move')!;
+    expect(move.payload).toMatchObject({ from: 1, to: 38, steps: 3, direction: -1 });
+    expect(events.some((e) => e.name === 'rent:pay')).toBe(false);
+  });
+
+  describe('nearest railroad / utility', () => {
+    // Railroads sit at 5, 15, 25, 35; utilities at 12 and 28.
+    it('advances to the next railroad going forwards', () => {
+      players[0].position = 7;
+      run({ type: 'advanceToNearest', kind: 'railroad' });
+      expect(players[0].position).toBe(15);
+    });
+
+    it('skips the railroad it is standing on rather than staying put', () => {
+      players[0].position = 5;
+      run({ type: 'advanceToNearest', kind: 'railroad' });
+      expect(players[0].position).toBe(15);
+    });
+
+    it('wraps past GO to the first railroad, collecting the salary', () => {
+      players[0].position = 36;
+      run({ type: 'advanceToNearest', kind: 'railroad' });
+      expect(players[0].position).toBe(5);
+      expect(events.some((e) => e.name === 'rent:pay' && e.payload.reason === 'go')).toBe(true);
+    });
+
+    it('advances to the next utility', () => {
+      players[0].position = 20;
+      run({ type: 'advanceToNearest', kind: 'utility' });
+      expect(players[0].position).toBe(28);
+    });
+
+    it('announces the rent rate that arriving by card carries', () => {
+      const rules: unknown[] = [];
+      bus.on('rent:modifier', (p: { rule: unknown }) => rules.push(p.rule));
+
+      players[0].position = 7;
+      run({ type: 'advanceToNearest', kind: 'railroad' });
+      players[1].position = 7;
+      run({ type: 'advanceToNearest', kind: 'utility' }, players[1]);
+
+      expect(rules).toEqual(['railroadDouble', 'utilityTenTimes']);
+    });
+
+    it('emits the rate before the move, so the landing can still see it', () => {
+      const order: string[] = [];
+      bus.on('rent:modifier', () => order.push('rent:modifier'));
+      bus.on('player:move',   () => order.push('player:move'));
+
+      players[0].position = 7;
+      run({ type: 'advanceToNearest', kind: 'railroad' });
+      expect(order).toEqual(['rent:modifier', 'player:move']);
+    });
+  });
+
   it('moves cash to and from the bank', () => {
     run({ type: 'collectFromBank', amount: 150 });
     expect(players[0].cash).toBe(1650);
@@ -215,5 +310,15 @@ describe('CardEffects', () => {
   it('hands out a Get Out of Jail Free card', () => {
     run({ type: 'getOutOfJail' });
     expect(players[0].getOutOfJailCards).toBe(1);
+  });
+
+  // The player holds the card itself, not a tally, so spending it can put that
+  // very card back in the deck it came from.
+  it('gives the player the card itself, and its deck can recognise it', () => {
+    const gooj = CHANCE_CARDS.find((c) => c.isGetOutOfJail)!;
+    effects.execute(gooj, players[0]);
+
+    expect(players[0].jailCards).toEqual([gooj]);
+    expect(new CardDeck(CHANCE_CARDS).owns(players[0].jailCards[0])).toBe(true);
   });
 });

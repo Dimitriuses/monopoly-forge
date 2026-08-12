@@ -4,7 +4,7 @@ import { Player } from '@/game/Player';
 import { Dice } from '@/game/Dice';
 import { Bank } from '@/game/Bank';
 import { TurnManager } from '@/game/TurnManager';
-import { CardDeck, CardEffects, CHANCE_CARDS, COMMUNITY_CHEST_CARDS } from '@/cards/CardDeck';
+import { CardDeck, CardEffects, CHANCE_CARDS, COMMUNITY_CHEST_CARDS, type Card } from '@/cards/CardDeck';
 import { bus } from '@/utils/EventBus';
 import { rng } from '@/utils/PRNG';
 import { dlog, dwarn, isDebugLogging } from '@/utils/log';
@@ -28,6 +28,7 @@ import {
   canMortgage, canUnmortgage, unmortgageCost, ownsWholeGroup,
   type RuleCheck,
 } from '@/game/BuildRules';
+import { quoteRent, countOwnedOfType, type ArrivalRent } from '@/game/Rent';
 
 const TOKEN_HEX: Record<string, string> = {
   topHat: '#222222', car: '#e74c3c', dog: '#e67e22', battleship: '#3498db',
@@ -39,7 +40,8 @@ interface SceneData {
   seed?: number;
 }
 
-interface MovePayload    { playerId: string; from: number; to: number; steps: number; isDoubles: boolean }
+/** `direction: -1` walks the token backwards, for "Go Back 3 Spaces". */
+interface MovePayload    { playerId: string; from: number; to: number; steps: number; isDoubles: boolean; direction?: 1 | -1 }
 interface RentPayload    { debtorId: string; creditorId: string; amount?: number; tileId: number; reason?: string }
 interface TaxPayload     { playerId: string; amount: number; tileId: number }
 interface AuctionPayload { tileId: number; playerId: string; price?: number }
@@ -69,6 +71,9 @@ export class GameScene extends Phaser.Scene {
 
   /** Incremented on every turn:start — stale safeEndTurn timers check against this */
   private turnGen = 0;
+  /** Set by a "nearest railroad / utility" card, consumed by the next rent it
+   *  causes. Cleared at turn:start so it can never leak into another turn. */
+  private arrivalRent: ArrivalRent | null = null;
   /** True while a tween chain is running — blocks roll and force-switch */
   isAnimating = false;
 
@@ -177,14 +182,16 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  /** Animate token step-by-step, one tile at a time */
-  private async moveTokenStepByStep(playerId: string, from: number, steps: number): Promise<void> {
+  /** Animate token step-by-step, one tile at a time, forwards or backwards */
+  private async moveTokenStepByStep(
+    playerId: string, from: number, steps: number, direction: 1 | -1 = 1,
+  ): Promise<void> {
     const sprite = this.tokenSprites.get(playerId);
     const label  = this.tokenLabels.get(playerId);
     if (!sprite || !label) return;
 
     for (let s = 1; s <= steps; s++) {
-      const layout = this.board.getLayout(this.board.move(from, s).to);
+      const layout = this.board.getLayout(this.board.move(from, s * direction).to);
       await new Promise<void>((resolve) => {
         this.tweens.add({
           targets: [sprite, label],
@@ -509,13 +516,17 @@ export class GameScene extends Phaser.Scene {
       const charging = owner !== null && !tile.isMortgaged;
       const tier     = tile.hasHotel ? 5 : tile.houses;
       const labels   = ['Bare lot', '1 house', '2 houses', '3 houses', '4 houses', 'Hotel'];
+      // The bare-lot tier doubles once the owner holds the whole group.
+      const doubled  = owner !== null && ownsWholeGroup(this.board, owner, tile);
       return tile.rentTiers.map((rent, i) => ({
-        label: labels[i], value: `$${rent}`, active: charging && i === tier,
+        label: i === 0 && doubled ? 'Bare lot ×2' : labels[i],
+        value: `$${i === 0 && doubled ? rent * 2 : rent}`,
+        active: charging && i === tier,
       }));
     }
 
     if (tile instanceof RailroadTile) {
-      const held = owner ? this.countOwnedOfType(owner, 'railroad') : 0;
+      const held = owner ? countOwnedOfType(this.board, owner, 'railroad') : 0;
       return RAILROAD_RENT.map((rent, i) => ({
         label: `${i + 1} railroad${i ? 's' : ''}`,
         value: `$${rent}`,
@@ -524,7 +535,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (tile instanceof UtilityTile) {
-      const held = owner ? this.countOwnedOfType(owner, 'utility') : 0;
+      const held = owner ? countOwnedOfType(this.board, owner, 'utility') : 0;
       return UTILITY_MULTIPLIERS.map((mult, i) => ({
         label: `${i + 1} utilit${i ? 'ies' : 'y'}`,
         value: `${mult} × dice`,
@@ -573,9 +584,6 @@ export class GameScene extends Phaser.Scene {
     return '';
   }
 
-  private countOwnedOfType(player: Player, type: Tile['type']): number {
-    return [...player.ownedTileIds].filter((id) => this.board.getTile(id).type === type).length;
-  }
 
   // ── Safe end-turn (generation-guarded) ───────────────────────────────────────
   /**
@@ -599,7 +607,7 @@ export class GameScene extends Phaser.Scene {
   private registerBusListeners(): void {
 
     // ── Movement ──────────────────────────────────────────────────────────────
-    bus.on<MovePayload>('player:move', ({ playerId, from, to, steps }) => {
+    bus.on<MovePayload>('player:move', ({ playerId, from, to, steps, direction }) => {
       const mover = this.players.find((p) => p.id === playerId);
       const moverName = mover?.name ?? playerId;
       dlog(
@@ -615,7 +623,7 @@ export class GameScene extends Phaser.Scene {
       this.isAnimating = true;
       this.setRollEnabled(false);
 
-      this.moveTokenStepByStep(playerId, from, steps)
+      this.moveTokenStepByStep(playerId, from, steps, direction ?? 1)
         .then(() => {
           const currentTurnPlayer = this.turnManager.currentPlayer;
           const movedPlayer       = this.players.find((p) => p.id === playerId);
@@ -653,6 +661,7 @@ export class GameScene extends Phaser.Scene {
     // ── Turn bookkeeping ──────────────────────────────────────────────────────
     bus.on('turn:start', ({ playerId }: { playerId: string }) => {
       this.turnGen++;                          // ← invalidate all timers from the previous turn
+      this.arrivalRent = null;                 // ← a card's rent rate never outlives its turn
       const player = this.players.find((p) => p.id === playerId)!;
 
       this.setRollEnabled(true);
@@ -693,27 +702,12 @@ export class GameScene extends Phaser.Scene {
 
     // ── Rent ──────────────────────────────────────────────────────────────────
     bus.on<RentPayload>('rent:pay', ({ debtorId, creditorId, amount, tileId, reason }) => {
-      let resolved = amount ?? 0;
-
-      // Railroad / Utility: resolve amount from tile + ownership
-      if (resolved === 0) {
-        const tile     = this.board.getTile(tileId);
-        const creditor = this.players.find((p) => p.id === creditorId);
-        if (!creditor) return;
-
-        if (tile instanceof RailroadTile) {
-          resolved = tile.rentFor(this.countOwnedOfType(creditor, 'railroad'));
-        } else if (tile instanceof UtilityTile) {
-          const mult = tile.rentMultiplier(this.countOwnedOfType(creditor, 'utility'));
-          resolved = mult * (this.dice.lastResult?.total ?? 7);
-        }
-      }
-
-      // Go salary: bank pays player
+      // Go salary: bank pays player. Fires *during* a move, so it must not touch
+      // the arrival rate the landing still needs.
       if (reason === 'go') {
         const player = this.players.find((p) => p.id === creditorId)!;
-        this.bank.payPlayer(player, resolved);
-        this.notif.show(`${player.name} passed GO — collect $${resolved}!`, 'success');
+        this.bank.payPlayer(player, amount ?? 0);
+        this.notif.show(`${player.name} passed GO — collect $${amount ?? 0}!`, 'success');
         this.pushUIUpdate();
         return; // DO NOT end turn — the normal move flow does that
       }
@@ -723,11 +717,28 @@ export class GameScene extends Phaser.Scene {
       const creditor = this.players.find((p) => p.id === creditorId);
       if (!debtor || !creditor) return;
 
+      // What the tile actually charges is a rules question — see game/Rent.ts.
+      const { amount: resolved, notes } = quoteRent(
+        this.board, this.board.getTile(tileId), creditor,
+        {
+          diceTotal: this.dice.lastResult?.total ?? 7,
+          arrival:   this.arrivalRent,
+          declared:  amount,
+        },
+      );
+      this.arrivalRent = null;   // consumed
+
       this.bank.transferBetweenPlayers(debtor, creditor, resolved);
-      this.notif.show(`${debtor.name} paid $${resolved} rent to ${creditor.name}.`, 'warning');
+      const note = notes.length ? ` (${notes.join(', ')})` : '';
+      this.notif.show(`${debtor.name} paid $${resolved} rent to ${creditor.name}${note}.`, 'warning');
       this.pushUIUpdate();
       this.checkBankruptcy(debtor);
       this.safeEndTurn(700);
+    });
+
+    // ── Rent rate set by a card ("nearest railroad" / "nearest utility") ──────
+    bus.on('rent:modifier', ({ rule }: { rule: ArrivalRent }) => {
+      this.arrivalRent = rule;
     });
 
     // ── Tax ───────────────────────────────────────────────────────────────────
@@ -775,6 +786,18 @@ export class GameScene extends Phaser.Scene {
       this.safeEndTurn(100);
     });
 
+    // ── A spent Get Out of Jail Free card goes back under its own deck ────────
+    bus.on('jail:exit', ({ method, card }: { method: string; card?: Card }) => {
+      if (method !== 'card' || !card) return;
+      const deck = [this.chanceDeck, this.commDeck].find((d) => d.owns(card));
+      if (!deck) {
+        dwarn(`[GameScene] jail card "${card.id}" belongs to neither deck — not returned`);
+        return;
+      }
+      deck.returnToBottom(card);
+      dlog(`[GameScene] returned "${card.id}" to the bottom of its deck`);
+    });
+
     // ── Card draw ─────────────────────────────────────────────────────────────
     bus.on('card:draw', ({ playerId, deckType }: { playerId: string; deckType: string }) => {
       const player = this.players.find((p) => p.id === playerId)!;
@@ -817,7 +840,7 @@ export class GameScene extends Phaser.Scene {
         //
         // Only static cards (money transfers, get-out-of-jail card) need us to
         // close the turn here.
-        const selfTerminating = ['advanceTo', 'advanceToGo', 'goBack', 'goToJail'];
+        const selfTerminating = ['advanceTo', 'advanceToNearest', 'advanceToGo', 'goBack', 'goToJail'];
         if (selfTerminating.includes(card.action.type)) {
           dlog(`[GameScene] Card action "${card.action.type}" is self-terminating — skipping safeEndTurn(200)`);
         } else {

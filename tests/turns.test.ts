@@ -4,6 +4,9 @@ import { Player } from '@/game/Player';
 import { Dice, type DiceResult } from '@/game/Dice';
 import { TurnManager } from '@/game/TurnManager';
 import { bus } from '@/utils/EventBus';
+import { CHANCE_CARDS } from '@/cards/CardDeck';
+
+const GOOJ_CARD = CHANCE_CARDS.find((c) => c.isGetOutOfJail)!;
 
 /** A Dice whose faces are dictated by the test rather than the PRNG. */
 class ScriptedDice extends Dice {
@@ -195,13 +198,27 @@ describe('TurnManager', () => {
     it('releases a player who spends a Get Out of Jail Free card', () => {
       const { tm } = build([]);
       players[0].inJail = true;
-      players[0].getOutOfJailCards = 1;
+      players[0].jailCards.push(GOOJ_CARD);
 
       tm.useGetOutOfJailCard(players[0]);
 
       expect(players[0].inJail).toBe(false);
       expect(players[0].getOutOfJailCards).toBe(0);
       expect(players[0].cash).toBe(1500); // no fine paid
+    });
+
+    // The card must come back out with the event — it is how GameScene knows
+    // which deck to return it to instead of withdrawing it from the game.
+    it('hands the spent card back on the jail:exit event', () => {
+      const { tm } = build([]);
+      players[0].inJail = true;
+      players[0].jailCards.push(GOOJ_CARD);
+
+      tm.useGetOutOfJailCard(players[0]);
+
+      const exit = events.find((e) => e.name === 'jail:exit')!;
+      expect(exit.payload).toMatchObject({ playerId: 'p1', method: 'card' });
+      expect(exit.payload.card).toBe(GOOJ_CARD);
     });
 
     it('ignores a card release when the player holds none', () => {

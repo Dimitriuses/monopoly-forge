@@ -239,7 +239,7 @@ executing multiple card effects and calling `safeEndTurn` multiple times.
 
 ## File Map
 
-*As of M2. The current layout — which adds `game/BuildRules.ts`,
+*As of M2. The current layout — which adds `game/BuildRules.ts`, `game/Rent.ts`,
 `ui/BoardRenderer.ts` and `ui/PropertyPanel.ts`, and no longer has switcher
 buttons in `PlayerPanel` — is in [README.md](README.md#layout).*
 
@@ -286,10 +286,10 @@ src/
 | M1 — Foundation | ✅ Complete |
 | M2 — Core Loop | ✅ Complete |
 | M3 — Ownership (houses/hotels, mortgage, color-group enforcement) | ✅ Complete — see [M3 below](#m3--ownership-and-development--2026-08-12) |
-| M4 — Cards & Jail (all edge cases) | 🟡 Decks and jail work; `goBack` animation and "nearest railroad" outstanding |
+| M4 — Cards & Jail (all edge cases) | ✅ Complete — see [M4 below](#m4--cards-jail-and-rent-edge-cases--2026-08-12) |
 | M5 — Multiplayer UI (trade dialog, auction system) | 🔲 Not started |
 | M6 — Polish (animations, sound, save/load, house rules) | 🔲 Not started — save/load blocked, see ROADMAP |
-| M7 — QA (AI opponent, edge-case testing, balance) | 🟡 129 unit tests + a headless playtest in CI; no AI |
+| M7 — QA (AI opponent, edge-case testing, balance) | 🟡 154 unit tests + a headless playtest in CI; no AI |
 | **M8 — Engine** (configurable maps, rules and presentation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). 8a: board length and anchors done, shape still a square. 8c: `BoardRenderer` extracted. 8b: not started |
 
 ---
@@ -479,3 +479,72 @@ Naming the field `this.renderer` in `GameScene` fails to compile: `Phaser.Scene`
 already has a `renderer` (the WebGL/Canvas renderer), and the error surfaces as
 `Argument of type 'this' is not assignable to parameter of type 'Scene'` at every
 `new Notification(this)` — nowhere near the actual clash. It is `boardView`.
+
+---
+
+## M4 — Cards, jail and rent edge cases — 2026-08-12
+
+Four rule gaps and one visual bug, all of them things the M3 interface made
+easier to notice.
+
+### The token now walks the right way
+
+`CardEffects.goBack` had been setting `player.position` backwards and then
+emitting `player:move` with a positive `steps`, so the animation walked *forwards*
+and the token snapped back when something next redrew it. The code carried a
+`dwarn` describing exactly this, which is how it stayed known and unfixed.
+
+`player:move` now carries `direction: 1 | -1` and `moveTokenStepByStep` walks
+`board.move(from, s * direction)`. Checked against the real canvas by sampling
+screenshots during the tween: from Chance (7) the token moves through Oriental (6)
+and Reading (5) to Income Tax (4) — rightwards along the bottom row, which is
+backwards — instead of heading left towards Jail and jumping back.
+
+### "Nearest railroad" actually looks for one
+
+`ch4` and `ch5` advanced to tiles 5 and 15 unconditionally, which also made `ch5`
+a duplicate of "Advance to Reading Railroad". A new `advanceToNearest` action
+scans forward from the player's own square — starting one step ahead, so standing
+on a railroad sends you to the *next* one — and needs no index, so it works on any
+map. `ch4` is the railroad, `ch5` the utility.
+
+### Rent that depends on how you got there
+
+The standard rules charge double on a railroad reached by card, and ten times the
+dice on a utility however many the owner holds. The tile cannot know how the
+player arrived, so the rate travels: `CardEffects` emits `rent:modifier` before
+the move, `GameScene` holds it through the animation and hands it to the landing,
+and it is cleared at `turn:start` so it can never leak into another turn. The
+ordering matters — the GO salary fires *during* the walk, and its branch returns
+before anything consumes the modifier.
+
+### Rent moved out of the scene so it could be tested
+
+Two of these are rules, and rules that live in a Phaser scene cannot be unit
+tested. `quoteRent` in `game/Rent.ts` now answers "what does this tile charge",
+covering the railroad ladder, the utility multiplier, the card-imposed rates and
+the last M3 gap — **an unimproved complete colour group charges double**, which
+the property panel had been advertising with `★ Group complete` while charging
+single rent. `tests/rent.test.ts` pins all of it in plain Node; the panel shows
+the doubled tier as `Bare lot ×2`.
+
+### Get Out of Jail Free cards come back
+
+The card used to be a counter on `Player`, so a card drawn was a card removed from
+the game — `CardDeck` coped with the shortage but the deck was permanently one
+card lighter. `Player` now holds the `Card` objects themselves,
+`TurnManager.useGetOutOfJailCard` sends the spent one out on the `jail:exit`
+event, and `GameScene` asks each deck `owns(card)` before calling
+`returnToBottom`. Under the draw pile, not into the discard: it comes back into
+play in its own time rather than waiting for a reshuffle.
+
+`getOutOfJailCards` survives as a getter over the array, so the UI and the jail
+button did not change — only the one test that had been assigning to it.
+
+### Result
+
+154 unit tests (up from 129), typecheck, build and the seeded playtest all green.
+Still open, and now scheduled rather than merely known: building is offered only
+on the owner's own turn (M5), a hotel cannot be broken up when the bank is short
+of houses (M5, with the auction machinery), and a bankrupt player's jail card is
+still lost with the rest of their estate (M5).
