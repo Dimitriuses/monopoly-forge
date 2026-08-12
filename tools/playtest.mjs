@@ -51,6 +51,14 @@ const HOTSPOTS = {
   buy:          [424, 458],  // GameScene.showBuyPrompt, container at (512,400)
   pass:         [600, 458],
   cardOk:       [640, 490],  // CardScene: (width/2, height/2 + 90)
+  auctionBid:   [382, 426],  // AuctionPanel, container at (512,400): first bid button
+  auctionPass:  [512, 484],  // AuctionPanel pass button
+  trade:        [180, 738],  // GameScene.buildButtons
+  // TradePanel, container at (420,390): its layout hangs off LIST_TOP/BUTTON_Y,
+  // so these move whenever ROWS_VISIBLE or H changes there.
+  tradeRow1:    [200, 271],  // first deed row, left side
+  tradePropose: [420, 554],
+  tradeAccept:  [310, 554],
 };
 
 // ─── Static file server for dist/ ─────────────────────────────────────────────
@@ -186,9 +194,11 @@ async function main() {
     let rolls = 0;
     let buys = 0;
     let cards = 0;
+    let auctions = 0;
     let capturedBuy = false;
     let capturedCard = false;
     let capturedJail = false;
+    let capturedAuction = false;
 
     for (let turn = 0; turn < TURNS; turn++) {
       await waitFor(page, idle, { timeout: 10000 });
@@ -221,14 +231,31 @@ async function main() {
         }
         // Buy roughly two thirds of what we land on, so the HUD shows spending
         // and later turns start charging rent.
-        if (buys % 3 !== 2) {
-          await clickGame(page, box, HOTSPOTS.buy);
-          buys++;
-        } else {
-          await clickGame(page, box, HOTSPOTS.pass);
-          buys++;
-        }
+        const declining = buys % 3 === 2;
+        await clickGame(page, box, declining ? HOTSPOTS.pass : HOTSPOTS.buy);
+        buys++;
         await sleep(450);
+
+        // Declining opens an auction. Bid once the first time so a deed changes
+        // hands under the hammer, then pass every bidder out.
+        if (await page.evaluate(() => window.__forge.auctionOpen())) {
+          auctions++;
+          if (!capturedAuction) {
+            await shot(page, box, '8-auction');
+            capturedAuction = true;
+            await clickGame(page, box, HOTSPOTS.auctionBid);
+            await sleep(300);
+          }
+          for (let guard = 0; guard < 8; guard++) {
+            if (!(await page.evaluate(() => window.__forge.auctionOpen()))) break;
+            await clickGame(page, box, HOTSPOTS.auctionPass);
+            await sleep(250);
+          }
+          if (await page.evaluate(() => window.__forge.auctionOpen())) {
+            throw new Error('the auction never closed — passing did not end it');
+          }
+          await sleep(300);
+        }
       }
 
       if (!capturedJail && view.state.players.some((p) => p.inJail)) {
@@ -269,6 +296,52 @@ async function main() {
       }
     }
 
+    // ── Trade ─────────────────────────────────────────────────────────────────
+    // Give one of the active player's deeds away: a one-sided offer is a legal
+    // trade, and it exercises build → propose → accept end to end.
+    let tradedTile = null;
+    const holder = await page.evaluate(() => {
+      const state = window.__forge.state();
+      const active = state.players.find((p) => p.id === window.__forge.activeId());
+      return active && active.ownedTileIds.length ? active : null;
+    });
+
+    if (!holder) {
+      console.log('  · active player owns nothing — trade step skipped');
+    } else {
+      await clickGame(page, box, HOTSPOTS.trade);
+      await sleep(300);
+      if (!(await page.evaluate(() => window.__forge.tradeOpen()))) {
+        throw new Error('the TRADE button did not open the trade panel');
+      }
+      await shot(page, box, '9-trade');
+
+      await clickGame(page, box, HOTSPOTS.tradeRow1);
+      await sleep(200);
+      const offer = await page.evaluate(() => window.__forge.tradeOffer());
+      if (!offer || offer.fromTileIds.length !== 1) {
+        throw new Error(`clicking a deed row did not add it to the offer (${JSON.stringify(offer)})`);
+      }
+      tradedTile = offer.fromTileIds[0];
+      const recipient = offer.toId;
+
+      await clickGame(page, box, HOTSPOTS.tradePropose);
+      await sleep(250);
+      await shot(page, box, '10-trade-review');
+      await clickGame(page, box, HOTSPOTS.tradeAccept);
+      await sleep(400);
+
+      if (await page.evaluate(() => window.__forge.tradeOpen())) {
+        throw new Error('accepting the trade did not close the panel');
+      }
+      const afterTrade = await page.evaluate(() => window.__forge.state());
+      const newOwner = afterTrade.board.tiles[tradedTile].ownerId;
+      if (newOwner !== recipient) {
+        throw new Error(`traded tile ${tradedTile} went to ${newOwner}, expected ${recipient}`);
+      }
+      console.log(`  ✓ traded tile ${tradedTile} to ${recipient}`);
+    }
+
     // ── Assertions ────────────────────────────────────────────────────────────
     const end = await page.evaluate(() => window.__forge.state());
     const positions = end.players.map((p) => p.position);
@@ -287,6 +360,7 @@ async function main() {
     if (positions.every((p) => p === 0)) problems.push('no token ever left GO');
     if (owned === 0) problems.push('no property was bought in the whole run');
     if (panelTileId === null) problems.push('no owned tile to inspect — the panel was never exercised');
+    if (auctions === 0) problems.push('no property was ever declined into an auction');
     if (!['WAITING_FOR_ROLL', 'END_TURN', 'LANDING', 'AWAITING_BUY_DECISION', 'MOVING', 'ROLLING']
       .includes(end.turn.phase)) {
       problems.push(`turn manager left in an unknown phase: ${end.turn.phase}`);
@@ -297,6 +371,7 @@ async function main() {
     console.log('');
     console.log(`  rolls attempted   ${rolls}`);
     console.log(`  buy prompts       ${buys}`);
+    console.log(`  auctions held     ${auctions}`);
     console.log(`  cards drawn       ${cards}`);
     console.log(`  positions         ${positions.join(', ')}`);
     console.log(`  cash              ${cash.map((c) => `$${c}`).join(', ')}`);

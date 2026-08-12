@@ -64,6 +64,13 @@ group, scaled by how many railroads the owner holds, ten times the dice when a
 card sent the player there — comes from `quoteRent` in `game/Rent.ts`. Resolve
 rent there, not in a scene handler, so it stays testable in Node.
 
+**9. Nobody pays a debt with `player.pay`.** `pay` clamps at zero, so using it
+directly makes a debt the player cannot cover silently disappear. Every charge —
+rent, tax, a card, anything added later — goes through `settleDebt` in
+`game/Estate.ts`, which sells buildings, mortgages deeds and, failing that,
+declares bankruptcy and moves the estate. Follow it with `announceSettlement` so
+the fire sale and the bankruptcy are reported the same way everywhere.
+
 **4. Use `dlog` / `dwarn`, not `console.log`.** `src/utils/log.ts` is silent
 unless switched on (dev server, or `?debug=1` on any build). `console.error` is
 deliberately *not* routed through it — real faults should always surface.
@@ -132,6 +139,18 @@ callbacks accumulate and fire together, executing several card effects at once.
 instead of returning `undefined`, and `TurnManager` resets an out-of-range
 `player.position` to 0 rather than propagating it. A corrupted position used to
 cascade into every subsequent roll.
+
+### Panels render, they do not decide
+
+`PropertyPanel`, `AuctionPanel` and `TradePanel` all take a view model and report
+presses. Every rule behind them — what is legal to build, who bids next, whether
+an offer is valid — lives in `game/` and is unit-tested. The one exception is
+deliberate: `AuctionPanel` owns the bid clock, because "the clock ran out" is a
+UI event, and it calls the same `pass()` the button does.
+
+An estate can change hands outside a turn now (auction win, trade, bankruptcy),
+so anything that moves a deed must call `boardView.refresh()` — the owner bands
+and buildings are drawn from tile state, not re-derived per frame.
 
 ### The board is drawn once, its state many times
 
@@ -203,6 +222,16 @@ debug logging, so a plain production load exposes nothing.
 Board *tiles* are the exception to the hotspot table: `__forge.tileCentre(id)`
 returns a tile's centre, so the harness clicks tiles without keeping its own copy
 of the board geometry. Keep it that way — the table is for scene buttons only.
+
+`TradePanel`'s hotspots are the fragile ones: its rows and buttons hang off
+`LIST_TOP` / `BUTTON_Y` / `H`, so changing any of those means recomputing
+`tradeRow1`, `tradePropose` and `tradeAccept` by hand. The symptom is a vague
+"accepting the trade did not close the panel".
+
+**The headless clock runs slow.** A `delayedCall(700)` can take ~2 s of wall time
+in headless Chromium, so anything driving the game from Playwright must poll for
+the state it wants rather than sleeping for the nominal delay. A "nothing
+happened" result there is usually impatience, not a bug.
 
 ## Deployment
 

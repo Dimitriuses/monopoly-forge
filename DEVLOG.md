@@ -26,6 +26,12 @@ and mortgages have no interface, and the switcher buttons were removed in
 `a18490a`. See [KNOWNISSUES.md](KNOWNISSUES.md) for the measured current state
 and [ROADMAP.md](ROADMAP.md) for what is planned.
 
+*Updated 2026-08-12:* the two gaps named in that correction have since been
+closed — houses, hotels and mortgages got an interface in M3, and auctions
+arrived in M5 along with trading and a bankruptcy that settles an estate. The
+paragraph above is left as written, because the point of it was the habit of
+checking claims against the build rather than the claim itself.
+
 ---
 
 ## M1 — Foundation (Scaffold)
@@ -240,8 +246,9 @@ executing multiple card effects and calling `safeEndTurn` multiple times.
 ## File Map
 
 *As of M2. The current layout — which adds `game/BuildRules.ts`, `game/Rent.ts`,
-`ui/BoardRenderer.ts` and `ui/PropertyPanel.ts`, and no longer has switcher
-buttons in `PlayerPanel` — is in [README.md](README.md#layout).*
+`game/Auction.ts`, `game/Trade.ts`, `game/Estate.ts`, `ui/BoardRenderer.ts`,
+`ui/PropertyPanel.ts`, `ui/AuctionPanel.ts` and `ui/TradePanel.ts`, and no longer
+has switcher buttons in `PlayerPanel` — is in [README.md](README.md#layout).*
 
 ```
 src/
@@ -287,9 +294,9 @@ src/
 | M2 — Core Loop | ✅ Complete |
 | M3 — Ownership (houses/hotels, mortgage, color-group enforcement) | ✅ Complete — see [M3 below](#m3--ownership-and-development--2026-08-12) |
 | M4 — Cards & Jail (all edge cases) | ✅ Complete — see [M4 below](#m4--cards-jail-and-rent-edge-cases--2026-08-12) |
-| M5 — Multiplayer UI (trade dialog, auction system) | 🔲 Not started |
-| M6 — Polish (animations, sound, save/load, house rules) | 🔲 Not started — save/load blocked, see ROADMAP |
-| M7 — QA (AI opponent, edge-case testing, balance) | 🟡 154 unit tests + a headless playtest in CI; no AI |
+| M5 — Multiplayer UI (trade dialog, auction system) | ✅ Complete — see [M5 below](#m5--multiplayer-interaction--2026-08-12) |
+| M6 — Polish (animations, sound, save/load, house rules) | 🟡 `noAuction` is real; save/load blocked, see ROADMAP |
+| M7 — QA (AI opponent, edge-case testing, balance) | 🟡 201 unit tests + a headless playtest in CI; no AI |
 | **M8 — Engine** (configurable maps, rules and presentation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). 8a: board length and anchors done, shape still a square. 8c: `BoardRenderer` extracted. 8b: not started |
 
 ---
@@ -548,3 +555,82 @@ Still open, and now scheduled rather than merely known: building is offered only
 on the owner's own turn (M5), a hotel cannot be broken up when the bank is short
 of houses (M5, with the auction machinery), and a bankrupt player's jail card is
 still lost with the rest of their estate (M5).
+
+---
+
+## M5 — Multiplayer interaction — 2026-08-12
+
+The milestone that makes the win condition mean something. Four pieces: auctions,
+trading, estate management out of turn, and a bankruptcy that actually settles.
+
+### Model first, four times over
+
+Each piece went in as a Phaser-free class with tests before any canvas work, which
+is why the UI for all four is thin:
+
+- **`game/Auction.ts`** — round-robin bidding where a pass forfeits for good. The
+  fiddly part is the turn pointer: when the bidder on turn passes, the next bidder
+  *slides into the seat just vacated*, so the index stays put rather than
+  advancing. A first attempt decremented it conditionally and skipped a player.
+  Settlement is two rules — nobody left, or one bidder left and the standing bid
+  is already theirs (you do not get asked to outbid yourself).
+- **`game/Trade.ts`** — a two-sided offer validated in full and applied in full,
+  so it can never half-happen. Cash is *netted*, so a $200-for-$180 swap needs
+  neither side to front the gross. A counter-offer is `reverseOffer` and nothing
+  else.
+- **`game/Estate.ts`** — the fire sale. Buildings go first, tallest lot first
+  (which is also what the even-selling rule wants), then deeds by mortgage value,
+  largest first, so the fewest possible change hands. Only when that is exhausted
+  is the player bankrupt, and then the whole estate — deeds, mortgage flags and
+  jail cards — passes to the creditor.
+- **No timer in the auction model.** The clock is in `AuctionPanel`, because
+  "ran out of time" is a UI event; it calls the same `pass()` the button does.
+
+### `Player.pay` was hiding every debt
+
+`pay()` clamps at zero, so a player could never owe more than they held — which is
+why partial payment used to silently "work" and a bankrupt player kept their
+deeds, still charging rent. Every charge now routes through `settleDebt`: rent and
+tax in `GameScene`, and `payBank` / `payAll` / `repairs` in `CardEffects`, which
+had been calling `bank.collectTax` directly. `GameScene.checkBankruptcy` — the
+old `cash <= 0` guess — is gone, because the settlement is what decides.
+
+One invariant nearly slipped: `transferEstate` zeroed any buildings still standing
+instead of returning them to the bank, which would have leaked houses out of a
+fixed supply. A test that asserted stock conservation caught it.
+
+### Trading, and the fixed layout that bit back
+
+`TradePanel` reserves 11 deed rows a side so both columns line up, and everything
+below hangs off that. The first version anchored the footer to the frame bottom
+instead, which left ~120px of dead space; re-anchoring it to the list shrank the
+panel from 470px to 404px — and immediately broke the playtest, because the
+harness's click coordinates are derived from those same constants. The failure
+mode is exactly what CLAUDE.md warns about: a vague "accepting the trade did not
+close the panel" rather than a clear miss.
+
+### The bug that was not a bug
+
+Checking bankruptcy end to end in headless Chromium, the turn appeared never to
+end: phase stayed `WAITING_FOR_ROLL` after the `safeEndTurn(700)`. It turned out
+the headless clock runs slow — the 700 ms timer landed at about 2 s of wall time.
+Polling for the state instead of sleeping for the nominal delay showed the whole
+chain working: fire sale → bankruptcy → estate transfer → `game:end` →
+"Player 2 wins!". Worth remembering before hunting a phantom.
+
+### The house rule that finally does something
+
+`noAuction` has been declared in `config.ts` since M1 and read by nothing. It now
+picks between the two behaviours for a declined property: leave it unowned (old),
+or put it under the hammer (default). Three flags still do nothing.
+
+### Verification
+
+- 201 unit tests (up from 154): auction settlement, trade validation and netting,
+  fire-sale ordering, estate transfer, and stock conservation through a bankruptcy.
+- The playtest harness now bids in the first auction it meets, passes everyone out
+  of the rest, and drives a real trade — open, select a deed, propose, accept —
+  asserting the deed actually changed hands. It fails if no auction ever happens.
+- Bankruptcy was driven once by hand against the real canvas, since a 26-turn
+  seeded game will not produce one: $40 and two mortgaged-away lots against a $900
+  debt, ending in the estate moving and the game declaring a winner.

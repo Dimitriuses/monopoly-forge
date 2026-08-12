@@ -37,7 +37,9 @@ Everything is mouse-driven — there is no keyboard input.
 | Buy the property you landed on | **✅ BUY** in the prompt |
 | Decline it | **❌ PASS** |
 | Inspect any tile | Click it — the panel on the right shows the rent ladder, costs and owner. Click it again to close |
-| Build, sell, mortgage | Buttons in that panel, on your own turn, for tiles you own. A greyed-out button still tells you why when clicked |
+| Build, sell, mortgage | Buttons in that panel, for tiles you own, at any point in the game. A greyed-out button still tells you why when clicked |
+| Bid on a declined property | **Bid $N** or **PASS** in the auction. A pass is final, and running the 15-second clock out passes for you |
+| Trade | **🤝 TRADE**, below the board: pick a partner, click deeds on either side, step the cash, then **PROPOSE** → **ACCEPT**, **DECLINE** or **COUNTER** |
 | Dismiss a Chance / Community Chest card | **OK** |
 | Leave jail | **🔓 Pay $50** (or **🃏 Use Card** if you hold one) — appears below the board only when you are in jail and can afford it |
 
@@ -69,19 +71,22 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 - **Jail** — enter by tile, card or three doubles; leave by doubles, a $50 fine, a Get Out of Jail Free card, or the forced fine after three turns
 - **Ownership on the board** — an owner-coloured band with the owner's seat number on every owned tile, `M` when it is mortgaged, houses and hotels drawn along the colour stripe
 - **Development** — click a tile for its rent ladder, costs and owner; build and sell houses and hotels, mortgage and redeem, with the colour-group and even-building rules enforced and every refusal explained
+- **Auctions** — a declined property goes under the hammer: round-robin bidding, a pass forfeits, and a per-bidder clock passes for anyone who lets it run out
+- **Trading** — deeds, cash and jail cards in one offer, with propose / accept / decline / counter, netted cash, and buildings blocking the lots they stand on
+- **Bankruptcy that settles** — a debt is met from cash, then by selling buildings and mortgaging deeds, and only then does the player go under, handing their whole estate to the creditor. The last solvent player wins
 - **HUD** — animated dice, per-player cash, active-player highlight, jail markers, stacking toast notifications
 - **Determinism** — `?seed=12345` replays an identical game
 
 ### Not implemented yet
 
-Named honestly, because the board looks more finished than it is:
+The classic game is playable end to end, so what is left is narrower than it was:
 
-- **No auctions and no trading.** Declining a property just ends the turn.
-- **Building is offered only on your own turn**, where the real game lets you
-  develop at almost any point.
-- **Bankruptcy does not settle the estate** — a broke player is skipped, but their
-  properties are not transferred.
 - **Save/load is not wired up**, though the serialiser exists.
+- **Three of the four house-rule flags do nothing** — `noAuction` works, the
+  other three are declared and unread, and nothing lets you toggle them.
+- **An estate that returns to the bank is not re-auctioned**, as the standard
+  rules would have it. Owing another player transfers correctly.
+- **No AI opponent**, so finishing a game needs a friend or a lot of clicking.
 
 Full detail, with reproductions, in [KNOWNISSUES.md](KNOWNISSUES.md); what happens
 next is in [ROADMAP.md](ROADMAP.md).
@@ -101,8 +106,10 @@ headless browser — see [tools/playtest.mjs](tools/playtest.mjs).
 | **Buy prompt** — price, base rent, your cash | **Cards** — Chance and Community Chest |
 | ![Jail](screenshots/5-jail.png) | ![Late game](screenshots/6-late-game.png) |
 | **Jail** — entered by card, HUD shows the state | **Later** — owner bands on the tiles, cash diverging |
-| ![Property panel](screenshots/7-property-panel.png) | |
-| **Property panel** — rent ladder, costs, build and mortgage actions | |
+| ![Property panel](screenshots/7-property-panel.png) | ![Auction](screenshots/8-auction.png) |
+| **Property panel** — rent ladder, costs, build and mortgage actions | **Auction** — a declined property, round-robin bidding on a clock |
+| ![Trade](screenshots/9-trade.png) | ![Trade review](screenshots/10-trade-review.png) |
+| **Trade** — build an offer from either side's deeds and cash | **…then accept, decline or counter it** |
 
 ---
 
@@ -121,7 +128,7 @@ Three axes of customisation, none of which should require editing engine code:
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 154 unit tests pin down.
+it is what the 201 unit tests pin down.
 
 ### What already supports it
 
@@ -197,7 +204,7 @@ Three consequences worth the trouble:
 **The model runs in Node.** `src/config.ts` deliberately contains no Phaser
 import — the `Phaser.Game` options live in `main.ts` instead — so everything under
 `game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 154 unit tests run in ~8 s with no jsdom, and it is the seam a
+That is what lets 201 unit tests run in ~8 s with no jsdom, and it is the seam a
 headless AI opponent would plug into.
 
 **Games are reproducible.** Every dice roll and both deck shuffles draw from one
@@ -223,11 +230,15 @@ src/
 │   ├── Bank.ts           Transfers, purchase, mortgage, house/hotel stock
 │   ├── BuildRules.ts     Colour-group, even-building and mortgage legality
 │   ├── Rent.ts           What a tile charges: monopolies, railroads, utilities
+│   ├── Auction.ts        Round-robin bidding, pass-forfeits, settlement
+│   ├── Trade.ts          Two-sided offers: validation, netting, counters
+│   ├── Estate.ts         Fire sales, debt settlement, bankruptcy transfer
 │   └── TurnManager.ts    Phase FSM, doubles, jail, turn order
 ├── tiles/                Tile base class ▸ PropertyTile, SpecialTiles, Ownable
 ├── cards/CardDeck.ts     Deck, discard/reshuffle, CardEffects, both decks
 ├── scenes/               Boot, Menu, Game (tokens + wiring), UI (HUD), Card
-├── ui/                   BoardRenderer, PropertyPanel, DiceView, PlayerPanel, Notification
+├── ui/                   BoardRenderer, PropertyPanel, AuctionPanel, TradePanel,
+│                         DiceView, PlayerPanel, Notification
 └── utils/                EventBus, PRNG, SaveLoad, log
 tests/                    Vitest — model only, plain Node
 tools/playtest.mjs        Plays the built game in a real browser
@@ -264,7 +275,7 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test                # 154 unit tests, plain Node, ~8 s
+npm test                # 201 unit tests, plain Node, ~8 s
 npm run typecheck       # tsc --noEmit
 npm run playtest        # build first: plays 30 seeded turns in a headless browser
 npm run screenshots
@@ -299,9 +310,9 @@ dependency has been installed at two different majors. Run it whenever
 - [DEVLOG.md](DEVLOG.md) — the design decisions and the bug hunts behind them
 - [CLAUDE.md](CLAUDE.md) — conventions and invariants for working in this codebase
 
-The short version: the rules engine is solid and tested, and a full game of buy →
-develop → charge rent is now playable. What is missing is the multiplayer
-interaction — auctions, trading and a real bankruptcy settlement.
+The short version: the classic game is playable from the first roll to the last
+player standing — buy, auction, develop, trade, charge rent, go bankrupt. What is
+left is polish, an AI opponent, and then the engine work the project is named for.
 
 ---
 

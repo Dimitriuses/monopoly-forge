@@ -25,10 +25,24 @@ import {
 } from '@/tiles/SpecialTiles';
 import {
   canBuildHouse, canBuildHotel, canSellHouse, canSellHotel,
-  canMortgage, canUnmortgage, unmortgageCost, ownsWholeGroup,
+  canMortgage, canUnmortgage, unmortgageCost, ownsWholeGroup, groupBuildingCount,
   type RuleCheck,
 } from '@/game/BuildRules';
 import { quoteRent, countOwnedOfType, type ArrivalRent } from '@/game/Rent';
+import { settleDebt, announceSettlement } from '@/game/Estate';
+import { Auction } from '@/game/Auction';
+import { AuctionPanel, type AuctionView } from '@/ui/AuctionPanel';
+import {
+  emptyOffer, reverseOffer, validateTrade, executeTrade, describeOffer,
+  type TradeOffer,
+} from '@/game/Trade';
+import {
+  TradePanel,
+  type TradeAction, type TradeRow, type TradeSideView, type TradeView,
+} from '@/ui/TradePanel';
+
+/** How long each bidder has before the clock passes for them. */
+const AUCTION_SECONDS = 15;
 
 const TOKEN_HEX: Record<string, string> = {
   topHat: '#222222', car: '#e74c3c', dog: '#e67e22', battleship: '#3498db',
@@ -68,6 +82,14 @@ export class GameScene extends Phaser.Scene {
   /** Not `renderer` — Phaser.Scene already owns that name for the WebGL renderer. */
   private boardView!:   BoardRenderer;
   private panel!:       PropertyPanel;
+  private auctionPanel!: AuctionPanel;
+  private tradePanel!:  TradePanel;
+  /** The auction in progress, if any. Blocks the roll and the tile inspector. */
+  private auction: Auction | null = null;
+  /** The offer being built or reviewed, if the trade panel is open. */
+  private offer: TradeOffer | null = null;
+  private tradeMode: 'edit' | 'review' = 'edit';
+  private tradeScroll = { left: 0, right: 0 };
 
   /** Incremented on every turn:start — stale safeEndTurn timers check against this */
   private turnGen = 0;
@@ -108,6 +130,14 @@ export class GameScene extends Phaser.Scene {
       (reason) => this.notif.show(reason, 'warning'),
     );
 
+    this.auctionPanel = new AuctionPanel(
+      this,
+      (amount) => this.handleAuctionAction((a, id) => { a.bid(id, amount); }),
+      ()       => this.handleAuctionAction((a, id) => { a.pass(id); }),
+    );
+
+    this.tradePanel = new TradePanel(this, (action) => this.handleTradeAction(action));
+
     this.spawnTokens();
     this.buildButtons();
     this.buildBuyPrompt();
@@ -134,6 +164,10 @@ export class GameScene extends Phaser.Scene {
       cardOpen:    () => this.scene.isActive('CardScene'),
       panelOpen:   () => this.panel.isOpen,
       panelTile:   () => this.panel.tileId,
+      auctionOpen: () => this.auctionPanel.isOpen,
+      auctionBidder: () => this.auction?.currentBidder?.id ?? null,
+      tradeOpen:   () => this.tradePanel.isOpen,
+      tradeOffer:  () => (this.offer ? { ...this.offer, mode: this.tradeMode } : null),
       // Lets the harness click a tile without keeping its own copy of the
       // board geometry — unlike the button HOTSPOTS, which it must.
       tileCentre:  (tileId: number) => {
@@ -226,6 +260,15 @@ export class GameScene extends Phaser.Scene {
     });
     this.rollBtn.on('pointerover', () => this.rollBtn.setStyle({ backgroundColor: '#e74c3c' }));
     this.rollBtn.on('pointerout',  () => this.rollBtn.setStyle({ backgroundColor: '#c0392b' }));
+
+    // Left of the roll button, clear of the toast stack at x≈360–680.
+    const tradeBtn = this.add.text(180, 738, '🤝  TRADE', {
+      fontFamily: 'Georgia, serif', fontSize: '16px', color: '#ffffff',
+      backgroundColor: '#1a4a6b', padding: { x: 16, y: 10 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setDepth(20);
+    tradeBtn.on('pointerover', () => tradeBtn.setStyle({ backgroundColor: '#2a6b9b' }));
+    tradeBtn.on('pointerout',  () => tradeBtn.setStyle({ backgroundColor: '#1a4a6b' }));
+    tradeBtn.on('pointerdown', () => this.openTrade());
 
     this.jailBtn = this.add.text(710, 738, '🔓  Pay $50 to leave jail', {
       fontFamily: 'Georgia, serif', fontSize: '14px', color: '#ffffff',
@@ -321,9 +364,17 @@ export class GameScene extends Phaser.Scene {
     passBtn.on('pointerover', () => passBtn.setStyle({ backgroundColor: '#922b21' }));
     passBtn.on('pointerout',  () => passBtn.setStyle({ backgroundColor: '#6b1e1e' }));
     passBtn.on('pointerdown', () => {
-      this.notif.show(`${player.name} passed on ${tileName}.`, 'info');
       this.hideBuyPrompt();
-      this.safeEndTurn(300);
+      // Tournament rules put a declined property under the hammer; the
+      // `noAuction` house rule — declared since M1 and read by nothing until
+      // now — keeps the old behaviour of leaving it unowned.
+      if (this.houseRules.noAuction) {
+        this.notif.show(`${player.name} passed on ${tileName}.`, 'info');
+        this.safeEndTurn(300);
+        return;
+      }
+      this.notif.show(`${player.name} passed — ${tileName} goes to auction.`, 'info');
+      this.startAuction(tileId);
     });
 
     this.buyPrompt.add([title, info, cashLine, buyBtn, passBtn]);
@@ -348,10 +399,223 @@ export class GameScene extends Phaser.Scene {
     this.buyPrompt.setVisible(false);
   }
 
+  // ── Trading ───────────────────────────────────────────────────────────────────
+
+  private openTrade(): void {
+    if (this.auction || this.isAnimating) return;
+    const proposer = this.turnManager.currentPlayer;
+    const partner  = this.players.find((p) => p.id !== proposer.id && !p.isBankrupt);
+    if (!partner) {
+      this.notif.show('There is nobody left to trade with.', 'warning');
+      return;
+    }
+    this.offer      = emptyOffer(proposer.id, partner.id);
+    this.tradeMode  = 'edit';
+    this.tradeScroll = { left: 0, right: 0 };
+    this.panel.hide();
+    this.tradePanel.show(this.tradeView());
+  }
+
+  private closeTrade(): void {
+    this.offer = null;
+    this.tradePanel.hide();
+  }
+
+  private tradeView(): TradeView {
+    const offer = this.offer!;
+    const from  = this.players.find((p) => p.id === offer.fromId)!;
+    const to    = this.players.find((p) => p.id === offer.toId)!;
+    const check = validateTrade(this.board, this.players, offer);
+
+    return {
+      mode:  this.tradeMode,
+      left:  this.tradeSide(from, offer.fromTileIds, offer.fromCash, offer.fromJailCards, this.tradeScroll.left),
+      right: this.tradeSide(to,   offer.toTileIds,   offer.toCash,   offer.toJailCards,   this.tradeScroll.right),
+      partners: this.players
+        .filter((p) => p.id !== from.id && !p.isBankrupt)
+        .map((p) => ({ id: p.id, name: p.name, active: p.id === to.id })),
+      summary: describeOffer(this.board, this.players, offer),
+      problem: check.ok ? '' : check.reason,
+    };
+  }
+
+  private tradeSide(
+    player: Player, offered: number[], cash: number, jailCards: number, scroll: number,
+  ): TradeSideView {
+    const rows: TradeRow[] = [...player.ownedTileIds]
+      .map((id) => this.board.getTile(id))
+      .filter(isOwnable)
+      .sort((a, b) => a.id - b.id)
+      .map((tile) => ({
+        tileId: tile.id,
+        name: tile.name + (tile.isMortgaged ? ' (mortgaged)' : ''),
+        color: tile instanceof PropertyTile ? GROUP_COLORS[tile.group] : null,
+        selected: offered.includes(tile.id),
+        // Buildings anywhere in the group freeze every lot in it.
+        blocked: tile instanceof PropertyTile && groupBuildingCount(this.board, tile) > 0,
+      }));
+
+    return {
+      playerId: player.id,
+      name: player.name,
+      color: this.ownerStyle(player.id)?.color ?? 0xffffff,
+      cash: player.cash,
+      offeredCash: cash,
+      jailCards: player.getOutOfJailCards,
+      offeredJailCards: jailCards,
+      rows,
+      scroll: Math.min(scroll, Math.max(0, rows.length - 1)),
+    };
+  }
+
+  private handleTradeAction(action: TradeAction): void {
+    const offer = this.offer;
+    if (!offer) return;
+
+    // 'left' is always the offer's `from` side, whichever player that now is.
+    const sideTiles = (side: 'left' | 'right') =>
+      side === 'left' ? offer.fromTileIds : offer.toTileIds;
+
+    switch (action.kind) {
+      case 'toggleTile': {
+        const list = sideTiles(action.side);
+        const at   = list.indexOf(action.tileId);
+        if (at === -1) list.push(action.tileId);
+        else           list.splice(at, 1);
+        break;
+      }
+      case 'cash': {
+        if (action.side === 'left') offer.fromCash = Math.max(0, offer.fromCash + action.delta);
+        else                        offer.toCash   = Math.max(0, offer.toCash + action.delta);
+        break;
+      }
+      case 'jailCards': {
+        if (action.side === 'left') offer.fromJailCards = Math.max(0, offer.fromJailCards + action.delta);
+        else                        offer.toJailCards   = Math.max(0, offer.toJailCards + action.delta);
+        break;
+      }
+      case 'scroll': {
+        const key = action.side;
+        this.tradeScroll[key] = Math.max(0, this.tradeScroll[key] + action.delta);
+        break;
+      }
+      case 'partner': {
+        // Switching partner clears their half — it was their deeds, not these.
+        this.offer = {
+          ...offer, toId: action.playerId, toTileIds: [], toCash: 0, toJailCards: 0,
+        };
+        this.tradeScroll.right = 0;
+        break;
+      }
+      case 'propose':
+        this.tradeMode = 'review';
+        break;
+      case 'counter':
+        // Hand it back the other way round and let them edit it.
+        this.offer = reverseOffer(offer);
+        this.tradeMode = 'edit';
+        this.tradeScroll = { left: this.tradeScroll.right, right: this.tradeScroll.left };
+        break;
+      case 'accept': {
+        const summary = describeOffer(this.board, this.players, offer);
+        if (executeTrade(this.board, this.players, offer)) {
+          this.notif.show(`Trade agreed — ${summary}.`, 'success');
+          this.boardView.refresh();
+          this.pushUIUpdate();
+        } else {
+          this.notif.show('That trade is no longer legal.', 'danger');
+        }
+        this.closeTrade();
+        return;
+      }
+      case 'decline':
+        this.notif.show('Offer declined.', 'info');
+        this.closeTrade();
+        return;
+      case 'close':
+        this.closeTrade();
+        return;
+    }
+
+    this.tradePanel.show(this.tradeView());
+  }
+
+  // ── Auction ───────────────────────────────────────────────────────────────────
+
+  private startAuction(tileId: number): void {
+    this.auction = new Auction(tileId, this.players);
+    if (this.auction.complete) {   // nobody solvent to bid
+      this.finishAuction();
+      return;
+    }
+    this.panel.hide();
+    this.boardView.setSelected(tileId);
+    this.auctionPanel.show(this.auctionView(this.auction));
+  }
+
+  private auctionView(auction: Auction): AuctionView {
+    const bidder   = auction.currentBidder!;
+    const tile     = this.board.getTile(auction.tileId);
+    const property = tile instanceof PropertyTile ? tile : null;
+    const leader   = this.players.find((p) => p.id === auction.highBidderId) ?? null;
+
+    return {
+      tileName:   tile.name,
+      subtitle:   this.subtitleFor(tile),
+      groupColor: property ? GROUP_COLORS[property.group] : null,
+      price:      isOwnable(tile) ? tile.price : 0,
+      bidderName: bidder.name,
+      bidderColor: this.ownerStyle(bidder.id)?.color ?? 0xffffff,
+      bidderCash: bidder.cash,
+      highBid:    auction.highBid,
+      highBidderName: leader?.name ?? null,
+      // Minimum, then two bigger jumps so bidding does not take twenty clicks.
+      options: [auction.minimumBid, auction.minimumBid + 40, auction.minimumBid + 90],
+      remaining: auction.bidders.map((p) => p.name),
+      secondsPerBid: AUCTION_SECONDS,
+    };
+  }
+
+  private handleAuctionAction(action: (auction: Auction, bidderId: string) => void): void {
+    const auction = this.auction;
+    const bidder  = auction?.currentBidder;
+    if (!auction || !bidder) return;
+
+    action(auction, bidder.id);
+
+    if (auction.complete) this.finishAuction();
+    else                  this.auctionPanel.show(this.auctionView(auction));
+  }
+
+  private finishAuction(): void {
+    const result = this.auction?.result;
+    this.auction = null;
+    this.auctionPanel.hide();
+    this.boardView.setSelected(null);
+
+    const winner = result?.winnerId
+      ? this.players.find((p) => p.id === result.winnerId)
+      : null;
+
+    if (result && winner) {
+      const tile = this.board.getTile(result.tileId);
+      if (isOwnable(tile)) this.bank.sellPropertyToPlayer(winner, tile, result.amount);
+      this.notif.show(`${winner.name} won ${tile.name} at auction for $${result.amount}!`, 'success');
+      this.boardView.refresh();
+      this.pushUIUpdate();
+      this.refreshPanel();
+    } else if (result) {
+      this.notif.show(`No bids — ${this.board.getTile(result.tileId).name} stays unowned.`, 'info');
+    }
+
+    this.safeEndTurn(400);
+  }
+
   // ── Property panel ────────────────────────────────────────────────────────────
 
   /** Board click: inspect a tile, or close the panel by clicking it again. */
   private selectTile(tileId: number): void {
+    if (this.auction) return;   // the board is not up for inspection mid-auction
     if (this.panel.isOpen && this.panel.tileId === tileId) {
       this.panel.hide();
       this.boardView.setSelected(null);
@@ -374,7 +638,9 @@ export class GameScene extends Phaser.Scene {
     const tile = this.board.getTile(tileId);
     if (!isOwnable(tile)) return;
 
-    const player   = this.turnManager.currentPlayer;
+    // The owner acts, whoever's turn it is — see actionsFor.
+    const player = this.players.find((p) => p.id === tile.ownerId);
+    if (!player) return;
     const property = tile instanceof PropertyTile ? tile : null;
 
     // The buttons were drawn from a snapshot; cash and bank stock may have moved
@@ -546,11 +812,15 @@ export class GameScene extends Phaser.Scene {
     return [];
   }
 
-  /** Buttons are offered to the player whose turn it is — this is hot-seat play. */
+  /**
+   * Buttons belong to whoever owns the tile, not to whoever is rolling: the real
+   * game lets you build, sell and mortgage at almost any point, and hot-seat play
+   * has no secrecy to protect anyway.
+   */
   private actionsFor(tile: Tile): PanelAction[] {
-    if (!isOwnable(tile)) return [];
-    const player = this.turnManager.currentPlayer;
-    if (tile.ownerId !== player.id) return [];
+    if (!isOwnable(tile) || tile.ownerId === null) return [];
+    const player = this.players.find((p) => p.id === tile.ownerId);
+    if (!player || player.isBankrupt) return [];
 
     const button = (key: PanelActionKey, label: string, check: RuleCheck): PanelAction =>
       ({ key, label, enabled: check.ok, reason: check.reason });
@@ -578,9 +848,7 @@ export class GameScene extends Phaser.Scene {
   private actionNoteFor(tile: Tile, owner: Player | null): string {
     if (!isOwnable(tile)) return 'Nothing to manage on this tile.';
     if (!owner)           return 'Nobody owns this yet — land on it to buy it.';
-    if (owner.id !== this.turnManager.currentPlayer.id) {
-      return `${owner.name} manages this one. Buttons appear on their turn.`;
-    }
+    if (owner.isBankrupt) return `${owner.name} is out of the game.`;
     return '';
   }
 
@@ -728,11 +996,15 @@ export class GameScene extends Phaser.Scene {
       );
       this.arrivalRent = null;   // consumed
 
-      this.bank.transferBetweenPlayers(debtor, creditor, resolved);
+      // Settlement, not a clamped subtraction: a debtor who cannot pay sells and
+      // mortgages first, and only then goes under, handing over their estate.
+      const settlement = settleDebt(this.board, this.bank, debtor, creditor, resolved);
       const note = notes.length ? ` (${notes.join(', ')})` : '';
-      this.notif.show(`${debtor.name} paid $${resolved} rent to ${creditor.name}${note}.`, 'warning');
+      this.notif.show(
+        `${debtor.name} paid $${settlement.paid} rent to ${creditor.name}${note}.`, 'warning',
+      );
+      announceSettlement(debtor, creditor, settlement);
       this.pushUIUpdate();
-      this.checkBankruptcy(debtor);
       this.safeEndTurn(700);
     });
 
@@ -744,10 +1016,10 @@ export class GameScene extends Phaser.Scene {
     // ── Tax ───────────────────────────────────────────────────────────────────
     bus.on<TaxPayload>('tax:pay', ({ playerId, amount }) => {
       const player = this.players.find((p) => p.id === playerId)!;
-      this.bank.collectTax(player, amount);
-      this.notif.show(`${player.name} paid $${amount} tax.`, 'danger');
+      const settlement = settleDebt(this.board, this.bank, player, null, amount);
+      this.notif.show(`${player.name} paid $${settlement.paid} tax.`, 'danger');
+      announceSettlement(player, null, settlement);
       this.pushUIUpdate();
-      this.checkBankruptcy(player);
       this.safeEndTurn(700);
     });
 
@@ -870,6 +1142,13 @@ export class GameScene extends Phaser.Scene {
       this.turnManager.forcePlayerTurn(index);
     });
 
+    // ── Bankruptcy — an estate changed hands, so the board is out of date ─────
+    bus.on('player:bankrupt', () => {
+      this.boardView.refresh();
+      this.pushUIUpdate();
+      this.refreshPanel();
+    });
+
     // ── Game over ─────────────────────────────────────────────────────────────
     bus.on('game:end', ({ winnerId }: { winnerId: string | null }) => {
       const winner = this.players.find((p) => p.id === winnerId);
@@ -899,13 +1178,6 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private checkBankruptcy(player: Player): void {
-    if (player.cash <= 0) {
-      player.isBankrupt = true;
-      this.notif.show(`${player.name} is bankrupt! 💀`, 'danger', 3500);
-      bus.emit('player:bankrupt', { playerId: player.id });
-    }
-  }
 
   serialize(): object {
     return {

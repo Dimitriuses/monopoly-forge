@@ -34,9 +34,10 @@ export class Bank {
   // Ownable, not PropertyTile: railroads and utilities change hands the same way,
   // and used to be bought through a hand-written cast in GameScene instead.
 
-  sellPropertyToPlayer(player: Player, tile: Ownable): boolean {
-    if (!player.canAfford(tile.price) || tile.ownerId !== null) return false;
-    player.pay(tile.price);
+  /** `price` overrides the deed's face value — an auction sells at the bid. */
+  sellPropertyToPlayer(player: Player, tile: Ownable, price: number = tile.price): boolean {
+    if (!player.canAfford(price) || tile.ownerId !== null) return false;
+    player.pay(price);
     tile.ownerId = player.id;
     player.ownedTileIds.add(tile.id);
     return true;

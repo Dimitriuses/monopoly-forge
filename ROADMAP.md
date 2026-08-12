@@ -3,11 +3,14 @@
 Where Monopoly Forge is going. Defects that exist *today* are listed separately in
 [KNOWNISSUES.md](KNOWNISSUES.md); this file is about work not yet done.
 
-**Status:** active. The turn loop, cards, jail, rent and property development all
-work end to end — a seeded game runs with no console errors (`npm run playtest`).
-M3 put ownership on the board and made houses, hotels and mortgages reachable;
-M4 closed the card, jail and rent rules behind them. What is left before this is
-a game you can *finish* is M5: auctions, trading and a real bankruptcy settlement.
+**Status:** active. **The classic game is playable end to end.** M3 put ownership
+on the board and made houses, hotels and mortgages reachable, M4 closed the card,
+jail and rent rules behind them, and M5 added the multiplayer half — auctions,
+trading and a bankruptcy that actually settles an estate, which is what makes the
+last-player-standing win condition mean anything. A seeded game runs with no
+console errors (`npm run playtest`).
+
+What is left is polish (M6), quality (M7) and then the engine itself (M8).
 
 **The destination is M8: an engine for Monopoly-style games** — configurable maps,
 rules and presentation. M1–M7 build the classic game that the engine has to be able
@@ -71,33 +74,44 @@ Rent resolution moved out of `GameScene` and into `game/Rent.ts` to make those
 last two rules testable: `quoteRent` is where a railroad, a utility or an
 unimproved monopoly works out what it charges, and it runs in plain Node.
 
-## M5 — Multiplayer interaction · next
+## M5 — Multiplayer interaction · done
 
-- [ ] **Auctions.** The event is already named `property:auction`; only the
-      Buy/Pass prompt exists. Needs round-robin bidding with a per-turn timer and
-      a pass-forfeits rule. The same machinery settles the house shortage:
-      `BuildRules.canSellHotel` currently *refuses* to break a hotel when the bank
-      holds fewer than four houses (because `Bank.sellHotel` would silently
-      destroy them), where the standard rules auction the scarce houses instead.
-- [ ] **Trading.** Offer/counter-offer over properties, cash and jail cards, with
-      both sides confirming.
-- [ ] **Let players manage their estate outside their own turn.** M3's panel only
-      offers build / sell / mortgage buttons to `turnManager.currentPlayer`
-      (`GameScene.actionsFor`); the real game allows it at almost any point.
-      Inspecting a tile already works at any time — only the actions are gated,
-      and ungating them needs the same "who is acting right now" notion as
-      auctions and trading.
-- [ ] **Proper bankruptcy settlement** — forced mortgaging and selling before
-      being declared bankrupt, then transferring the whole estate to the creditor.
-      This is a prerequisite for the win condition meaning anything.
+- [x] **Auctions.** Declining a property now puts it under the hammer:
+      round-robin bidding, a pass forfeits for good, and a per-bidder clock that
+      passes for anyone who runs it out. `game/Auction.ts` owns the rules and
+      knows nothing about the clock; `ui/AuctionPanel.ts` owns the clock and
+      knows nothing about the rules. The `noAuction` house rule — declared since
+      M1 and read by nothing — now keeps the old leave-it-unowned behaviour.
+- [x] **Trading.** `game/Trade.ts` validates and applies a two-sided offer over
+      deeds, cash and jail cards; `ui/TradePanel.ts` builds it. Propose, accept,
+      decline and counter (which is just the offer reversed and handed back).
+      Cash is netted, so neither side needs to front the gross, and a lot whose
+      colour group has buildings on it cannot be traded at all.
+- [x] **Let players manage their estate outside their own turn.** The property
+      panel now offers its buttons to the tile's *owner* rather than to whoever
+      is rolling.
+- [x] **Proper bankruptcy settlement.** `game/Estate.ts`: a debt is paid from
+      cash, then by selling buildings (tallest lot first, which is also what the
+      even-selling rule wants) and mortgaging deeds (largest first, so the fewest
+      change hands), and only then does the player go under — at which point the
+      whole estate, jail cards included, passes to the creditor. Rent, tax and
+      card debts all route through it, so the win condition finally means
+      something: the last solvent player wins.
 
-## M6 — Polish
+Not done, and moved to M6: auctioning houses when the bank runs short of them.
+
+## M6 — Polish · next
 
 - [ ] **Wire up save/load.** See *Blocked / deferred* below — this is not the
       small job it looks like.
-- [ ] **Make the house rules real.** Four flags (`freeParkingJackpot`,
-      `doubleGoSalary`, `noAuction`, `speedDie`) are declared and read by nothing.
-      Either implement them or delete the type.
+- [ ] **Finish the house rules.** `noAuction` is now real (M5). Three flags are
+      still read by nothing: `freeParkingJackpot`, `doubleGoSalary` and
+      `speedDie`. Either implement them or delete them.
+- [ ] **Auction the houses when the bank runs short.** `BuildRules.canSellHotel`
+      refuses to break a hotel the bank cannot supply four houses for, which
+      matches the limited-supply rule; what is missing is the other half, where
+      several players want the last few houses and the standard rules auction
+      them. M5's `Auction` is the machinery, but it bids on a tile, not on stock.
 - [ ] **Fill the rest of the right-hand column.** The property panel now occupies
       x=770–1045 down to y=480; the turn log belongs underneath it.
 - [ ] **Stop toasts covering the roll button.** Notifications stack upward from

@@ -8,41 +8,27 @@ reproducible; anything merely *planned* lives in [ROADMAP.md](ROADMAP.md) instea
 
 ## Gameplay
 
-### Declining a property does not open an auction
+### A bankrupt player's estate is not auctioned when it returns to the bank
 
-Under tournament rules, a declined property goes to auction between all players.
-Here, `PropertyTile.onLand` emits an event named `property:auction`, but the
-handler only shows a Buy/Pass prompt — passing simply ends the turn and the tile
-stays unowned. The event name is a leftover from the original plan and is
-misleading; renaming it is a small, safe cleanup.
-
-### Bankruptcy ends a player without settling their estate
-
-`checkBankruptcy` flags a player as bankrupt when their cash hits zero, and
-`TurnManager.advancePlayer` then skips them. What does *not* happen:
-
-- their properties are not transferred to the creditor or returned to the bank —
-  the tiles stay owned by a player who is out of the game, and keep charging rent;
-- there is no chance to mortgage or sell to raise the money first;
-- `Player.pay` clamps at zero (`Math.max(0, …)`), so a player can never actually
-  owe more than they hold, which is why partial payment silently "works";
-- a Get Out of Jail Free card in their hand is not returned to its deck. Spending
-  one puts it back (M4); going bankrupt holding one still takes it out of play.
-
-### Building is only offered on the owner's own turn
-
-Real Monopoly lets you build, sell and mortgage at almost any point, including
-during another player's turn. Here `GameScene.actionsFor` only offers the buttons
-to `turnManager.currentPlayer`, so a player who wants to develop must wait for
-their turn to come round. Inspecting any tile works at any time; only the actions
-are gated.
+When a player goes under owing the *bank* rather than another player, their deeds
+are returned unowned (`Estate.transferEstate` with no creditor). The standard
+rules have the bank auction each of them immediately. Owing another player works
+correctly — the whole estate passes to them.
 
 ### Selling a hotel is blocked when the bank has fewer than four houses
 
 `Bank.sellHotel` hands back four houses only `if (this.houses >= 4)` — otherwise
 the lot silently ends up bare and the buildings vanish. Rather than change the
-bank, `BuildRules.canSellHotel` refuses the sale in that case and says why. The
-standard rules would instead force an auction of the scarce houses.
+bank, `BuildRules.canSellHotel` refuses the sale in that case and says why, which
+matches the limited-supply rule: with no houses in the bank you must wait. The
+*other* half of that rule — auctioning the last few houses between players who
+all want them — is not implemented (ROADMAP M6).
+
+### The auction clock is fixed at 15 seconds
+
+`AUCTION_SECONDS` in `GameScene` is a constant, not a setting, and the bid
+increments offered (minimum, +$40, +$90) are fixed too. A player who wants to
+raise by some other amount cannot.
 
 ### Duplicate tokens are allowed
 
@@ -50,12 +36,13 @@ The menu assigns distinct tokens by default, but the selector cycles each row
 independently, so two players can both end up as "Car" and share a token colour
 on the board. Nothing prevents or warns about it.
 
-### House-rule flags are declared but never consulted
+### Three of the four house-rule flags are still never consulted
 
-`HouseRules` (`freeParkingJackpot`, `doubleGoSalary`, `noAuction`, `speedDie`) is
-defined in `src/config.ts` and `GameScene.houseRules` is initialised from
-`DEFAULT_HOUSE_RULES` — but no code path reads any of the four flags. They are a
-placeholder, not a feature.
+`noAuction` became real in M5 — it keeps a declined property unowned instead of
+opening an auction. `freeParkingJackpot`, `doubleGoSalary` and `speedDie` are
+still read by no code path, and there is no interface for changing any of them:
+`GameScene.houseRules` is initialised from `DEFAULT_HOUSE_RULES` and never
+touched again.
 
 ### Save/load is not wired up
 
@@ -96,12 +83,20 @@ has been stable across long playtests, but it is timing-coupled by construction.
 effects — it moved to `game/Rent.ts` and is unit-tested. What remains in the
 scene handlers is the sequencing: who pays whom, when, and how long to wait.
 
-### The property panel is rebuilt from scratch on every refresh
+### Every panel is rebuilt from scratch on every refresh
 
-`PropertyPanel.show()` calls `removeAll(true)` and re-creates every text object,
-and `GameScene.refreshPanel()` calls it after each build, sale, mortgage and
-turn change. It is a few dozen objects and has not been measurable, but it is
-churn where a diff would do.
+`PropertyPanel.show()`, `AuctionPanel.show()` and `TradePanel.show()` all call
+`removeAll(true)` and re-create every child, and they are called after each
+build, sale, mortgage, bid and offer edit. The trade panel is the heaviest —
+roughly 120 objects for two full deed lists — and none of it has been measurable,
+but it is churn where a diff would do.
+
+### The trade panel's layout is fixed, not measured
+
+`TradePanel` reserves 11 deed rows per side whatever the players actually hold,
+so a two-deed trade shows a lot of empty space, and everything below the list
+hangs off constants derived from that. It also means the harness's `HOTSPOTS`
+entries have to be recalculated by hand whenever the layout constants change.
 
 ---
 

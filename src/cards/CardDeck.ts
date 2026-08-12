@@ -1,6 +1,7 @@
 import { rng } from '@/utils/PRNG';
 import { bus } from '@/utils/EventBus';
 import { dlog, dwarn } from '@/utils/log';
+import { settleDebt, announceSettlement } from '@/game/Estate';
 import type { Player } from '@/game/Player';
 import type { Board } from '@/game/Board';
 import type { Bank } from '@/game/Bank';
@@ -142,18 +143,18 @@ export class CardEffects {
         break;
       case 'payBank':
         dlog(`[CardEffects] payBank: ${player.name} pays $${a.amount}`);
-        this.bank.collectTax(player, a.amount);
+        this.charge(player, null, a.amount);
         break;
       case 'collectFromAll':
         dlog(`[CardEffects] collectFromAll: ${player.name} collects $${a.amount} from each player`);
         this.players.filter((p) => p.id !== player.id && !p.isBankrupt).forEach((p) => {
-          this.bank.transferBetweenPlayers(p, player, a.amount);
+          this.charge(p, player, a.amount);
         });
         break;
       case 'payAll':
         dlog(`[CardEffects] payAll: ${player.name} pays $${a.amount} to each player`);
         this.players.filter((p) => p.id !== player.id && !p.isBankrupt).forEach((p) => {
-          this.bank.transferBetweenPlayers(player, p, a.amount);
+          this.charge(player, p, a.amount);
         });
         break;
       case 'repairs': {
@@ -167,7 +168,7 @@ export class CardEffects {
           }
         });
         dlog(`[CardEffects] repairs: ${player.name} pays $${total} (houses×$${a.houseCost}, hotels×$${a.hotelCost})`);
-        this.bank.collectTax(player, total);
+        this.charge(player, null, total);
         break;
       }
       case 'getOutOfJail':
@@ -176,6 +177,14 @@ export class CardEffects {
         dlog(`[CardEffects] getOutOfJail: ${player.name} now holds ${player.getOutOfJailCards} GOOJ card(s)`);
         break;
     }
+  }
+
+  /** A card debt is a debt like any other: raise cash, then go under if you
+   *  cannot. `creditor` is null when the money goes to the bank. */
+  private charge(debtor: Player, creditor: Player | null, amount: number): void {
+    if (amount <= 0) return;
+    const settlement = settleDebt(this.board, this.bank, debtor, creditor, amount);
+    announceSettlement(debtor, creditor, settlement);
   }
 
   /** The next tile of this type going forwards, or null if the map has none.
