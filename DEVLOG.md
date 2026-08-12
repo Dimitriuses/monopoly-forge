@@ -247,7 +247,7 @@ executing multiple card effects and calling `safeEndTurn` multiple times.
 
 *As of M2. The current layout — which adds `game/BuildRules.ts`, `game/Rent.ts`,
 `game/Auction.ts`, `game/Trade.ts`, `game/Estate.ts`, `game/Snapshot.ts`,
-`ui/BoardRenderer.ts`, `ui/PropertyPanel.ts`, `ui/AuctionPanel.ts`,
+`game/Bot.ts`, `ui/BoardRenderer.ts`, `ui/PropertyPanel.ts`, `ui/AuctionPanel.ts`,
 `ui/TradePanel.ts` and `ui/Sfx.ts`, and no longer has switcher buttons in
 `PlayerPanel` — is in [README.md](README.md#layout).*
 
@@ -297,8 +297,8 @@ src/
 | M4 — Cards & Jail (all edge cases) | ✅ Complete — see [M4 below](#m4--cards-jail-and-rent-edge-cases--2026-08-12) |
 | M5 — Multiplayer UI (trade dialog, auction system) | ✅ Complete — see [M5 below](#m5--multiplayer-interaction--2026-08-12) |
 | M6 — Polish (animations, sound, save/load, house rules) | ✅ Complete — see [M6 below](#m6--polish--2026-08-12) |
-| M7 — QA (AI opponent, edge-case testing, balance) | 🟡 221 unit tests + a headless playtest in CI; no AI |
-| **M8 — Engine** (configurable maps, rules and presentation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). 8a: board length and anchors done, shape still a square. 8c: `BoardRenderer` extracted. 8b: not started |
+| M7 — Opponents (bots you can play against) | ✅ Complete — see [M7 below](#m7--opponents-you-can-play-against--2026-08-12) |
+| **M8 — Engine** (configurable maps, rules, presentation, simulation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). 8a: board length and anchors done, shape still a square. 8c: `BoardRenderer` extracted. 8b and 8d: not started |
 
 ---
 
@@ -839,3 +839,79 @@ Building it would need three things that have no home in this build:
 All three are M8b's work, so that is where it went. What the game does today —
 whoever builds first gets the last houses — is now written down in KNOWNISSUES
 rather than left as an unticked box.
+
+---
+
+## M7 — Opponents you can play against — 2026-08-12
+
+Bots for the demo game. The simulation platform that runs thousands of games went
+to M8d, on the reasoning that both are wanted but only one of them is what a
+person sitting down to play needs — and the same bots will drive the simulator, so
+the decision layer was built to be reusable from the first line.
+
+### The line that matters
+
+`game/Bot.ts` **decides**; `GameScene` **drives**. The policy answers questions —
+buy this? bid how much? build where? accept this offer? — and the scene applies
+the answers through the same paths a button would. Nothing in `Bot.ts` touches a
+scene, a button or a tween, because M8d's headless runner will not have any.
+
+Two properties are load-bearing:
+
+- **No randomness.** A bot that drew from `rng` would move the dice stream and
+  stop a seeded game replaying. Every decision is a pure function of the state,
+  which also makes a misbehaving simulated game debuggable.
+- **Deterministic for a given state**, pinned by a test that asks the same
+  questions twice and compares.
+
+`Player.isBot` is game state, so it is in the snapshot (`SNAPSHOT_VERSION` → 3): a
+saved game resumes with the same seats.
+
+### Anything that waits for a click will wait forever
+
+The first bot game froze after 19 ticks. The cause was structural rather than
+subtle: `CardScene` waits for **OK**, and nobody clicks it for a bot. Any modal is
+the same trap, so the buy prompt is *answered* rather than shown, and a bot's
+drawn card closes itself after a beat. That is now written down in CLAUDE.md as
+the rule for adding the next prompt.
+
+### The stall that was not a stall
+
+Then the bots ran for two minutes and stopped again, always in the same auction.
+The evidence looked damning: the console trace ended mid-auction, the scheduled
+bid callback never logged, and the state sat frozen for seven seconds.
+
+Chasing it turned up nothing wrong with the game. The loop was running (a frame
+counter proved it), the clock was not paused, timers were being created and
+retired, and no exception was ever thrown. The bug was in **the detector**:
+
+```js
+const serialised = JSON.stringify(now.players);   // ← players only
+```
+
+Bidding does not touch anybody's cash or position until the auction settles, so a
+busy auction and a frozen game look identical through that lens. Meanwhile the
+bots were bidding the table minimum — $10 a raise, 600 ms apart, climbing toward a
+$284 ceiling — so the auction genuinely took half a minute of wall time while the
+harness watched a "frozen" player list.
+
+Two real fixes came out of it. The harness now hashes the whole state plus the
+auction, so bidding counts as progress; and `nextBid` raises by a tenth of face
+value instead of the table minimum, which settles a $300 deed in a handful of
+rounds rather than thirty. The second one matters more for M8d than for a human
+watching: a thousand simulated games of thirty-round auctions is a lot of nothing.
+
+The lesson is the cheap one to forget: when a detector says "nothing is
+happening", check what it is actually looking at before believing it about the
+thing it is watching.
+
+### Verification
+
+- 248 unit tests (up from 221), 27 of them on the policy: buying, bidding
+  ceilings, the jail heuristic, build plans, redemption order, trade valuation,
+  and the determinism contract M8d depends on.
+- `npm run playtest -- --bots` hands every seat to a bot and watches: it fails if
+  they stop playing, and reports a game one of them wins outright.
+- Development was verified by handing a bot a complete colour group and watching
+  it put three houses on each lot — evenly, within its cash reserve, and inside
+  the bank's stock.

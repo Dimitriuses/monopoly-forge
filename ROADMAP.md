@@ -3,15 +3,18 @@
 Where Monopoly Forge is going. Defects that exist *today* are listed separately in
 [KNOWNISSUES.md](KNOWNISSUES.md); this file is about work not yet done.
 
-**Status:** active. **The classic game is playable end to end, and it can now be
-put down and picked up again.** M3 put ownership on the board and made houses,
-hotels and mortgages reachable, M4 closed the card, jail and rent rules behind
-them, M5 added the multiplayer half — auctions, trading and a bankruptcy that
-settles an estate — and M6 finished the presentation: save/load, working house
-rules, a turn log, tokens and sound. A seeded game runs with no console errors
-(`npm run playtest`), which now also saves, reloads the page and resumes.
+**Status:** active. **The classic game is playable end to end, on your own, and it
+can be put down and picked up again.** M3 put ownership on the board and made
+houses, hotels and mortgages reachable, M4 closed the card, jail and rent rules
+behind them, M5 added the multiplayer half — auctions, trading and a bankruptcy
+that settles an estate — M6 finished the presentation with save/load, working
+house rules, a turn log, tokens and sound, and M7 added opponents worth playing
+against. A seeded game runs with no console errors (`npm run playtest`), which
+also saves, reloads the page and resumes; `--bots` hands every seat to a bot and
+watches them play it out.
 
-What is left is quality (M7) and then the engine itself (M8).
+What is left is the engine itself (M8), including the simulation platform (8d)
+that runs M7's bots a thousand games at a time.
 
 **The destination is M8: an engine for Monopoly-style games** — configurable maps,
 rules and presentation. M1–M7 build the classic game that the engine has to be able
@@ -148,16 +151,34 @@ Not done, and moved to M6: auctioning houses when the bank runs short of them.
       have to bid on an arbitrary subject rather than a tile id. All three are
       M8b's work. Today's behaviour is recorded in KNOWNISSUES.
 
-## M7 — Quality · next
+## M7 — Opponents you can play against · done
 
-- [ ] **A basic AI opponent**, so a single player can finish a game. The seeded
-      PRNG and the Phaser-free model make headless simulation straightforward —
-      a bot that plays thousands of games is also the fastest way to find the
-      remaining rule bugs.
-- [ ] **Balance pass** driven by those simulations: bankruptcy rates, game length,
-      how often the bank runs out of houses.
+Bots for the *demo game* first: something a single player can sit down and finish
+a game against. The simulation platform that runs thousands of games is M8d — but
+these bots are the ones it will run, so the decision layer was built to be reused
+from the start.
+
+- [x] **A bot that plays the real game.** Seats are set to 🤖 Bot or 🙋 Human on
+      the menu, and seats 2+ default to bots so a single player can just start.
+      Bots roll, buy or decline, bid in auctions, answer a trade, choose how to
+      leave jail, redeem mortgages and develop a group — all through the same
+      rules the buttons drive. The roll button greys out on their turn, and their
+      drawn cards close themselves.
+- [x] **A decision interface the simulator can reuse.** `game/Bot.ts` is
+      Phaser-free and deterministic: given the same state it answers the same way
+      twice, and it draws no randomness at all, so it cannot shift the dice
+      stream out from under a seeded game. It answers questions — *buy this? bid
+      how much? build where? accept this offer?* — and `GameScene` applies the
+      answers. Nothing in it touches a button, a tween or a scene.
+- [x] **Bots are game state.** `Player.isBot` is captured in the snapshot
+      (`SNAPSHOT_VERSION` 3), so a saved game resumes with the same seats.
+- [x] **A bot-driven playtest.** `npm run playtest -- --bots` hands every seat to
+      a bot and watches: it fails if they stop playing, and reports the game if
+      one of them wins outright.
 - [ ] **Extend the playtest harness** to assert on richer invariants (total cash
-      conservation across the whole table, deck census over a long game).
+      conservation across the whole table, deck census over a long game). Moved
+      to **M8d** — those are batch invariants, and checking them once per run is
+      far weaker than checking them across a thousand games.
 
 ## M8 — Monopoly Forge as an engine · the destination
 
@@ -234,6 +255,30 @@ currently prevents it, so none of this is an estimate.
       same problem as rendering a theme — hold references to the drawn elements and
       write to them — so it is worth solving once, here, rather than three times in
       three hand-written panels.
+
+### 8d — A simulation platform
+
+Running the game thousands of times without a renderer, driven by M7's bots. This
+is where a rules engine stops being a claim and starts being measurable — and it
+is the fastest way to find the rule bugs a hand-played game never reaches.
+
+- [ ] **A headless runner.** No Phaser, no canvas: seed, players, rule set in;
+      a finished game out. The model already runs in plain Node, and M7's decision
+      layer is deliberately separate from the scene that currently drives it, so
+      the runner supplies the driving instead.
+- [ ] **A batch CLI** — `npm run simulate -- --games 1000 --seed 1` — reporting
+      what a balance pass needs: bankruptcy rates, game length, how often the bank
+      runs out of houses, how often a game fails to terminate.
+- [ ] **Invariant checking across the batch** (the richer assertions moved here
+      from M7). Total cash conserved, deck census intact, no player ever off the
+      board, every game reaching a winner. A rule bug that shows up once in five
+      hundred games is invisible at the table and obvious here.
+- [ ] **A second policy to measure the first against.** `game/Bot.ts` is a
+      deliberately simple baseline — a fixed reserve, a tenth-of-face bidding
+      step, build the cheapest complete group. The point of a simulator is being
+      able to say whether a different one is actually better.
+- [ ] **A balance pass** driven by those numbers (moved from M7, which cannot do
+      it without the runner).
 
 ### Sequencing — why some of this did not wait
 

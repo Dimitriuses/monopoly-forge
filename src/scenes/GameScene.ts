@@ -34,6 +34,17 @@ import {
   type RuleCheck,
 } from '@/game/BuildRules';
 import { quoteRent, countOwnedOfType, type ArrivalRent } from '@/game/Rent';
+import {
+  shouldBuy, nextBid, jailChoice, buildPlan, redeemPlan, acceptTrade,
+  type BotContext,
+} from '@/game/Bot';
+
+/** A beat between bot actions, so a human can follow what it is doing. */
+const BOT_THINK = 600;
+/** Cap on buildings a bot puts up in one turn — it re-plans between each. */
+const MAX_BOT_BUILDS = 6;
+/** How long a bot leaves its drawn card on screen before closing it. */
+const BOT_CARD_LINGER = 1600;
 import { settleDebt, announceSettlement } from '@/game/Estate';
 import { Auction } from '@/game/Auction';
 import { AuctionPanel, type AuctionView } from '@/ui/AuctionPanel';
@@ -55,7 +66,7 @@ const TOKEN_HEX: Record<string, string> = {
 };
 
 interface SceneData {
-  players: Array<{ name: string; token: TokenType }>;
+  players: Array<{ name: string; token: TokenType; isBot?: boolean }>;
   seed?: number;
   houseRules?: HouseRules;
   /** A saved game to resume instead of dealing a new one. */
@@ -104,6 +115,8 @@ export class GameScene extends Phaser.Scene {
   /** Set by a "nearest railroad / utility" card, consumed by the next rent it
    *  causes. Cleared at turn:start so it can never leak into another turn. */
   private arrivalRent: ArrivalRent | null = null;
+  /** Once the game is won, no scheduled bot action should still fire. */
+  private gameOver = false;
   /** True while a tween chain is running — blocks roll and force-switch */
   isAnimating = false;
 
@@ -125,7 +138,9 @@ export class GameScene extends Phaser.Scene {
     const board   = new Board();
     const bank    = new Bank();
     const dice    = new Dice();
-    const players = data.players.map((p, i) => new Player(`p${i + 1}`, p.name, p.token));
+    const players = data.players.map(
+      (p, i) => new Player(`p${i + 1}`, p.name, p.token, p.isBot ?? false),
+    );
 
     return {
       board, bank, dice, players,
@@ -198,7 +213,32 @@ export class GameScene extends Phaser.Scene {
       panelTile:   () => this.panel.tileId,
       auctionOpen: () => this.auctionPanel.isOpen,
       auctionBidder: () => this.auction?.currentBidder?.id ?? null,
+      auctionState: () => (this.auction ? {
+        tileId:        this.auction.tileId,
+        bidders:       this.auction.bidders.map((p) => p.id),
+        currentBidder: this.auction.currentBidder?.id ?? null,
+        highBid:       this.auction.highBid,
+        highBidderId:  this.auction.highBidderId,
+        minimumBid:    this.auction.minimumBid,
+        complete:      this.auction.complete,
+      } : null),
       houseRules:  () => ({ ...this.houseRules }),
+      gameOver:    () => this.gameOver,
+      // Frame counter and clock state: if the game ever looks frozen, this says
+      // whether the loop is still turning or whether it stopped underneath you.
+      loop:        () => {
+        const clock = this.time as unknown as {
+          _active: unknown[]; _pendingInsertion: unknown[]; _pendingRemoval: unknown[];
+        };
+        return {
+          frame:      this.game.loop.frame,
+          awake:      this.game.loop.running,
+          paused:     this.time.paused,
+          active:     clock._active.length,
+          pendingIn:  clock._pendingInsertion.length,
+          pendingOut: clock._pendingRemoval.length,
+        };
+      },
       tradeOpen:   () => this.tradePanel.isOpen,
       tradeOffer:  () => (this.offer ? { ...this.offer, mode: this.tradeMode } : null),
       // Lets the harness click a tile without keeping its own copy of the
@@ -464,6 +504,147 @@ export class GameScene extends Phaser.Scene {
     this.buyPrompt.setVisible(false);
   }
 
+  // ── Bot turns ─────────────────────────────────────────────────────────────────
+  // The scene *drives*, `game/Bot.ts` *decides*. Everything below applies a
+  // decision through the same paths a button would; nothing here works out what
+  // the right move is. That line is what lets M8d's headless runner reuse the
+  // policy without dragging a scene along.
+
+  private botContext(player: Player): BotContext {
+    return { board: this.board, bank: this.bank, player, players: this.players };
+  }
+
+  /** Let a bot act after a beat, so a human can follow what it is doing. */
+  private botAct(fn: () => void, delay = BOT_THINK): void {
+    const gen = this.turnGen;
+    this.time.delayedCall(delay, () => {
+      if (this.gameOver || this.turnGen !== gen) return;
+      fn();
+    });
+  }
+
+  private startBotTurn(player: Player): void {
+    this.botAct(() => {
+      if (player.inJail) {
+        const choice = jailChoice(this.botContext(player), JAIL_FINE);
+        if (choice === 'card') this.turnManager.useGetOutOfJailCard(player);
+        if (choice === 'pay')  this.turnManager.payJailFine(player);
+        this.pushUIUpdate();
+      } else {
+        this.botDevelop(player);
+      }
+      this.botAct(() => this.turnManager.rollDice(), BOT_THINK);
+    });
+  }
+
+  /** Redeem what it can afford, then build what the plan asks for. */
+  private botDevelop(player: Player): void {
+    const ctx = this.botContext(player);
+
+    for (const tileId of redeemPlan(ctx)) {
+      const tile = this.board.getTile(tileId);
+      if (isOwnable(tile) && canUnmortgage(player, tile).ok) {
+        this.bank.unmortgage(player, tile);
+        this.notif.show(`${player.name} lifted the mortgage on ${tile.name}.`, 'info');
+      }
+    }
+
+    // Re-plan after each step: cash and the bank's stock move underneath it.
+    for (let step = 0; step < MAX_BOT_BUILDS; step++) {
+      const next = buildPlan(this.botContext(player))[0];
+      if (!next) break;
+      const lot = this.board.getTile(next.tileId);
+      if (!(lot instanceof PropertyTile)) break;
+
+      const built = next.kind === 'hotel'
+        ? canBuildHotel(this.board, this.bank, player, lot).ok && this.bank.buyHotel(player, lot)
+        : canBuildHouse(this.board, this.bank, player, lot).ok && this.bank.buyHouse(player, lot);
+      if (!built) break;
+
+      this.notif.show(
+        `${player.name} built a ${next.kind} on ${lot.name}.`, 'success',
+      );
+    }
+
+    this.boardView.refresh();
+    this.pushUIUpdate();
+    this.refreshPanel();
+  }
+
+  /** Answer a buy prompt without showing it. */
+  private botDecideBuy(player: Player, tileId: number, price: number, tileName: string): void {
+    this.botAct(() => {
+      const tile = this.board.getTile(tileId);
+      if (!isOwnable(tile)) return;
+
+      if (shouldBuy(this.botContext(player), tile)) {
+        this.doBuyTile(player, tileId, price, tileName);
+        return;
+      }
+      if (this.houseRules.noAuction) {
+        this.notif.show(`${player.name} passed on ${tileName}.`, 'info');
+        this.safeEndTurn(300);
+        return;
+      }
+      this.notif.show(`${player.name} passed — ${tileName} goes to auction.`, 'info');
+      this.startAuction(tileId);
+    });
+  }
+
+  /** Take a bot's turn at the auction, if the bidder on turn is one. */
+  private botDecideBid(): void {
+    const auction = this.auction;
+    const bidder  = auction?.currentBidder;
+    if (!auction || !bidder || !bidder.isBot) return;
+
+    const tile = this.board.getTile(auction.tileId);
+    if (!isOwnable(tile)) return;
+
+    this.time.delayedCall(BOT_THINK, () => {
+      if (this.auction !== auction) return;   // the auction ended under it
+      // Somebody else moved the auction on while this was pending — the panel's
+      // clock passing for a bidder does exactly that. Re-ask for whoever is up
+      // now, or the auction sits there with nobody scheduled to act.
+      if (auction.currentBidder?.id !== bidder.id) {
+        this.botDecideBid();
+        return;
+      }
+      const bid = nextBid(this.botContext(bidder), tile, auction.highBid, auction.minimumBid);
+      dlog(
+        `[Bot] ${bidder.name} on ${tile.name}: high=${auction.highBid} ` +
+        `min=${auction.minimumBid} cash=${bidder.cash} → ${bid === null ? 'pass' : `bid ${bid}`}`,
+      );
+      this.handleAuctionAction((a, id) => {
+        // A refused bid would leave the auction exactly as it was, and the next
+        // redraw would ask this bot the same question forever. Passing is the
+        // only safe fallback.
+        if (bid !== null && a.bid(id, bid)) return;
+        if (bid !== null) {
+          dwarn(`[Bot] ${bidder.name}'s bid of ${bid} was refused — passing instead`);
+        }
+        a.pass(id);
+      });
+    });
+  }
+
+  /** Answer an offer a human has just proposed to a bot. */
+  private botAnswerTrade(): void {
+    const offer = this.offer;
+    if (!offer || this.tradeMode !== 'review') return;
+    const partner = this.players.find((p) => p.id === offer.toId);
+    if (!partner?.isBot) return;
+
+    this.time.delayedCall(BOT_THINK * 2, () => {
+      if (this.offer !== offer || this.tradeMode !== 'review') return;
+      const accepted = acceptTrade(this.botContext(partner), offer);
+      this.notif.show(
+        accepted ? `${partner.name} accepts.` : `${partner.name} turns the offer down.`,
+        accepted ? 'success' : 'info',
+      );
+      this.handleTradeAction({ kind: accepted ? 'accept' : 'decline' });
+    });
+  }
+
   // ── House rules ───────────────────────────────────────────────────────────────
 
   /**
@@ -616,7 +797,9 @@ export class GameScene extends Phaser.Scene {
       }
       case 'propose':
         this.tradeMode = 'review';
-        break;
+        this.tradePanel.show(this.tradeView());
+        this.botAnswerTrade();   // if the other side is a bot, it answers itself
+        return;
       case 'counter':
         // Hand it back the other way round and let them edit it.
         this.offer = reverseOffer(offer);
@@ -658,6 +841,7 @@ export class GameScene extends Phaser.Scene {
     this.panel.hide();
     this.boardView.setSelected(tileId);
     this.auctionPanel.show(this.auctionView(this.auction));
+    this.botDecideBid();
   }
 
   private auctionView(auction: Auction): AuctionView {
@@ -690,8 +874,12 @@ export class GameScene extends Phaser.Scene {
 
     action(auction, bidder.id);
 
-    if (auction.complete) this.finishAuction();
-    else                  this.auctionPanel.show(this.auctionView(auction));
+    if (auction.complete) {
+      this.finishAuction();
+      return;
+    }
+    this.auctionPanel.show(this.auctionView(auction));
+    this.botDecideBid();   // the next bidder may be one too
   }
 
   private finishAuction(): void {
@@ -1041,10 +1229,13 @@ export class GameScene extends Phaser.Scene {
       this.arrivalRent = null;                 // ← a card's rent rate never outlives its turn
       const player = this.players.find((p) => p.id === playerId)!;
 
-      this.setRollEnabled(true);
+      // A bot rolls for itself; leaving the button live would let a human roll
+      // on its behalf.
+      this.setRollEnabled(!player.isBot);
       this.hideBuyPrompt();
 
-      const jailActAvail = player.inJail && (player.getOutOfJailCards > 0 || player.cash >= JAIL_FINE);
+      const jailActAvail = !player.isBot && player.inJail
+        && (player.getOutOfJailCards > 0 || player.cash >= JAIL_FINE);
       const jailLabel    = player.getOutOfJailCards > 0 ? '🃏  Use Card' : `🔓  Pay $${JAIL_FINE}`;
       this.setJailBtnVisible(jailActAvail, jailActAvail ? jailLabel : undefined);
 
@@ -1052,6 +1243,8 @@ export class GameScene extends Phaser.Scene {
       this.refreshPanel();
 
       this.scene.get('UIScene').events.emit('turn:start', { player, players: this.players });
+
+      if (player.isBot) this.startBotTurn(player);
     });
 
     bus.on('turn:end', () => {
@@ -1073,6 +1266,13 @@ export class GameScene extends Phaser.Scene {
 
       if (tile.type === 'property') {
         baseRent = (tile as PropertyTile).rentTiers[0];
+      }
+
+      // A bot answers the prompt instead of being shown it.
+      const player = this.players.find((p) => p.id === playerId);
+      if (player?.isBot) {
+        this.botDecideBuy(player, tileId, finalPrice, tile.name);
+        return;
       }
 
       this.showBuyPrompt(tileId, playerId, finalPrice, tile.name, baseRent);
@@ -1214,6 +1414,16 @@ export class GameScene extends Phaser.Scene {
       if (this.scene.isActive('CardScene')) this.scene.stop('CardScene');
 
       this.scene.launch('CardScene', { card });
+
+      // Nobody clicks OK for a bot. Leave the card up long enough to read, then
+      // close it — the shutdown handler below is what applies the effect, so this
+      // has to stop the scene rather than skip showing it.
+      if (player.isBot) {
+        this.time.delayedCall(BOT_CARD_LINGER, () => {
+          if (this.scene.isActive('CardScene')) this.scene.stop('CardScene');
+        });
+      }
+
       this.scene.get('CardScene').events.once('shutdown', () => {
         dlog(`[GameScene] CardScene shutdown → executing card "${card.description}" for ${player.name}`);
         this.cardEffects.execute(card, player);
@@ -1270,6 +1480,7 @@ export class GameScene extends Phaser.Scene {
     // ── Game over ─────────────────────────────────────────────────────────────
     bus.on('game:end', ({ winnerId }: { winnerId: string | null }) => {
       const winner = this.players.find((p) => p.id === winnerId);
+      this.gameOver = true;   // stops any bot that was mid-think
       this.setRollEnabled(false);
       this.hideBuyPrompt();
       this.panel.hide();

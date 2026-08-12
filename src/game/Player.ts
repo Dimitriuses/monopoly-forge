@@ -17,8 +17,10 @@ export class Player {
   ownedTileIds: Set<number>;
   isBankrupt: boolean;
   doublesStreak: number;   // consecutive doubles this turn (resets on non-double or jail)
+  /** Whether a bot takes this seat's turns. Part of the game, so it is saved. */
+  isBot: boolean;
 
-  constructor(id: string, name: string, token: TokenType) {
+  constructor(id: string, name: string, token: TokenType, isBot = false) {
     this.id = id;
     this.name = name;
     this.token = token;
@@ -30,6 +32,7 @@ export class Player {
     this.ownedTileIds = new Set();
     this.isBankrupt = false;
     this.doublesStreak = 0;
+    this.isBot = isBot;
   }
 
   get getOutOfJailCards(): number {
@@ -66,6 +69,7 @@ export class Player {
       getOutOfJailCards: this.getOutOfJailCards,
       ownedTileIds: [...this.ownedTileIds],
       isBankrupt: this.isBankrupt,
+      isBot: this.isBot,
     };
   }
 }

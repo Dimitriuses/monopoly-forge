@@ -32,6 +32,7 @@ Everything is mouse-driven — there is no keyboard input.
 |---|---|
 | Choose 2–6 players | Click a number on the menu |
 | Change a player's token | Click the token name next to `P1`, `P2`, … to cycle |
+| Play against the computer | Each seat says **🙋 Human** or **🤖 Bot** — click to swap. Seats 2+ are bots by default |
 | Turn on a house rule | Click a switch under **House rules** before starting |
 | Start | **▶ START GAME**, or **↻ CONTINUE SAVED GAME** if one is waiting |
 | Roll | **🎲 ROLL DICE**, below the board (greyed out when it is not your turn to roll) |
@@ -77,6 +78,7 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 - **Auctions** — a declined property goes under the hammer: round-robin bidding, a pass forfeits, and a per-bidder clock passes for anyone who lets it run out
 - **Trading** — deeds, cash and jail cards in one offer, with propose / accept / decline / counter, netted cash, and buildings blocking the lots they stand on
 - **Bankruptcy that settles** — a debt is met from cash, then by selling buildings and mortgaging deeds, and only then does the player go under, handing their whole estate to the creditor. The last solvent player wins
+- **Bot opponents** — hand any seat to a bot and play on your own. They buy, bid, build, mortgage, answer trades and work out how to leave jail. The policy is a plain deterministic function of the game state, with no Phaser and no randomness of its own, so the same bots will drive the headless simulator
 - **Save and resume** — the whole game to localStorage and back, including both deck piles in order and the random stream's position, so a resumed game rolls exactly what the saved one would have
 - **House rules** — Free Parking jackpot, double salary for landing on GO, and no-auction, switchable on the menu and all actually read
 - **HUD** — animated dice, per-player cash, active-player highlight, jail markers, and a turn log beside the board that keeps the last dozen events readable
@@ -87,7 +89,8 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 
 The classic game is playable end to end, so what is left is narrower than it was:
 
-- **No AI opponent**, so finishing a game needs a friend or a lot of clicking.
+- **The bots do not trade with each other.** They answer an offer you make, but
+  never propose one, so a bot-only game rarely completes a colour group.
 - **A save cannot be taken mid-turn**, and there is only one slot.
 - **An estate that returns to the bank is not re-auctioned**, as the standard
   rules would have it. Owing another player transfers correctly.
@@ -116,6 +119,8 @@ headless browser — see [tools/playtest.mjs](tools/playtest.mjs).
 | **Property panel** — rent ladder, costs, build and mortgage actions | **Auction** — a declined property, round-robin bidding on a clock |
 | ![Trade](screenshots/9-trade.png) | ![Trade review](screenshots/10-trade-review.png) |
 | **Trade** — build an offer from either side's deeds and cash | **…then accept, decline or counter it** |
+| ![Bots](screenshots/12-bots.png) | |
+| **Bots** — every seat handed to the computer, playing itself | |
 
 ---
 
@@ -134,7 +139,7 @@ Three axes of customisation, none of which should require editing engine code:
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 221 unit tests pin down.
+it is what the 248 unit tests pin down.
 
 ### What already supports it
 
@@ -210,7 +215,7 @@ Three consequences worth the trouble:
 **The model runs in Node.** `src/config.ts` deliberately contains no Phaser
 import — the `Phaser.Game` options live in `main.ts` instead — so everything under
 `game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 221 unit tests run in ~8 s with no jsdom, and it is the seam a
+That is what lets 248 unit tests run in ~8 s with no jsdom, and it is the seam a
 headless AI opponent would plug into.
 
 **Games are reproducible.** Every dice roll and both deck shuffles draw from one
@@ -240,6 +245,7 @@ src/
 │   ├── Trade.ts          Two-sided offers: validation, netting, counters
 │   ├── Estate.ts         Fire sales, debt settlement, bankruptcy transfer
 │   ├── Snapshot.ts       Capture/restore the whole game, and validate a save
+│   ├── Bot.ts            Opponent decisions — no Phaser, no randomness
 │   └── TurnManager.ts    Phase FSM, doubles, jail, turn order
 ├── tiles/                Tile base class ▸ PropertyTile, SpecialTiles, Ownable
 ├── cards/CardDeck.ts     Deck, discard/reshuffle, CardEffects, both decks
@@ -282,9 +288,10 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test                # 221 unit tests, plain Node, ~8 s
+npm test                # 248 unit tests, plain Node, ~8 s
 npm run typecheck       # tsc --noEmit
 npm run playtest        # build first: plays 30 seeded turns in a headless browser
+npm run playtest -- --bots   # hand every seat to a bot and watch them play it out
 npm run screenshots
 npm run verify:install  # would CI's npm accept this lockfile?
 ```

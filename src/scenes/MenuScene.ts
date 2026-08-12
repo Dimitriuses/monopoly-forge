@@ -7,6 +7,7 @@ import { validateSnapshot, type GameSnapshot } from '@/game/Snapshot';
 interface PlayerSetup {
   name: string;
   token: TokenType;
+  isBot: boolean;
 }
 
 export class MenuScene extends Phaser.Scene {
@@ -177,7 +178,9 @@ export class MenuScene extends Phaser.Scene {
     for (let i = 0; i < this.playerCount; i++) {
       const y = startY + i * 55;
       const defaultToken = tokens[i % tokens.length];
-      this.players.push({ name: `Player ${i + 1}`, token: defaultToken });
+      // Seat 1 is yours; the rest default to bots, so a single player can start
+      // a real game from the menu without configuring anything.
+      this.players.push({ name: `Player ${i + 1}`, token: defaultToken, isBot: i > 0 });
 
       // Row label
       this.setupContainer.add(
@@ -199,6 +202,27 @@ export class MenuScene extends Phaser.Scene {
       });
 
       this.setupContainer.add(tokenLabel);
+
+      // Who takes this seat's turns.
+      const seat = this.add.text(tokenX + 160, y, '', {
+        fontFamily: 'Georgia, serif', fontSize: '14px',
+        padding: { x: 8, y: 4 }, fixedWidth: 110, align: 'center',
+      }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
+
+      const paintSeat = () => {
+        const bot = this.players[i].isBot;
+        seat.setText(bot ? '🤖  Bot' : '🙋  Human');
+        seat.setColor(bot ? '#88ccff' : '#f0c040');
+        seat.setBackgroundColor(bot ? '#1a3450' : '#2a2a4a');
+      };
+      paintSeat();
+
+      seat.on('pointerdown', () => {
+        this.players[i].isBot = !this.players[i].isBot;
+        paintSeat();
+      });
+
+      this.setupContainer.add(seat);
     }
   }
 

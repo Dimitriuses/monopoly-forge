@@ -29,7 +29,7 @@ import { TurnManager } from './TurnManager';
 // A restore resumes at the start of the saved player's turn. Mid-move state is
 // deliberately not captured: see `restoreGame`.
 
-export const SNAPSHOT_VERSION = 2;
+export const SNAPSHOT_VERSION = 3;
 
 export interface TileSnapshot {
   id: number;
@@ -51,6 +51,7 @@ export interface PlayerSnapshot {
   ownedTileIds: number[];
   isBankrupt: boolean;
   doublesStreak: number;
+  isBot: boolean;
 }
 
 export interface DeckSnapshot {
@@ -122,6 +123,7 @@ function capturePlayer(player: Player): PlayerSnapshot {
     ownedTileIds: [...player.ownedTileIds],
     isBankrupt: player.isBankrupt,
     doublesStreak: player.doublesStreak,
+    isBot: player.isBot,
   };
 }
 
@@ -166,7 +168,7 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
   const allCards   = [...CHANCE_CARDS, ...COMMUNITY_CHEST_CARDS];
 
   const players = snapshot.players.map((saved) => {
-    const player = new Player(saved.id, saved.name, saved.token);
+    const player = new Player(saved.id, saved.name, saved.token, saved.isBot ?? false);
     player.cash          = saved.cash;
     player.position      = saved.position;
     player.inJail        = saved.inJail;

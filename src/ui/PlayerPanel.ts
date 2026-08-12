@@ -68,9 +68,9 @@ export class PlayerPanel {
       const dot = this.scene.add.circle(this.x + 13, ry + 14, 7, color)
         .setStrokeStyle(1, 0xffffff);
 
-      // Token name (small, top line)
+      // Token name (small, top line), with a marker for a seat a bot plays
       const tokenText = this.scene.add.text(this.x + 26, ry + 5,
-        TOKEN_LABELS[p.token] ?? p.token,
+        `${p.isBot ? '🤖 ' : ''}${TOKEN_LABELS[p.token] ?? p.token}`,
         { fontFamily: 'Georgia, serif', fontSize: '10px', color: '#7788aa' },
       );
 

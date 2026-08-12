@@ -48,6 +48,21 @@ open, because a restore resumes at the *start* of the saved player's turn and
 none of that state is captured. `SaveLoad` also keeps exactly one localStorage
 key, so a new save overwrites the old one with no warning.
 
+### The bots never propose a trade
+
+`game/Bot.ts` answers an offer (`acceptTrade`) but has nothing that *makes* one,
+so bots only ever trade when a human proposes. In a bot-only game that means
+colour groups are completed by chance alone, and often not at all — which is why
+a long `--bots` run usually ends with the bank's houses untouched.
+
+### The bots are a baseline, not a challenge
+
+The policy is deliberately plain: a flat $150 reserve, a bid ceiling of 1.2× face
+value (1.7× for a deed that completes a group), build the cheapest complete group
+it can afford. It does not count what rent it is likely to face, weigh position on
+the board, or plan more than one purchase ahead. It is something to play against
+and something for M8d to measure a better policy against.
+
 ### The playtest plays with the house rules off
 
 `tools/playtest.mjs` never touches the menu's house-rule switches, so the seeded

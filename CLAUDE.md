@@ -165,6 +165,22 @@ paid for:
 Bump `SNAPSHOT_VERSION` when the shape changes; `validateSnapshot` refuses a save
 this build cannot read rather than half-restoring it.
 
+### Bots decide, the scene drives
+
+`game/Bot.ts` answers questions — buy this? bid how much? build where? — and
+`GameScene` applies the answers through the same paths a button would. Nothing in
+`Bot.ts` may touch a scene, a button or a tween: the headless runner in M8d will
+reuse the policy without one.
+
+Two properties are load-bearing and easy to break:
+
+- **It draws no randomness.** A bot that called `rng` would move the dice stream
+  and stop a seeded game replaying. Decisions are pure functions of the state.
+- **Anything a bot must respond to needs a bot path.** A modal that waits for a
+  click will wait forever on a bot's turn — that is why `card:draw` closes its own
+  overlay for a bot, and why the buy prompt is answered instead of shown. Add a
+  new prompt and you owe it one.
+
 ### Panels render, they do not decide
 
 `PropertyPanel`, `AuctionPanel` and `TradePanel` all take a view model and report

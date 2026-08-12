@@ -34,6 +34,8 @@ const value = (name, fallback) => {
 
 const TAKE_SHOTS = flag('shots');
 const HEADED = flag('headed');
+/** Leave the menu's default seats alone and watch the bots play instead. */
+const BOTS = flag('bots');
 const TURNS = Number(value('turns', TAKE_SHOTS ? 26 : 30));
 const SEED = Number(value('seed', 20260512));
 const EXTERNAL_URL = value('url', null);
@@ -45,6 +47,12 @@ const GAME_H = 800;
 
 const HOTSPOTS = {
   playerCount3: [590, 235],  // MenuScene: [2,3,4,5,6] at width/2-100 + i*50
+  // MenuScene seat toggles: tokenX + 160, rows at y = 290 + i*55. Seat 1 is a
+  // human by default and seats 2+ are bots, so the default run flips 2 and 3
+  // back to human to keep its coverage of the prompts deterministic.
+  seat1:        [800, 290],
+  seat2:        [800, 345],
+  seat3:        [800, 400],
   startGame:    [640, 720],  // MenuScene: (width/2, height-80)
   roll:         [512, 738],  // GameScene.buildButtons
   jail:         [710, 738],  // GameScene.buildButtons (hidden unless offered)
@@ -177,6 +185,15 @@ async function main() {
     // selection so the shot shows the count highlight and the extra row.
     await clickGame(page, box, HOTSPOTS.playerCount3);
     await sleep(250);
+    if (BOTS) {
+      // Seat 1 is yours by default; hand it over too, so nobody has to click.
+      await clickGame(page, box, HOTSPOTS.seat1);
+    } else {
+      // All-human keeps the buy prompt, auction and trade steps below on rails.
+      await clickGame(page, box, HOTSPOTS.seat2);
+      await clickGame(page, box, HOTSPOTS.seat3);
+    }
+    await sleep(200);
     await shot(page, box, '1-menu');
     await clickGame(page, box, HOTSPOTS.startGame);
 
@@ -190,6 +207,79 @@ async function main() {
     const start = await page.evaluate(() => window.__forge.state());
     if (start.players.length !== 3) {
       throw new Error(`expected 3 players, got ${start.players.length}`);
+    }
+
+    // ── Bot mode: no clicking, just check they play a real game ───────────────
+    if (BOTS) {
+      const bots = start.players.filter((p) => p.isBot).length;
+      if (bots !== 3) throw new Error(`expected every seat to be a bot, got ${bots}`);
+      console.log(`  ✓ ${bots} bot seats; watching them play`);
+
+      let stalls = 0;
+      let finished = false;
+      let previous = '';
+      for (let tick = 0; tick < TURNS; tick++) {
+        await sleep(1200);
+        if (await page.evaluate(() => window.__forge.gameOver())) {
+          console.log(`  ✓ a bot won the game outright after ${tick} ticks`);
+          finished = true;
+          break;
+        }
+        // The whole state, not just the players: bidding moves the auction for
+        // several seconds without touching anybody's cash, and comparing players
+        // alone reported a busy auction as a frozen game.
+        const serialised = await page.evaluate(() => JSON.stringify([
+          window.__forge.state(), window.__forge.auctionState(),
+        ]));
+        stalls = serialised === previous ? stalls + 1 : 0;
+        previous = serialised;
+        if (stalls >= 6) {
+          // Say what it is stuck *on* — an open modal nobody will close is the
+          // usual answer, and "the bots stopped" alone sends you hunting.
+          const stuck = await page.evaluate(() => ({
+            phase:     window.__forge.phase(),
+            active:    window.__forge.activeId(),
+            animating: window.__forge.isAnimating(),
+            buyPrompt: window.__forge.buyPromptOpen(),
+            card:      window.__forge.cardOpen(),
+            auction:   window.__forge.auctionOpen(),
+            auctionState: window.__forge.auctionState(),
+            trade:     window.__forge.tradeOpen(),
+            players:   window.__forge.state().players.map(
+              (p) => `${p.id}${p.isBot ? '(bot)' : ''} pos=${p.position} $${p.cash}` +
+                     `${p.inJail ? ' jailed' : ''}${p.isBankrupt ? ' bankrupt' : ''}`),
+          }));
+          throw new Error(
+            `the bots stopped playing after ${tick} ticks\n  ${JSON.stringify(stuck, null, 2)}`,
+          );
+        }
+      }
+      void finished;
+
+      const end = await page.evaluate(() => window.__forge.state());
+      const owned = end.players.reduce((n, p) => n + p.ownedTileIds.length, 0);
+      const moved = end.players.some((p) => p.position !== 0);
+      await shot(page, box, '12-bots');
+
+      console.log('');
+      console.log(`  positions      ${end.players.map((p) => p.position).join(', ')}`);
+      console.log(`  cash           ${end.players.map((p) => `$${p.cash}`).join(', ')}`);
+      console.log(`  tiles owned    ${owned}`);
+      console.log(`  bank h/h       ${end.bank.houses}/${end.bank.hotels}`);
+      console.log('');
+
+      if (!moved) throw new Error('no bot token ever left GO');
+      if (owned === 0) throw new Error('the bots never bought anything');
+
+      if (errors.length) {
+        console.error(`✗ ${errors.length} console error(s):`);
+        for (const e of errors.slice(0, 20)) console.error(`  ${e}`);
+        process.exit(1);
+      }
+      console.log('✓ bot playtest passed — the bots played a clean game on their own');
+      await browser.close();
+      if (server) server.close();
+      return;
     }
 
     // ── Play ──────────────────────────────────────────────────────────────────
