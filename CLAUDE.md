@@ -71,6 +71,11 @@ rent, tax, a card, anything added later — goes through `settleDebt` in
 declares bankruptcy and moves the estate. Follow it with `announceSettlement` so
 the fire sale and the bankruptcy are reported the same way everywhere.
 
+**4b. `utils/` must run in Node; anything touching `window` goes in `ui/`.**
+That is why the Web Audio sound lives in `ui/Sfx.ts` and not in `utils/`, despite
+being a utility — a `window.AudioContext` reference at module scope would break
+every test that transitively imports it.
+
 **4. Use `dlog` / `dwarn`, not `console.log`.** `src/utils/log.ts` is silent
 unless switched on (dev server, or `?debug=1` on any build). `console.error` is
 deliberately *not* routed through it — real faults should always surface.
@@ -140,6 +145,26 @@ instead of returning `undefined`, and `TurnManager` resets an out-of-range
 `player.position` to 0 rather than propagating it. A corrupted position used to
 cascade into every subsequent roll.
 
+### Anything new that is game state has to go in the snapshot
+
+`game/Snapshot.ts` is the save file. Adding a field to a model class that a game
+depends on — a counter, a flag, a pile — means adding it to `captureGame` and
+`restoreGame`, or a resumed game quietly comes back wrong. Three traps already
+paid for:
+
+- **Save the PRNG's *position*, not the seed.** `rng.getSeed()` returns where the
+  stream is now; that is the value to persist, and restoring it is what makes a
+  resumed game roll what the saved one would have.
+- **Rebuilding must not draw from the PRNG.** `CardDeck.restore` passes
+  `shuffle: false` for exactly this reason — the shuffle in the normal
+  constructor moved the stream on and left the restored game adrift.
+- **Cards are shared objects.** A held Get Out of Jail Free card is stored by id
+  and looked up in `CHANCE_CARDS` / `COMMUNITY_CHEST_CARDS` again. Clone it and
+  `deck.owns()` stops recognising it, so it can never be returned.
+
+Bump `SNAPSHOT_VERSION` when the shape changes; `validateSnapshot` refuses a save
+this build cannot read rather than half-restoring it.
+
 ### Panels render, they do not decide
 
 `PropertyPanel`, `AuctionPanel` and `TradePanel` all take a view model and report
@@ -178,6 +203,14 @@ the buttons and the wiring.
 - `setVisible(false)` does not remove an object from the input hit list — pair it
   with `disableInteractive()`, as `setJailBtnVisible` does, or invisible buttons
   still fire.
+- **Toggle a button with `disableInteractive()`, never `removeInteractive()`.**
+  The destructive one queues the object for removal from the input plugin's list.
+  Disable and re-enable it in the *same frame* — which every turn change does,
+  `turn:end` off and `turn:start` on — and the next `preUpdate` clears the input
+  object that `setInteractive()` just created while re-inserting the button. It
+  sits there at full alpha, looking fine, and never fires again. `setInteractive`
+  on an object that already has `input` just flips `enabled`, so the pair is safe.
+  This killed ROLL DICE after three doubles sent a player to jail; see DEVLOG.
 - `Phaser.Scene` already has a `renderer` property (the WebGL/Canvas renderer).
   A scene field of that name fails to compile with a misleading "type `this` is
   not assignable to parameter of type `Scene`" — `GameScene` calls its
@@ -232,6 +265,12 @@ of the board geometry. Keep it that way — the table is for scene buttons only.
 in headless Chromium, so anything driving the game from Playwright must poll for
 the state it wants rather than sleeping for the nominal delay. A "nothing
 happened" result there is usually impatience, not a bug.
+
+**A dead button is silent.** The harness clicks ROLL every turn whether or not
+anything happens, so a broken roll button used to leave the run passing on what
+the earlier turns had already done. It now fails after three consecutive rolls
+that change no state at all. Keep that check honest when adding modal flows —
+it skips turns where a card or buy prompt is open.
 
 ## Deployment
 

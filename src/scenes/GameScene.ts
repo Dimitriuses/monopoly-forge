@@ -7,15 +7,20 @@ import { TurnManager } from '@/game/TurnManager';
 import { CardDeck, CardEffects, CHANCE_CARDS, COMMUNITY_CHEST_CARDS, type Card } from '@/cards/CardDeck';
 import { bus } from '@/utils/EventBus';
 import { rng } from '@/utils/PRNG';
+import { SaveLoad } from '@/utils/SaveLoad';
 import { dlog, dwarn, isDebugLogging } from '@/utils/log';
+import {
+  captureGame, restoreGame, type GameParts, type GameSnapshot,
+} from '@/game/Snapshot';
 import { Notification, type NotifType } from '@/ui/Notification';
+import { sfx } from '@/ui/Sfx';
 import { BoardRenderer, type OwnerStyle } from '@/ui/BoardRenderer';
 import {
   PropertyPanel,
   type PanelAction, type PanelActionKey, type PropertyView, type RentRow,
 } from '@/ui/PropertyPanel';
 import {
-  DEFAULT_HOUSE_RULES, GROUP_COLORS, GROUP_SIZES, GO_SALARY,
+  DEFAULT_HOUSE_RULES, GROUP_COLORS, GROUP_SIZES, GO_SALARY, JAIL_FINE,
   type TokenType, type HouseRules,
 } from '@/config';
 import { PropertyTile } from '@/tiles/PropertyTile';
@@ -52,6 +57,9 @@ const TOKEN_HEX: Record<string, string> = {
 interface SceneData {
   players: Array<{ name: string; token: TokenType }>;
   seed?: number;
+  houseRules?: HouseRules;
+  /** A saved game to resume instead of dealing a new one. */
+  snapshot?: GameSnapshot;
 }
 
 /** `direction: -1` walks the token backwards, for "Go Back 3 Spaces". */
@@ -73,8 +81,8 @@ export class GameScene extends Phaser.Scene {
   cardEffects!:  CardEffects;
   houseRules:    HouseRules = { ...DEFAULT_HOUSE_RULES };
 
-  private tokenSprites: Map<string, Phaser.GameObjects.Arc>  = new Map();
-  private tokenLabels:  Map<string, Phaser.GameObjects.Text> = new Map();
+  /** Piece + seat badge per player, moved as one. */
+  private tokens: Map<string, Phaser.GameObjects.Container> = new Map();
   private rollBtn!:     Phaser.GameObjects.Text;
   private jailBtn!:     Phaser.GameObjects.Text;
   private buyPrompt!:   Phaser.GameObjects.Container;
@@ -104,17 +112,41 @@ export class GameScene extends Phaser.Scene {
   // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
   init(data: SceneData): void {
-    if (data.seed !== undefined) rng.seed(data.seed);
+    // Before any TurnManager is built — its constructor subscribes to the bus.
     bus.clear();
+    // restoreGame re-seeds the PRNG to where the saved stream had got to, which
+    // is why a resumed game ignores ?seed= entirely.
+    this.applyParts(data.snapshot ? restoreGame(data.snapshot) : this.newGame(data));
+  }
 
-    this.board        = new Board();
-    this.bank         = new Bank();
-    this.dice         = new Dice();
-    this.players      = data.players.map((p, i) => new Player(`p${i + 1}`, p.name, p.token));
-    this.turnManager  = new TurnManager(this.players, this.board, this.dice);
-    this.chanceDeck   = new CardDeck(CHANCE_CARDS);
-    this.commDeck     = new CardDeck(COMMUNITY_CHEST_CARDS);
-    this.cardEffects  = new CardEffects(this.board, this.bank, this.players);
+  private newGame(data: SceneData): GameParts {
+    if (data.seed !== undefined) rng.seed(data.seed);
+
+    const board   = new Board();
+    const bank    = new Bank();
+    const dice    = new Dice();
+    const players = data.players.map((p, i) => new Player(`p${i + 1}`, p.name, p.token));
+
+    return {
+      board, bank, dice, players,
+      turnManager: new TurnManager(players, board, dice),
+      chanceDeck:  new CardDeck(CHANCE_CARDS),
+      commDeck:    new CardDeck(COMMUNITY_CHEST_CARDS),
+      cardEffects: new CardEffects(board, bank, players),
+      houseRules:  data.houseRules ?? { ...DEFAULT_HOUSE_RULES },
+    };
+  }
+
+  private applyParts(parts: GameParts): void {
+    this.board       = parts.board;
+    this.bank        = parts.bank;
+    this.dice        = parts.dice;
+    this.players     = parts.players;
+    this.turnManager = parts.turnManager;
+    this.chanceDeck  = parts.chanceDeck;
+    this.commDeck    = parts.commDeck;
+    this.cardEffects = parts.cardEffects;
+    this.houseRules  = parts.houseRules;
   }
 
   create(): void {
@@ -166,6 +198,7 @@ export class GameScene extends Phaser.Scene {
       panelTile:   () => this.panel.tileId,
       auctionOpen: () => this.auctionPanel.isOpen,
       auctionBidder: () => this.auction?.currentBidder?.id ?? null,
+      houseRules:  () => ({ ...this.houseRules }),
       tradeOpen:   () => this.tradePanel.isOpen,
       tradeOffer:  () => (this.offer ? { ...this.offer, mode: this.tradeMode } : null),
       // Lets the harness click a tile without keeping its own copy of the
@@ -199,20 +232,25 @@ export class GameScene extends Phaser.Scene {
       [0, -16],  [0, 16],  [-16, 0],  [16, 0],
     ];
     this.players.forEach((player, i) => {
-      const layout = this.board.getLayout(0);
+      const layout = this.board.getLayout(player.position);
       const [ox, oy] = offsets[i] ?? [0, 0];
-      const color = Phaser.Display.Color.HexStringToColor(TOKEN_HEX[player.token] ?? '#ffffff').color;
 
-      const circle = this.add.arc(layout.x + ox, layout.y + oy, 9, 0, 360, false, color)
-        .setDepth(10).setStrokeStyle(1.5, 0xffffff);
-
-      const label = this.add.text(layout.x + ox, layout.y + oy,
+      // BootScene bakes a disc-and-emblem texture per token type; the seat
+      // number rides in the corner so a token matches its owner band on a tile.
+      const piece = this.add.image(0, 0, `token_${player.token}`).setDisplaySize(22, 22);
+      const label = this.add.text(8, 6,
         String(i + 1),   // seat number — see ownerStyle for why not the initial
-        { fontFamily: 'Arial', fontSize: '8px', color: '#ffffff', fontStyle: 'bold' },
-      ).setOrigin(0.5).setDepth(11);
+        {
+          fontFamily: 'Arial', fontSize: '8px', color: '#ffffff', fontStyle: 'bold',
+          backgroundColor: '#000000cc', padding: { x: 2, y: 0 },
+        },
+      ).setOrigin(0.5);
 
-      this.tokenSprites.set(player.id, circle);
-      this.tokenLabels.set(player.id, label);
+      // One container per player: the badge has to keep its corner as the piece
+      // moves, and tokens converge on the same tile centre when they share one.
+      this.tokens.set(player.id, this.add
+        .container(layout.x + ox, layout.y + oy, [piece, label])
+        .setDepth(10));
     });
   }
 
@@ -220,15 +258,14 @@ export class GameScene extends Phaser.Scene {
   private async moveTokenStepByStep(
     playerId: string, from: number, steps: number, direction: 1 | -1 = 1,
   ): Promise<void> {
-    const sprite = this.tokenSprites.get(playerId);
-    const label  = this.tokenLabels.get(playerId);
-    if (!sprite || !label) return;
+    const token = this.tokens.get(playerId);
+    if (!token) return;
 
     for (let s = 1; s <= steps; s++) {
       const layout = this.board.getLayout(this.board.move(from, s * direction).to);
       await new Promise<void>((resolve) => {
         this.tweens.add({
-          targets: [sprite, label],
+          targets: token,
           x: layout.x, y: layout.y,
           duration: 110,
           ease: 'Sine.easeInOut',
@@ -241,8 +278,7 @@ export class GameScene extends Phaser.Scene {
   /** Instantly snap a token to a tile (no animation) */
   private snapToken(playerId: string, tileIndex: number): void {
     const layout = this.board.getLayout(tileIndex);
-    this.tokenSprites.get(playerId)?.setPosition(layout.x, layout.y);
-    this.tokenLabels.get(playerId)?.setPosition(layout.x, layout.y);
+    this.tokens.get(playerId)?.setPosition(layout.x, layout.y);
   }
 
   // ── Buttons ───────────────────────────────────────────────────────────────────
@@ -270,6 +306,20 @@ export class GameScene extends Phaser.Scene {
     tradeBtn.on('pointerout',  () => tradeBtn.setStyle({ backgroundColor: '#1a4a6b' }));
     tradeBtn.on('pointerdown', () => this.openTrade());
 
+    const saveBtn = this.add.text(300, 738, '💾  SAVE', {
+      fontFamily: 'Georgia, serif', fontSize: '14px', color: '#ffffff',
+      backgroundColor: '#2a3a55', padding: { x: 12, y: 9 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setDepth(20);
+    saveBtn.on('pointerover', () => saveBtn.setStyle({ backgroundColor: '#3d5170' }));
+    saveBtn.on('pointerout',  () => saveBtn.setStyle({ backgroundColor: '#2a3a55' }));
+    saveBtn.on('pointerdown', () => this.saveGame());
+
+    const muteBtn = this.add.text(383, 738, '🔊', {
+      fontFamily: 'Arial', fontSize: '15px',
+      backgroundColor: '#2a3a55', padding: { x: 8, y: 8 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setDepth(20);
+    muteBtn.on('pointerdown', () => muteBtn.setText(sfx.toggleMute() ? '🔊' : '🔇'));
+
     this.jailBtn = this.add.text(710, 738, '🔓  Pay $50 to leave jail', {
       fontFamily: 'Georgia, serif', fontSize: '14px', color: '#ffffff',
       backgroundColor: '#7d6608', padding: { x: 14, y: 7 },
@@ -287,10 +337,24 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * `disableInteractive`, never `removeInteractive`. The destructive one queues
+   * the button for removal from the input plugin's list; if it is then re-enabled
+   * in the same frame — which is exactly what a turn change does, `turn:end`
+   * disabling it and `turn:start` re-enabling it — the plugin's next preUpdate
+   * clears the freshly created input object while re-inserting the button. It
+   * stays on screen at full alpha and never fires again.
+   *
+   * That did not show up until M6 because every turn until then ended *after* a
+   * move, and the `player:move` handler had already disabled the button, making
+   * the `turn:end` call a no-op. A turn that ends without moving — three doubles
+   * straight to jail — disabled and re-enabled it in one frame and killed it.
+   * `disableInteractive` only flips `input.enabled`, so nothing is ever queued.
+   */
   private setRollEnabled(on: boolean): void {
     this.rollBtn.setAlpha(on ? 1 : 0.4);
     if (on) this.rollBtn.setInteractive({ useHandCursor: true });
-    else    this.rollBtn.removeInteractive();
+    else    this.rollBtn.disableInteractive();
   }
 
   /** Always pair visibility with interactivity — setVisible(false) alone does not
@@ -387,6 +451,7 @@ export class GameScene extends Phaser.Scene {
     // they share the Ownable shape, so there is no per-type branch here.
     if (isOwnable(tile)) this.bank.sellPropertyToPlayer(player, tile);
 
+    sfx.play('buy');
     this.notif.show(`${player.name} bought ${tileName} for $${price}!`, 'success');
     this.hideBuyPrompt();
     this.boardView.refresh();
@@ -397,6 +462,48 @@ export class GameScene extends Phaser.Scene {
 
   private hideBuyPrompt(): void {
     this.buyPrompt.setVisible(false);
+  }
+
+  // ── House rules ───────────────────────────────────────────────────────────────
+
+  /**
+   * The two rules that fire on a harmless landing. Both are off by default; the
+   * menu turns them on. Kept here rather than in the tiles because a tile can see
+   * neither the rule set nor the bank.
+   */
+  private applyLandingHouseRules(playerId: string, tileId: number): void {
+    const player = this.players.find((p) => p.id === playerId);
+    if (!player) return;
+    const tile = this.board.getTile(tileId);
+
+    if (this.houseRules.freeParkingJackpot && tile.type === 'freeParking' && this.bank.pot > 0) {
+      const won = this.bank.takePot(player);
+      this.notif.show(`${player.name} collected the $${won} Free Parking jackpot!`, 'success');
+      this.pushUIUpdate();
+    }
+
+    // Passing GO already paid the salary; landing exactly on it pays it twice.
+    if (this.houseRules.doubleGoSalary && tileId === this.board.anchor('start')) {
+      this.bank.payPlayer(player, GO_SALARY);
+      this.notif.show(`${player.name} landed on GO — double salary, $${GO_SALARY * 2}!`, 'success');
+      this.pushUIUpdate();
+    }
+  }
+
+  // ── Save / load ───────────────────────────────────────────────────────────────
+
+  private saveGame(): void {
+    if (this.isAnimating || this.auction || this.tradePanel.isOpen) {
+      this.notif.show('Finish what you are doing first, then save.', 'warning');
+      return;
+    }
+    const snapshot = captureGame({
+      board: this.board, bank: this.bank, dice: this.dice, players: this.players,
+      turnManager: this.turnManager, chanceDeck: this.chanceDeck, commDeck: this.commDeck,
+      cardEffects: this.cardEffects, houseRules: this.houseRules,
+    });
+    SaveLoad.save(snapshot, snapshot.rngState);
+    this.notif.show('Game saved. It will be waiting on the menu.', 'success');
   }
 
   // ── Trading ───────────────────────────────────────────────────────────────────
@@ -600,6 +707,7 @@ export class GameScene extends Phaser.Scene {
     if (result && winner) {
       const tile = this.board.getTile(result.tileId);
       if (isOwnable(tile)) this.bank.sellPropertyToPlayer(winner, tile, result.amount);
+      sfx.play('hammer');
       this.notif.show(`${winner.name} won ${tile.name} at auction for $${result.amount}!`, 'success');
       this.boardView.refresh();
       this.pushUIUpdate();
@@ -923,6 +1031,7 @@ export class GameScene extends Phaser.Scene {
 
     // ── Dice ──────────────────────────────────────────────────────────────────
     bus.on('dice:result', (result: { die1: number; die2: number; total: number; isDoubles: boolean }) => {
+      sfx.play('dice');
       this.scene.get('UIScene').events.emit('dice:result', result);
     });
 
@@ -935,8 +1044,8 @@ export class GameScene extends Phaser.Scene {
       this.setRollEnabled(true);
       this.hideBuyPrompt();
 
-      const jailActAvail = player.inJail && (player.getOutOfJailCards > 0 || player.cash >= 50);
-      const jailLabel    = player.getOutOfJailCards > 0 ? '🃏  Use Card' : '🔓  Pay $50';
+      const jailActAvail = player.inJail && (player.getOutOfJailCards > 0 || player.cash >= JAIL_FINE);
+      const jailLabel    = player.getOutOfJailCards > 0 ? '🃏  Use Card' : `🔓  Pay $${JAIL_FINE}`;
       this.setJailBtnVisible(jailActAvail, jailActAvail ? jailLabel : undefined);
 
       // Whose buttons the panel offers depends on whose turn it is.
@@ -951,7 +1060,8 @@ export class GameScene extends Phaser.Scene {
     });
 
     // ── Free landing (Go, Just Visiting, Free Parking, own property) ──────────
-    bus.on('player:landed', () => {
+    bus.on('player:landed', ({ playerId, tileId }: { playerId: string; tileId: number }) => {
+      this.applyLandingHouseRules(playerId, tileId);
       this.safeEndTurn(300);
     });
 
@@ -975,6 +1085,7 @@ export class GameScene extends Phaser.Scene {
       if (reason === 'go') {
         const player = this.players.find((p) => p.id === creditorId)!;
         this.bank.payPlayer(player, amount ?? 0);
+        sfx.play('cash');
         this.notif.show(`${player.name} passed GO — collect $${amount ?? 0}!`, 'success');
         this.pushUIUpdate();
         return; // DO NOT end turn — the normal move flow does that
@@ -999,6 +1110,7 @@ export class GameScene extends Phaser.Scene {
       // Settlement, not a clamped subtraction: a debtor who cannot pay sells and
       // mortgages first, and only then goes under, handing over their estate.
       const settlement = settleDebt(this.board, this.bank, debtor, creditor, resolved);
+      sfx.play('spend');
       const note = notes.length ? ` (${notes.join(', ')})` : '';
       this.notif.show(
         `${debtor.name} paid $${settlement.paid} rent to ${creditor.name}${note}.`, 'warning',
@@ -1017,6 +1129,8 @@ export class GameScene extends Phaser.Scene {
     bus.on<TaxPayload>('tax:pay', ({ playerId, amount }) => {
       const player = this.players.find((p) => p.id === playerId)!;
       const settlement = settleDebt(this.board, this.bank, player, null, amount);
+      // House rule: tax does not vanish into the bank, it waits on Free Parking.
+      if (this.houseRules.freeParkingJackpot) this.bank.addToPot(settlement.paid);
       this.notif.show(`${player.name} paid $${settlement.paid} tax.`, 'danger');
       announceSettlement(player, null, settlement);
       this.pushUIUpdate();
@@ -1027,6 +1141,7 @@ export class GameScene extends Phaser.Scene {
     bus.on<JailPayload>('jail:enter', ({ playerId, reason }) => {
       const player = this.players.find((p) => p.id === playerId)!;
 
+      sfx.play('jail');
       // Snap token directly — no move tween needed
       this.snapToken(playerId, this.board.anchor('jail'));
 
@@ -1059,7 +1174,9 @@ export class GameScene extends Phaser.Scene {
     });
 
     // ── A spent Get Out of Jail Free card goes back under its own deck ────────
-    bus.on('jail:exit', ({ method, card }: { method: string; card?: Card }) => {
+    bus.on('jail:exit', ({ method, card, amount }: { method: string; card?: Card; amount?: number }) => {
+      // A fine is a fine: under the Free Parking house rule it joins the pot.
+      if (this.houseRules.freeParkingJackpot && amount) this.bank.addToPot(amount);
       if (method !== 'card' || !card) return;
       const deck = [this.chanceDeck, this.commDeck].find((d) => d.owns(card));
       if (!deck) {
@@ -1090,6 +1207,7 @@ export class GameScene extends Phaser.Scene {
       // the card is never returned and the deck exhausts after enough draws.
       if (!card.isGetOutOfJail) deck.returnCard(card);
 
+      sfx.play('card');
       // Stop any currently-running CardScene before launching a new one.
       // This prevents stale once('shutdown') callbacks from previous turns
       // accumulating on the same scene events object and firing all at once.

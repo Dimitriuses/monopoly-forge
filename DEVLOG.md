@@ -246,9 +246,10 @@ executing multiple card effects and calling `safeEndTurn` multiple times.
 ## File Map
 
 *As of M2. The current layout — which adds `game/BuildRules.ts`, `game/Rent.ts`,
-`game/Auction.ts`, `game/Trade.ts`, `game/Estate.ts`, `ui/BoardRenderer.ts`,
-`ui/PropertyPanel.ts`, `ui/AuctionPanel.ts` and `ui/TradePanel.ts`, and no longer
-has switcher buttons in `PlayerPanel` — is in [README.md](README.md#layout).*
+`game/Auction.ts`, `game/Trade.ts`, `game/Estate.ts`, `game/Snapshot.ts`,
+`ui/BoardRenderer.ts`, `ui/PropertyPanel.ts`, `ui/AuctionPanel.ts`,
+`ui/TradePanel.ts` and `ui/Sfx.ts`, and no longer has switcher buttons in
+`PlayerPanel` — is in [README.md](README.md#layout).*
 
 ```
 src/
@@ -295,8 +296,8 @@ src/
 | M3 — Ownership (houses/hotels, mortgage, color-group enforcement) | ✅ Complete — see [M3 below](#m3--ownership-and-development--2026-08-12) |
 | M4 — Cards & Jail (all edge cases) | ✅ Complete — see [M4 below](#m4--cards-jail-and-rent-edge-cases--2026-08-12) |
 | M5 — Multiplayer UI (trade dialog, auction system) | ✅ Complete — see [M5 below](#m5--multiplayer-interaction--2026-08-12) |
-| M6 — Polish (animations, sound, save/load, house rules) | 🟡 `noAuction` is real; save/load blocked, see ROADMAP |
-| M7 — QA (AI opponent, edge-case testing, balance) | 🟡 201 unit tests + a headless playtest in CI; no AI |
+| M6 — Polish (animations, sound, save/load, house rules) | ✅ Complete — see [M6 below](#m6--polish--2026-08-12) |
+| M7 — QA (AI opponent, edge-case testing, balance) | 🟡 221 unit tests + a headless playtest in CI; no AI |
 | **M8 — Engine** (configurable maps, rules and presentation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). 8a: board length and anchors done, shape still a square. 8c: `BoardRenderer` extracted. 8b: not started |
 
 ---
@@ -634,3 +635,207 @@ or put it under the hammer (default). Three flags still do nothing.
 - Bankruptcy was driven once by hand against the real canvas, since a 26-turn
   seeded game will not produce one: $40 and two mortgaged-away lots against a $900
   debt, ending in the estate moving and the game declaring a winner.
+
+---
+
+## M6 — Polish — 2026-08-12
+
+Save/load, the house rules that had never done anything, a turn log, tokens and
+sound. The presentation milestone, plus the one piece of infrastructure that had
+been deferred since M1.
+
+### Save/load: the deserialiser, not the button
+
+`SaveLoad.ts` (localStorage, versioned) has existed since M1 and `serialize()`
+since M2; what was missing was everything that reads a save back. `game/Snapshot.ts`
+is that half. Three things were called out in ROADMAP as the hard parts, and all
+three turned out to be exactly as advertised:
+
+- **Deck order.** Both piles are now saved as card ids in order, so a resumed game
+  does not reshuffle and re-deal cards players have already seen.
+- **Cards are shared objects.** A held Get Out of Jail Free card is the *same
+  object* as the one in `CHANCE_CARDS`. It is saved by id and looked up again on
+  restore — clone it and `deck.owns()` no longer recognises it, so the card could
+  never be returned to its deck.
+- **The PRNG stream position.** `rng.getSeed()` returns where the stream is, not
+  where it started, and that is the value worth persisting.
+
+That last one produced the milestone's real bug. A test asserting "a restored game
+rolls what the saved one would have" failed, and the cause was not the seeding —
+it was that `CardDeck.restore` built the deck through the normal constructor,
+**which shuffles**. Rebuilding two decks therefore drew from the shared PRNG and
+left the restored game two stream positions adrift before the first roll. The fix
+is a `shuffle` flag on the constructor, and a test that pins the invariant
+directly: `rng.getSeed()` is unchanged across a whole `restoreGame`.
+
+A restore deliberately resumes at the *start* of the saved player's turn. Nothing
+captures a half-finished move, an open card overlay, a running auction clock or a
+half-built trade, so `saveGame` refuses while any of those is happening rather
+than pretending to carry them.
+
+The playtest now saves, reloads the page, clicks CONTINUE and compares the
+restored state to the pre-save state field by field.
+
+### The house rules, three years late
+
+`HouseRules` was declared in M1 with four flags and read by nothing. `noAuction`
+became real in M5. Now:
+
+- **`freeParkingJackpot`** — `Bank` grew a `pot`; taxes and jail fines feed it and
+  landing on Free Parking empties it into your hand. The jail fine had to start
+  reporting *how much* was actually paid (`Math.min(fine, cash)`), because
+  `player.pay` clamps and the pot must not gain money nobody lost.
+- **`doubleGoSalary`** — passing GO already pays; landing exactly on it now pays
+  again.
+- **`speedDie` was deleted.** It is not a flag but a variant: a third die, two new
+  face effects and a changed turn structure. Half-implementing it would have been
+  worse than the honest removal, and it is noted against the rule sets in M8b.
+
+The menu grew switches for the three survivors — laid out in a row, because six
+player rows reach y=578 and START begins at y=690, and the first attempt at a
+column ran straight through the button.
+
+### The toasts became the log
+
+M6 had two items pointing at the same strip of screen: "fill the right-hand
+column" and "stop toasts covering the roll button". Doing them separately would
+have meant a turn log and a toast stack fighting over x=770–1045, so
+`Notification` was rewritten in place as the log — same `show(message, type)`
+signature, so all ~30 call sites are untouched. Entries arrive at the top, push
+older ones down, dim with age and are dropped when they fall off the bottom.
+
+### Tokens and sound, still with no assets
+
+`BootScene` had been generating `token_*` textures since M1 that nothing drew, and
+the board drew coloured circles instead. The textures are now a coloured disc with
+the token's emblem baked in via a `RenderTexture`, and each piece became a
+container holding the sprite plus a seat-number badge — a container because the
+badge has to keep its corner while the piece tweens, and because tokens converge
+on the same tile centre when they share a square.
+
+`ui/Sfx.ts` synthesises seven effects with Web Audio: no audio files, matching the
+no-third-party-assets policy the artwork already follows. It lives in `ui/` rather
+than `utils/` on purpose — `utils/` has to keep running in plain Node, and a
+`window.AudioContext` reference would break every test that imported it.
+
+### Left undone, on purpose
+
+"Update the panels instead of rebuilding them" stays open. It is still not
+measurable, and a diffing renderer is worth writing once against the theme work in
+M8c rather than three times now. Auctioning houses when the bank runs short also
+stays open: the machinery bids on a tile, not on stock.
+
+### Verification
+
+- 221 unit tests (up from 201), 18 of them on the snapshot round trip and its
+  validation, plus the Free Parking pot.
+- The playtest saves, reloads and resumes with byte-identical state.
+- Both house rules were driven by hand against the real canvas — switches on the
+  menu, $200 tax into the pot, the pot collected on Free Parking, and a doubled
+  salary for landing on GO — since the seeded run plays with the defaults.
+
+---
+
+## Bug: ROLL DICE dies after three doubles — 2026-08-12
+
+**Symptom, from a player.** Three doubles sent Player 2 to jail, the next player's
+turn started, and the game stopped responding. Firefox's console showed
+"Security Error: Content at http://localhost:3000/ may not load or link to
+file:///", which turned out to be a red herring: that is devtools failing to fetch
+a source map, not the fault itself.
+
+**Reproduced** in Playwright's Firefox against the production build, by arming the
+current player with `doublesStreak = 2` and a loaded die, then clicking ROLL for
+real so the whole chain ran inside a genuine `pointerdown`. The game froze exactly
+as reported — and the run recorded **zero exceptions**.
+
+That ruled out the obvious theories. Probing further:
+
+| probe | result |
+|---|---|
+| `phase()` | `WAITING_FOR_ROLL` — the model is fine |
+| `isAnimating()` | `false` — not a stuck animation flag |
+| TRADE button | opens the panel — input is *not* globally dead |
+| clicking a board tile | opens the property panel — nor is the canvas |
+| ROLL DICE | nothing, at full alpha |
+
+So one button, still drawn as enabled, no longer firing: the failure mode
+CLAUDE.md has described since M2 without ever pinning the mechanism.
+
+**Root cause.** `setRollEnabled(false)` used `removeInteractive()`, which *queues
+the object for removal* from the input plugin's list. `setRollEnabled(true)` then
+calls `setInteractive()`, which creates a fresh interactive object and queues an
+insertion. When both happen in the same frame, the plugin's next `preUpdate`
+processes the removal — and removal calls `clear()`, which nulls the input object
+that `setInteractive` had just created. The button is re-inserted into the list
+holding `input === null`, so every hit test skips it.
+
+Every turn change does exactly that: `turn:end` disables the button and
+`turn:start` re-enables it, synchronously, in one frame. It had never mattered
+because **every turn until now ended after a move**, and the `player:move` handler
+had already disabled the button, making the `turn:end` call a no-op. Three
+doubles is the one path that ends a turn without moving — `sendToJail` emits
+`jail:enter` and no `player:move` — so the button was still live at `turn:end`,
+and the disable/enable pair landed in the same frame for the first time.
+
+This is not an M6 regression: `setRollEnabled` has been written this way since M2.
+It needed a 1-in-216 sequence to show itself.
+
+**Fix.** `disableInteractive()` instead of `removeInteractive()`. It only flips
+`input.enabled`, so nothing is ever queued, and `setInteractive()` on an object
+that already has an input just re-enables it. `setJailBtnVisible` had been using
+the safe pair all along.
+
+**Why the harness never caught it.** It clicks ROLL every turn regardless, so a
+dead button produced a run that still passed: the end-state assertions were
+satisfied by what the *earlier* turns had done. The playtest now records the model
+state around each roll and fails after three consecutive rolls that change
+nothing — verified by deliberately killing the button after four turns and
+confirming the run fails with "the ROLL button has stopped responding".
+
+---
+
+## M6 follow-up: the two items left open — 2026-08-12
+
+M6 shipped with its heading marked done and two boxes unticked, which is not a
+state a roadmap should be left in. Both are now resolved — one built, one moved
+with its blocker named.
+
+### Built: stop rebuilding a panel that has not changed
+
+`PropertyPanel` and `TradePanel` keep the JSON of the view they last drew and
+return early when the incoming one matches. This is not a micro-optimisation
+looking for a problem; it fixes a case that recurred every turn. `refreshPanel()`
+fires on `turn:start`, and since M5 the panel's buttons belong to the tile's
+*owner* rather than to whoever is rolling — so the view is usually identical from
+one turn to the next, and rebuilding it destroyed and re-created every child,
+dropping the hover state under the player's cursor.
+
+`AuctionPanel` is deliberately excluded: its `show()` also restarts the bid clock,
+so an early return would silently skip a bidder's timer. It is only ever called
+when the auction has actually moved on.
+
+Diffing a view that *has* changed is a different job, and it moved to M8c: holding
+references to drawn elements and writing to them is the same problem as rendering
+a theme, and worth solving once there instead of three times in three hand-written
+panels.
+
+### Moved to M8b: auctioning scarce houses
+
+This one does not fit the interaction model yet, and saying so is more useful than
+a half-built version. The rule reads "if two or more players wish to buy more than
+the Bank has, the houses must be sold at auction" — it exists to settle
+*simultaneous* demand. A turn-based click UI never produces any: players ask one
+at a time, and turn order settles it.
+
+Building it would need three things that have no home in this build:
+
+1. a notion of who *else* wants a house right now — only a rule set, or the M7
+   bot, can answer that;
+2. a step where the auction winner nominates which lot to build on, which the
+   current build flow (click Build on a specific tile) has no place for;
+3. `Auction` bidding on an arbitrary subject rather than a `tileId`.
+
+All three are M8b's work, so that is where it went. What the game does today —
+whoever builds first gets the last houses — is now written down in KNOWNISSUES
+rather than left as an unticked box.

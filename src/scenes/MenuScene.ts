@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
-import type { TokenType } from '@/config';
-import { TOKEN_LABELS } from '@/config';
+import type { HouseRules, TokenType } from '@/config';
+import { TOKEN_LABELS, DEFAULT_HOUSE_RULES, HOUSE_RULE_LABELS } from '@/config';
+import { SaveLoad } from '@/utils/SaveLoad';
+import { validateSnapshot, type GameSnapshot } from '@/game/Snapshot';
 
 interface PlayerSetup {
   name: string;
@@ -12,6 +14,7 @@ export class MenuScene extends Phaser.Scene {
   private players: PlayerSetup[] = [];
   private setupContainer!: Phaser.GameObjects.Container;
   private countButtons: Map<number, Phaser.GameObjects.Text> = new Map();
+  private houseRules: HouseRules = { ...DEFAULT_HOUSE_RULES };
 
   constructor() {
     super({ key: 'MenuScene' });
@@ -70,6 +73,8 @@ export class MenuScene extends Phaser.Scene {
     this.setupContainer = this.add.container(0, 0);
     this.buildSetupUI();
 
+    this.buildHouseRules();
+
     // ── Start button ──────────────────────────────────────────────────────────
     const startBtn = this.add.text(width / 2, height - 80, '▶  START GAME', {
       fontFamily: 'Georgia, serif',
@@ -82,6 +87,72 @@ export class MenuScene extends Phaser.Scene {
     startBtn.on('pointerover', () => startBtn.setStyle({ backgroundColor: '#2ecc71' }));
     startBtn.on('pointerout',  () => startBtn.setStyle({ backgroundColor: '#27ae60' }));
     startBtn.on('pointerdown', () => this.startGame());
+
+    this.buildContinueButton();
+  }
+
+  /**
+   * The house-rule switches. Every one of these is read by the game — a flag
+   * nothing consults does not belong here (see HouseRules in config.ts).
+   */
+  private buildHouseRules(): void {
+    const { width } = this.scale;
+    const keys = Object.keys(HOUSE_RULE_LABELS) as Array<keyof HouseRules>;
+
+    // One row across, not a column: six player rows can reach y=578 and the
+    // START button starts at y=690, so there is only one line's worth of space.
+    const chipW = 230;
+    const gap   = 15;
+    const left  = width / 2 - (keys.length * chipW + (keys.length - 1) * gap) / 2;
+
+    this.add.text(width / 2, 600, 'House rules', {
+      fontFamily: 'Georgia, serif', fontSize: '14px', color: '#7788aa',
+    }).setOrigin(0.5);
+
+    keys.forEach((key, i) => {
+      const row = this.add.text(left + i * (chipW + gap), 626, '', {
+        fontFamily: 'Georgia, serif', fontSize: '15px',
+        color: '#aaaacc', backgroundColor: '#2a2a4a',
+        padding: { x: 10, y: 4 }, fixedWidth: chipW,
+      }).setInteractive({ useHandCursor: true });
+
+      const paint = () => {
+        const on = this.houseRules[key];
+        row.setText(`${on ? '☑' : '☐'}  ${HOUSE_RULE_LABELS[key]}`);
+        row.setColor(on ? '#f0c040' : '#8899aa');
+      };
+      paint();
+
+      row.on('pointerdown', () => {
+        this.houseRules[key] = !this.houseRules[key];
+        paint();
+      });
+    });
+  }
+
+  /** Only offered when there is a save, and only if this build can read it. */
+  private buildContinueButton(): void {
+    const saved = SaveLoad.load();
+    if (!saved || !validateSnapshot(saved.state)) return;
+
+    const when = new Date(saved.timestamp).toLocaleString();
+    const btn = this.add.text(this.scale.width / 2, this.scale.height - 30, '↻  CONTINUE SAVED GAME', {
+      fontFamily: 'Georgia, serif', fontSize: '15px', color: '#ffffff',
+      backgroundColor: '#2a3a55', padding: { x: 16, y: 8 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+    btn.on('pointerover', () => btn.setStyle({ backgroundColor: '#3d5170' }));
+    btn.on('pointerout',  () => btn.setStyle({ backgroundColor: '#2a3a55' }));
+    btn.on('pointerdown', () => {
+      this.scene.start('GameScene', {
+        players: this.players,
+        snapshot: saved.state as unknown as GameSnapshot,
+      });
+    });
+
+    this.add.text(this.scale.width / 2, this.scale.height - 8, `saved ${when}`, {
+      fontFamily: 'Georgia, serif', fontSize: '10px', color: '#55667a',
+    }).setOrigin(0.5);
   }
 
   /** Repaint the player-count buttons so exactly one reads as selected. */
@@ -144,7 +215,11 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private startGame(): void {
-    this.scene.start('GameScene', { players: this.players, seed: this.readSeedFromUrl() });
+    this.scene.start('GameScene', {
+      players: this.players,
+      seed: this.readSeedFromUrl(),
+      houseRules: this.houseRules,
+    });
     // UIScene is launched by GameScene once the model is ready
   }
 }

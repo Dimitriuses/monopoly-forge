@@ -110,6 +110,36 @@ describe('Bank — cash transfers', () => {
   });
 });
 
+// The Free Parking jackpot house rule: fines and taxes wait in the pot instead
+// of vanishing into the bank.
+describe('Bank — the Free Parking pot', () => {
+  let bank: Bank;
+  let ann: Player;
+
+  beforeEach(() => {
+    bank = new Bank();
+    ann = new Player('p1', 'Ann', 'car');
+  });
+
+  it('starts empty and ignores nonsense', () => {
+    expect(bank.pot).toBe(0);
+    bank.addToPot(0);
+    bank.addToPot(-50);
+    expect(bank.pot).toBe(0);
+  });
+
+  it('accumulates and pays out in full, leaving nothing behind', () => {
+    bank.addToPot(200);
+    bank.addToPot(50);
+    expect(bank.pot).toBe(250);
+
+    expect(bank.takePot(ann)).toBe(250);
+    expect(ann.cash).toBe(1750);
+    expect(bank.pot).toBe(0);
+    expect(bank.takePot(ann)).toBe(0);   // and the next player gets nothing
+  });
+});
+
 describe('Bank — property purchase', () => {
   let board: Board;
   let bank: Bank;

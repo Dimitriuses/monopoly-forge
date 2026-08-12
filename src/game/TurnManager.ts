@@ -1,4 +1,5 @@
 import { bus } from '@/utils/EventBus';
+import { JAIL_FINE } from '@/config';
 import { dlog, dwarn } from '@/utils/log';
 import type { Player } from './Player';
 import type { Board } from './Board';
@@ -124,14 +125,16 @@ export class TurnManager {
     this.endTurn();
   }
 
-  /** Pay $50 jail fine before rolling */
+  /** Pay the jail fine before rolling */
   payJailFine(player: Player): void {
     if (!player.inJail) return;
-    player.pay(50);
+    // The amount actually handed over — the Free Parking house rule pots it.
+    const paid = Math.min(JAIL_FINE, player.cash);
+    player.pay(paid);
     player.inJail   = false;
     player.jailTurns = 0;
-    bus.emit('jail:exit',       { playerId: player.id, method: 'fine' });
-    bus.emit('ui:notification', { message: `${player.name} paid $50 jail fine.`, type: 'warning' });
+    bus.emit('jail:exit',       { playerId: player.id, method: 'fine', amount: paid });
+    bus.emit('ui:notification', { message: `${player.name} paid $${paid} jail fine.`, type: 'warning' });
     this.phase = 'WAITING_FOR_ROLL';
   }
 
@@ -235,11 +238,12 @@ export class TurnManager {
     } else {
       player.jailTurns++;
       if (player.jailTurns >= 3) {
-        player.pay(50);
+        const paid = Math.min(JAIL_FINE, player.cash);
+        player.pay(paid);
         player.inJail    = false;
         player.jailTurns = 0;
-        bus.emit('jail:exit',       { playerId: player.id, method: 'forced' });
-        bus.emit('ui:notification', { message: `${player.name} paid $50 forced jail fine.`, type: 'warning' });
+        bus.emit('jail:exit',       { playerId: player.id, method: 'forced', amount: paid });
+        bus.emit('ui:notification', { message: `${player.name} paid $${paid} forced jail fine.`, type: 'warning' });
         this.movePlayer(player, this.dice.lastResult!.total, false);
       } else {
         bus.emit('ui:notification', {

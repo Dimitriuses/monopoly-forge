@@ -52,6 +52,8 @@ export class PropertyPanel {
   private onAction: (key: PanelActionKey) => void;
   private onRefused: (reason: string) => void;
   private currentId: number | null = null;
+  /** The view last drawn, so an unchanged one costs nothing to "re-render". */
+  private lastRendered: string | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -69,10 +71,20 @@ export class PropertyPanel {
 
   hide(): void {
     this.currentId = null;
+    this.lastRendered = null;
     this.container.setVisible(false);
   }
 
   show(view: PropertyView): void {
+    // GameScene refreshes this panel on every turn change, but since the buttons
+    // belong to the tile's *owner* rather than to whoever is rolling, the view is
+    // usually identical from one turn to the next. Redrawing it would destroy and
+    // rebuild every child for nothing — and drop the hover state under the
+    // player's cursor while doing it.
+    const rendered = JSON.stringify(view);
+    if (rendered === this.lastRendered && this.container.visible) return;
+    this.lastRendered = rendered;
+
     this.currentId = view.tileId;
     this.container.removeAll(true);
 

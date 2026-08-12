@@ -48,6 +48,10 @@ export class AuctionPanel {
 
   get isOpen(): boolean { return this.container.visible; }
 
+  // No render memo here, unlike PropertyPanel and TradePanel: show() also restarts
+  // the bid clock, so skipping a redraw would silently skip a bidder's timer. It
+  // is only ever called when the auction state has actually moved on anyway.
+
   hide(): void {
     this.stopClock();
     this.container.setVisible(false);

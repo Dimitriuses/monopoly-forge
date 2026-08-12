@@ -26,11 +26,20 @@ export class BootScene extends Phaser.Scene {
     // Board background - generated as a graphic for now
     // In M1 you will swap these for TexturePacker atlases.
 
-    // Token placeholder colours
+    // ── Tokens ────────────────────────────────────────────────────────────────
+    // A disc in the player's colour with the token's own emblem baked in, so the
+    // eight pieces are told apart by shape as well as by colour. Drawn here into
+    // a RenderTexture rather than shipped as art: the repo carries no
+    // third-party assets, and this keeps that true.
     const tokenColors: Record<string, number> = {
       topHat: 0x222222, car: 0xe74c3c, dog: 0xe67e22, battleship: 0x3498db,
       iron: 0x95a5a6,   boot: 0x8b4513, wheelbarrow: 0x2ecc71, thimble: 0xf1c40f,
     };
+    const emblems: Record<string, string> = {
+      topHat: '🎩', car: '🚗', dog: '🐕', battleship: '🚢',
+      iron: '🔩', boot: '👢', wheelbarrow: '🛒', thimble: '🧵',
+    };
+
     // `make.graphics` takes `addToScene` as its second argument; passing
     // `{ add: false }` inside the config still works at runtime but no longer
     // type-checks against Phaser 3.87's `Graphics.Options`.
@@ -38,8 +47,21 @@ export class BootScene extends Phaser.Scene {
       const g = this.make.graphics({}, false);
       g.fillStyle(color, 1);
       g.fillCircle(16, 16, 14);
-      g.generateTexture(`token_${name}`, 32, 32);
+      g.lineStyle(2, 0xffffff, 1);
+      g.strokeCircle(16, 16, 14);
+
+      const emblem = this.make.text({
+        text: emblems[name] ?? '●',
+        style: { fontFamily: 'Arial', fontSize: '15px' },
+      }, false).setOrigin(0.5);
+
+      const rt = this.make.renderTexture({ width: 32, height: 32 }, false);
+      rt.draw(g);
+      rt.draw(emblem, 16, 17);
+      rt.saveTexture(`token_${name}`);   // the RT stays alive as the texture
+
       g.destroy();
+      emblem.destroy();
     });
 
     // House / hotel

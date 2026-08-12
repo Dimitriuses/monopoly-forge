@@ -35,9 +35,14 @@ export class CardDeck {
   private discard: Card[] = [];
   private readonly source: readonly Card[];
 
-  constructor(cards: Card[]) {
+  /**
+   * `shuffle: false` is for restoring a saved deck: shuffling would draw from
+   * the shared PRNG and move the stream on, so a restored game's *next* roll
+   * would differ from the saved one's.
+   */
+  constructor(cards: Card[], shuffle = true) {
     this.source = cards;
-    this.draw = rng.shuffle([...cards]);
+    this.draw = shuffle ? rng.shuffle([...cards]) : [...cards];
   }
 
   /** Whether this deck is where a card came from — how a spent Get Out of Jail
@@ -49,6 +54,27 @@ export class CardDeck {
   /** Put a card back underneath the draw pile, so it returns without a reshuffle. */
   returnToBottom(card: Card): void {
     this.draw.unshift(card);
+  }
+
+  /** Both piles in order, by id — enough to restore the exact deal. */
+  snapshot(): { draw: string[]; discard: string[] } {
+    return {
+      draw:    this.draw.map((c) => c.id),
+      discard: this.discard.map((c) => c.id),
+    };
+  }
+
+  /**
+   * Rebuild a deck from a snapshot without shuffling. Cards missing from both
+   * piles are the ones players are holding, so they are simply left out.
+   */
+  static restore(cards: Card[], snapshot: { draw: string[]; discard: string[] }): CardDeck {
+    const deck = new CardDeck(cards, false);
+    const find = (ids: string[]) =>
+      ids.map((id) => cards.find((c) => c.id === id)).filter((c): c is Card => c !== undefined);
+    deck.draw    = find(snapshot.draw);
+    deck.discard = find(snapshot.discard);
+    return deck;
   }
 
   drawCard(): Card | undefined {

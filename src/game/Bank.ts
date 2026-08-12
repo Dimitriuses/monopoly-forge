@@ -7,6 +7,8 @@ export class Bank {
   cash: number = Infinity; // Bank has unlimited cash per standard rules
   houses: number = HOUSE_LIMIT;
   hotels: number = HOTEL_LIMIT;
+  /** Fines and taxes waiting on Free Parking — zero unless that house rule is on. */
+  pot: number = 0;
 
   // ─── Cash transfers ──────────────────────────────────────────────────────────
 
@@ -102,7 +104,21 @@ export class Bank {
     return true;
   }
 
+  // ─── Free Parking pot (house rule) ───────────────────────────────────────────
+
+  addToPot(amount: number): void {
+    if (amount > 0) this.pot += amount;
+  }
+
+  /** Empty the pot into a player's hand. Returns what they collected. */
+  takePot(player: Player): number {
+    const won = this.pot;
+    this.pot = 0;
+    player.receive(won);
+    return won;
+  }
+
   toJSON() {
-    return { houses: this.houses, hotels: this.hotels };
+    return { houses: this.houses, hotels: this.hotels, pot: this.pot };
   }
 }

@@ -25,6 +25,7 @@ export const STARTING_CASH = 1500;
 export const GO_SALARY = 200;
 export const INCOME_TAX = 200;
 export const LUXURY_TAX = 100;
+export const JAIL_FINE = 50;
 export const HOUSE_LIMIT = 32;
 export const HOTEL_LIMIT = 12;
 
@@ -122,16 +123,24 @@ export const BOARD_TILES: TileDefinition[] = [
 ];
 
 // ─── House rules ───────────────────────────────────────────────────────────────
+// Every flag here is read by something. A fourth, `speedDie`, was declared from
+// M1 and removed in M6: it is not a flag but a variant — a third die, two new
+// face effects and a changed turn structure — and belongs with the registrable
+// rule sets in ROADMAP M8b rather than as a boolean nothing consults.
 export interface HouseRules {
-  freeParkingJackpot: boolean; // taxes/fines pool on Free Parking
-  doubleGoSalary: boolean;     // $400 when landing exactly on Go
-  noAuction: boolean;          // declined property stays unowned
-  speedDie: boolean;           // third die with Bus/Mr. Monopoly faces
+  freeParkingJackpot: boolean; // taxes and fines pool on Free Parking
+  doubleGoSalary: boolean;     // $400 for landing exactly on Go
+  noAuction: boolean;          // a declined property stays unowned
 }
 
 export const DEFAULT_HOUSE_RULES: HouseRules = {
   freeParkingJackpot: false,
   doubleGoSalary: false,
   noAuction: false,
-  speedDie: false,
+};
+
+export const HOUSE_RULE_LABELS: Record<keyof HouseRules, string> = {
+  freeParkingJackpot: 'Free Parking jackpot',
+  doubleGoSalary:     'Double salary on GO',
+  noAuction:          'No auctions',
 };

@@ -15,14 +15,19 @@ are returned unowned (`Estate.transferEstate` with no creditor). The standard
 rules have the bank auction each of them immediately. Owing another player works
 correctly — the whole estate passes to them.
 
-### Selling a hotel is blocked when the bank has fewer than four houses
+### The last houses go to whoever's turn comes first
 
-`Bank.sellHotel` hands back four houses only `if (this.houses >= 4)` — otherwise
-the lot silently ends up bare and the buildings vanish. Rather than change the
-bank, `BuildRules.canSellHotel` refuses the sale in that case and says why, which
-matches the limited-supply rule: with no houses in the bank you must wait. The
-*other* half of that rule — auctioning the last few houses between players who
-all want them — is not implemented (ROADMAP M6).
+The bank's 32 houses and 12 hotels are a shared, limited supply, and the game
+enforces that: you cannot build when the stock is empty, and
+`BuildRules.canSellHotel` refuses to break a hotel the bank cannot hand four
+houses back for (`Bank.sellHotel` would otherwise leave the lot bare and lose
+them). What is missing is the standard rule for *contention* — when several
+players want more houses than the bank holds, they should be auctioned.
+
+Here, turn order decides instead: whoever clicks Build first gets them. This is
+not a small omission dressed up, but it is not straightforward either — a
+turn-based click UI never produces the simultaneous demand the rule is written
+for. See ROADMAP M8b for what implementing it actually needs.
 
 ### The auction clock is fixed at 15 seconds
 
@@ -36,20 +41,19 @@ The menu assigns distinct tokens by default, but the selector cycles each row
 independently, so two players can both end up as "Car" and share a token colour
 on the board. Nothing prevents or warns about it.
 
-### Three of the four house-rule flags are still never consulted
+### A save cannot be taken mid-turn, and there is only one slot
 
-`noAuction` became real in M5 — it keeps a declined property unowned instead of
-opening an auction. `freeParkingJackpot`, `doubleGoSalary` and `speedDie` are
-still read by no code path, and there is no interface for changing any of them:
-`GameScene.houseRules` is initialised from `DEFAULT_HOUSE_RULES` and never
-touched again.
+Saving is refused while a token is moving, an auction is running or a trade is
+open, because a restore resumes at the *start* of the saved player's turn and
+none of that state is captured. `SaveLoad` also keeps exactly one localStorage
+key, so a new save overwrites the old one with no warning.
 
-### Save/load is not wired up
+### The playtest plays with the house rules off
 
-`src/utils/SaveLoad.ts` is complete and works (localStorage, versioned payload),
-and `GameScene.serialize()` produces a full state snapshot. Neither is called by
-the game: there is no save button and no deserialiser. See
-[ROADMAP.md](ROADMAP.md) for what a restore actually needs.
+`tools/playtest.mjs` never touches the menu's house-rule switches, so the seeded
+run only ever exercises the default rule set. The Free Parking jackpot and the
+double GO salary were verified by hand against the real canvas; nothing stops
+them regressing silently.
 
 ---
 
@@ -83,13 +87,20 @@ has been stable across long playtests, but it is timing-coupled by construction.
 effects — it moved to `game/Rent.ts` and is unit-tested. What remains in the
 scene handlers is the sequencing: who pays whom, when, and how long to wait.
 
-### Every panel is rebuilt from scratch on every refresh
+### A panel that *has* changed is still rebuilt from scratch
 
-`PropertyPanel.show()`, `AuctionPanel.show()` and `TradePanel.show()` all call
-`removeAll(true)` and re-create every child, and they are called after each
-build, sale, mortgage, bid and offer edit. The trade panel is the heaviest —
-roughly 120 objects for two full deed lists — and none of it has been measurable,
-but it is churn where a diff would do.
+`PropertyPanel` and `TradePanel` skip the work when the incoming view matches the
+one they last drew (M6), so the common case — `refreshPanel()` on every turn
+change, with nothing actually different — costs nothing. A view that has genuinely
+changed still calls `removeAll(true)` and re-creates every child: roughly 120
+objects for the trade panel's two deed lists. Not measurable at this size, and
+updating in place is the same problem as drawing a theme, so it waits for M8c.
+
+### The turn log keeps no history beyond the panel
+
+`Notification` holds only the entries that fit between y=496 and y=786 — about a
+dozen — and destroys anything pushed past the bottom. There is no scrollback, and
+nothing is written anywhere a player could review after the fact.
 
 ### The trade panel's layout is fixed, not measured
 

@@ -54,6 +54,8 @@ const HOTSPOTS = {
   auctionBid:   [382, 426],  // AuctionPanel, container at (512,400): first bid button
   auctionPass:  [512, 484],  // AuctionPanel pass button
   trade:        [180, 738],  // GameScene.buildButtons
+  save:         [300, 738],
+  continueSave: [640, 770],  // MenuScene.buildContinueButton, (width/2, height-30)
   // TradePanel, container at (420,390): its layout hangs off LIST_TOP/BUTTON_Y,
   // so these move whenever ROWS_VISIBLE or H changes there.
   tradeRow1:    [200, 271],  // first deed row, left side
@@ -195,6 +197,7 @@ async function main() {
     let buys = 0;
     let cards = 0;
     let auctions = 0;
+    let deadRolls = 0;
     let capturedBuy = false;
     let capturedCard = false;
     let capturedJail = false;
@@ -202,6 +205,13 @@ async function main() {
 
     for (let turn = 0; turn < TURNS; turn++) {
       await waitFor(page, idle, { timeout: 10000 });
+      // A dead ROLL button is silent: the run would finish, and the assertions
+      // below would still pass on what the earlier turns did. Watch for a roll
+      // that changes nothing at all instead.
+      const beforeRoll = await page.evaluate(() => {
+        const s = window.__forge.state();
+        return JSON.stringify([s.dice, s.players]);
+      });
       await clickGame(page, box, HOTSPOTS.roll);
       rolls++;
 
@@ -261,6 +271,19 @@ async function main() {
       if (!capturedJail && view.state.players.some((p) => p.inJail)) {
         await shot(page, box, '5-jail');
         capturedJail = true;
+      }
+
+      const afterRoll = JSON.stringify([view.state.dice, view.state.players]);
+      if (afterRoll === beforeRoll && !view.card && !view.buy) {
+        deadRolls++;
+        if (deadRolls >= 3) {
+          throw new Error(
+            `three rolls in a row changed nothing (turn ${turn}) — ` +
+            'the ROLL button has stopped responding',
+          );
+        }
+      } else {
+        deadRolls = 0;
       }
 
       await sleep(150);
@@ -341,6 +364,41 @@ async function main() {
       }
       console.log(`  ✓ traded tile ${tradedTile} to ${recipient}`);
     }
+
+    // ── Save and restore ──────────────────────────────────────────────────────
+    // Save, reload the page, resume from the menu, and check the game came back
+    // exactly as it was. The turn phase is excluded on purpose: a restore always
+    // resumes at the start of the saved player's turn.
+    const beforeSave = await page.evaluate(() => window.__forge.state());
+    await clickGame(page, box, HOTSPOTS.save);
+    await sleep(400);
+
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForSelector('canvas');
+    await sleep(900);
+    await clickGame(page, box, HOTSPOTS.continueSave);
+
+    if (!(await waitFor(page, forgeReady, { timeout: 12000 }))) {
+      throw new Error('CONTINUE did not start the saved game');
+    }
+    await sleep(600);
+
+    const restored = await page.evaluate(() => window.__forge.state());
+    const strip = (state) => JSON.stringify({
+      players: state.players,
+      board: state.board,
+      bank: state.bank,
+      currentPlayerIndex: state.turn.currentPlayerIndex,
+    });
+    if (strip(restored) !== strip(beforeSave)) {
+      throw new Error(
+        'restored game does not match the save\n' +
+        `  before: ${strip(beforeSave).slice(0, 300)}\n` +
+        `  after : ${strip(restored).slice(0, 300)}`,
+      );
+    }
+    console.log('  ✓ saved, reloaded and resumed with identical state');
+    await shot(page, box, '11-restored');
 
     // ── Assertions ────────────────────────────────────────────────────────────
     const end = await page.evaluate(() => window.__forge.state());

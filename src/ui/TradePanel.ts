@@ -77,6 +77,8 @@ export class TradePanel {
   private scene: Phaser.Scene;
   private container: Phaser.GameObjects.Container;
   private onAction: (action: TradeAction) => void;
+  /** See PropertyPanel — an unchanged view is not worth rebuilding. */
+  private lastRendered: string | null = null;
 
   constructor(scene: Phaser.Scene, onAction: (action: TradeAction) => void) {
     this.scene     = scene;
@@ -86,9 +88,16 @@ export class TradePanel {
 
   get isOpen(): boolean { return this.container.visible; }
 
-  hide(): void { this.container.setVisible(false); }
+  hide(): void {
+    this.lastRendered = null;
+    this.container.setVisible(false);
+  }
 
   show(view: TradeView): void {
+    const rendered = JSON.stringify(view);
+    if (rendered === this.lastRendered && this.container.visible) return;
+    this.lastRendered = rendered;
+
     this.container.removeAll(true);
     const parts: Phaser.GameObjects.GameObject[] = [];
 

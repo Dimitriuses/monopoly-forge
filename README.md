@@ -32,7 +32,8 @@ Everything is mouse-driven — there is no keyboard input.
 |---|---|
 | Choose 2–6 players | Click a number on the menu |
 | Change a player's token | Click the token name next to `P1`, `P2`, … to cycle |
-| Start | **▶ START GAME** |
+| Turn on a house rule | Click a switch under **House rules** before starting |
+| Start | **▶ START GAME**, or **↻ CONTINUE SAVED GAME** if one is waiting |
 | Roll | **🎲 ROLL DICE**, below the board (greyed out when it is not your turn to roll) |
 | Buy the property you landed on | **✅ BUY** in the prompt |
 | Decline it | **❌ PASS** |
@@ -40,6 +41,8 @@ Everything is mouse-driven — there is no keyboard input.
 | Build, sell, mortgage | Buttons in that panel, for tiles you own, at any point in the game. A greyed-out button still tells you why when clicked |
 | Bid on a declined property | **Bid $N** or **PASS** in the auction. A pass is final, and running the 15-second clock out passes for you |
 | Trade | **🤝 TRADE**, below the board: pick a partner, click deeds on either side, step the cash, then **PROPOSE** → **ACCEPT**, **DECLINE** or **COUNTER** |
+| Save | **💾 SAVE**, below the board. Resume it from the menu next time |
+| Mute | **🔊**, below the board |
 | Dismiss a Chance / Community Chest card | **OK** |
 | Leave jail | **🔓 Pay $50** (or **🃏 Use Card** if you hold one) — appears below the board only when you are in jail and can afford it |
 
@@ -74,19 +77,22 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 - **Auctions** — a declined property goes under the hammer: round-robin bidding, a pass forfeits, and a per-bidder clock passes for anyone who lets it run out
 - **Trading** — deeds, cash and jail cards in one offer, with propose / accept / decline / counter, netted cash, and buildings blocking the lots they stand on
 - **Bankruptcy that settles** — a debt is met from cash, then by selling buildings and mortgaging deeds, and only then does the player go under, handing their whole estate to the creditor. The last solvent player wins
-- **HUD** — animated dice, per-player cash, active-player highlight, jail markers, and toast notifications stacking in the column beside the board, clear of the controls
+- **Save and resume** — the whole game to localStorage and back, including both deck piles in order and the random stream's position, so a resumed game rolls exactly what the saved one would have
+- **House rules** — Free Parking jackpot, double salary for landing on GO, and no-auction, switchable on the menu and all actually read
+- **HUD** — animated dice, per-player cash, active-player highlight, jail markers, and a turn log beside the board that keeps the last dozen events readable
+- **Sound** — seven effects synthesised at runtime with Web Audio, no audio files, with a mute button
 - **Determinism** — `?seed=12345` replays an identical game
 
 ### Not implemented yet
 
 The classic game is playable end to end, so what is left is narrower than it was:
 
-- **Save/load is not wired up**, though the serialiser exists.
-- **Three of the four house-rule flags do nothing** — `noAuction` works, the
-  other three are declared and unread, and nothing lets you toggle them.
+- **No AI opponent**, so finishing a game needs a friend or a lot of clicking.
+- **A save cannot be taken mid-turn**, and there is only one slot.
 - **An estate that returns to the bank is not re-auctioned**, as the standard
   rules would have it. Owing another player transfers correctly.
-- **No AI opponent**, so finishing a game needs a friend or a lot of clicking.
+- **The last houses go to whoever builds first** rather than to an auction, since
+  a turn-based UI never produces the simultaneous demand that rule settles.
 
 Full detail, with reproductions, in [KNOWNISSUES.md](KNOWNISSUES.md); what happens
 next is in [ROADMAP.md](ROADMAP.md).
@@ -101,7 +107,7 @@ headless browser — see [tools/playtest.mjs](tools/playtest.mjs).
 | | |
 |---|---|
 | ![Menu](screenshots/1-menu.png) | ![Board](screenshots/2-board.png) |
-| **Setup** — 2–6 players, cycle tokens | **Board** — 40 tiles, colour groups, HUD |
+| **Setup** — 2–6 players, tokens, house rules | **Board** — 40 tiles, colour groups, HUD, turn log |
 | ![Buy prompt](screenshots/3-buy-prompt.png) | ![Card](screenshots/4-card.png) |
 | **Buy prompt** — price, base rent, your cash | **Cards** — Chance and Community Chest |
 | ![Jail](screenshots/5-jail.png) | ![Late game](screenshots/6-late-game.png) |
@@ -128,7 +134,7 @@ Three axes of customisation, none of which should require editing engine code:
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 201 unit tests pin down.
+it is what the 221 unit tests pin down.
 
 ### What already supports it
 
@@ -204,7 +210,7 @@ Three consequences worth the trouble:
 **The model runs in Node.** `src/config.ts` deliberately contains no Phaser
 import — the `Phaser.Game` options live in `main.ts` instead — so everything under
 `game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 201 unit tests run in ~8 s with no jsdom, and it is the seam a
+That is what lets 221 unit tests run in ~8 s with no jsdom, and it is the seam a
 headless AI opponent would plug into.
 
 **Games are reproducible.** Every dice roll and both deck shuffles draw from one
@@ -233,12 +239,13 @@ src/
 │   ├── Auction.ts        Round-robin bidding, pass-forfeits, settlement
 │   ├── Trade.ts          Two-sided offers: validation, netting, counters
 │   ├── Estate.ts         Fire sales, debt settlement, bankruptcy transfer
+│   ├── Snapshot.ts       Capture/restore the whole game, and validate a save
 │   └── TurnManager.ts    Phase FSM, doubles, jail, turn order
 ├── tiles/                Tile base class ▸ PropertyTile, SpecialTiles, Ownable
 ├── cards/CardDeck.ts     Deck, discard/reshuffle, CardEffects, both decks
 ├── scenes/               Boot, Menu, Game (tokens + wiring), UI (HUD), Card
 ├── ui/                   BoardRenderer, PropertyPanel, AuctionPanel, TradePanel,
-│                         DiceView, PlayerPanel, Notification
+│                         DiceView, PlayerPanel, Notification (turn log), Sfx
 └── utils/                EventBus, PRNG, SaveLoad, log
 tests/                    Vitest — model only, plain Node
 tools/playtest.mjs        Plays the built game in a real browser
@@ -275,7 +282,7 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test                # 201 unit tests, plain Node, ~8 s
+npm test                # 221 unit tests, plain Node, ~8 s
 npm run typecheck       # tsc --noEmit
 npm run playtest        # build first: plays 30 seeded turns in a headless browser
 npm run screenshots
@@ -339,7 +346,8 @@ and `npm run playtest` before opening a PR.
 [MIT](LICENSE) © Dimitriuses.
 
 No third-party assets: the board, tokens, dice and cards are all drawn
-procedurally with Phaser's `Graphics` API, and the only runtime dependency is
+procedurally with Phaser's `Graphics` API, the sound effects are synthesised at
+runtime with Web Audio, and the only runtime dependency is
 [Phaser 3](https://phaser.io/) (MIT). The tile names are the classic Atlantic City
 street names; this is an independent hobby implementation and is not affiliated
 with or endorsed by Hasbro.

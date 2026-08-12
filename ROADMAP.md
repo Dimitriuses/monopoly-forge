@@ -3,14 +3,15 @@
 Where Monopoly Forge is going. Defects that exist *today* are listed separately in
 [KNOWNISSUES.md](KNOWNISSUES.md); this file is about work not yet done.
 
-**Status:** active. **The classic game is playable end to end.** M3 put ownership
-on the board and made houses, hotels and mortgages reachable, M4 closed the card,
-jail and rent rules behind them, and M5 added the multiplayer half — auctions,
-trading and a bankruptcy that actually settles an estate, which is what makes the
-last-player-standing win condition mean anything. A seeded game runs with no
-console errors (`npm run playtest`).
+**Status:** active. **The classic game is playable end to end, and it can now be
+put down and picked up again.** M3 put ownership on the board and made houses,
+hotels and mortgages reachable, M4 closed the card, jail and rent rules behind
+them, M5 added the multiplayer half — auctions, trading and a bankruptcy that
+settles an estate — and M6 finished the presentation: save/load, working house
+rules, a turn log, tokens and sound. A seeded game runs with no console errors
+(`npm run playtest`), which now also saves, reloads the page and resumes.
 
-What is left is polish (M6), quality (M7) and then the engine itself (M8).
+What is left is quality (M7) and then the engine itself (M8).
 
 **The destination is M8: an engine for Monopoly-style games** — configurable maps,
 rules and presentation. M1–M7 build the classic game that the engine has to be able
@@ -100,32 +101,54 @@ unimproved monopoly works out what it charges, and it runs in plain Node.
 
 Not done, and moved to M6: auctioning houses when the bank runs short of them.
 
-## M6 — Polish · next
+## M6 — Polish · done
 
-- [ ] **Wire up save/load.** See *Blocked / deferred* below — this is not the
-      small job it looks like.
-- [ ] **Finish the house rules.** `noAuction` is now real (M5). Three flags are
-      still read by nothing: `freeParkingJackpot`, `doubleGoSalary` and
-      `speedDie`. Either implement them or delete them.
-- [ ] **Auction the houses when the bank runs short.** `BuildRules.canSellHotel`
-      refuses to break a hotel the bank cannot supply four houses for, which
-      matches the limited-supply rule; what is missing is the other half, where
-      several players want the last few houses and the standard rules auction
-      them. M5's `Auction` is the machinery, but it bids on a tile, not on stock.
-- [ ] **Fill the rest of the right-hand column.** The property panel holds
-      y=40–480 of it and the toast stack rises from y=750; a turn log belongs in
-      the gap between them, and would want the toasts to become its newest entries
-      rather than a second, parallel notification system.
-- [x] **Stop toasts covering the roll button.** Notifications moved out of the
-      board's centre line and into the right-hand column (x=770–1040, stacking up
-      from y=750), aligned under the property panel and clear of every button.
-- [ ] **Update the panels instead of rebuilding them.** `PropertyPanel.show`,
-      `AuctionPanel.show` and `TradePanel.show` each destroy and re-create every
-      child, on every build, sale, mortgage, bid and offer edit. Not measurable at
-      this size, but it is churn where a diff would do.
-- [ ] Sound effects, and a proper token sprite instead of a coloured circle.
+- [x] **Save and load.** `game/Snapshot.ts` is the deserialiser that was missing:
+      `captureGame` / `restoreGame` carry ownership, buildings, mortgages, cash,
+      jail state, bank stock, the Free Parking pot, both deck piles in order, the
+      house rules and — the easy one to get wrong — the PRNG *stream position*,
+      so a resumed game rolls what the saved one would have. SAVE sits under the
+      board; the menu offers CONTINUE when a readable save exists. A restore
+      resumes at the start of the saved player's turn, which is why saving is
+      refused mid-animation, mid-auction or mid-trade.
+- [x] **Finish the house rules.** All three now do something: the Free Parking
+      jackpot pools taxes and fines and pays whoever lands there,
+      `doubleGoSalary` pays twice for landing exactly on GO, and `noAuction` was
+      done in M5. The menu has switches for them. `speedDie` was **deleted**: it
+      is not a flag but a variant — a third die, two new face effects and a
+      changed turn structure — and belongs with the rule sets in M8b.
+- [x] **Fill the right-hand column, and stop toasts covering the roll button.**
+      Both at once: `Notification` became a turn log living at x=770–1040,
+      y=496–786, under the property panel and clear of every control. Entries
+      arrive at the top, push older ones down and fade with age instead of
+      vanishing, so the last dozen events stay readable.
+- [x] **Sound effects and a proper token.** `ui/Sfx.ts` synthesises seven short
+      effects with Web Audio — no audio files, matching the repo's no-assets
+      policy — with a mute button. `BootScene` now bakes a disc-and-emblem
+      texture per token type into a RenderTexture, and each piece carries its
+      seat number in the corner so a token matches its owner band on a tile.
+- [x] **Stop rebuilding a panel that has not changed.** `PropertyPanel` and
+      `TradePanel` now compare the incoming view model against the one they last
+      drew and return early when it matches. That covers the case that actually
+      recurred: `refreshPanel()` fires on every turn change, and since M5 the
+      buttons belong to the tile's *owner* rather than to whoever is rolling, so
+      the view is usually identical from one turn to the next — and rebuilding it
+      dropped the hover state under the player's cursor. `AuctionPanel` is
+      deliberately excluded: its `show()` also restarts the bid clock.
+      Diffing a view that *has* changed, rather than redrawing it, moved to M8c —
+      it is the same work as a themed renderer and worth writing once, there.
+- [→] **Auction the houses when the bank runs short** — moved to **M8b**.
+      Not a scheduling dodge; the rule does not fit the interaction model yet.
+      It exists to settle *simultaneous* demand ("if two or more players wish to
+      buy more than the Bank has"), and a turn-based click UI never produces any:
+      players ask one at a time and turn order settles it. Implementing it needs
+      two things this build has no place for — a notion of who *else* wants a
+      house right now, which only a rule set (or the M7 bot) can express, and a
+      step where the winner nominates the lot to build on. `Auction` would also
+      have to bid on an arbitrary subject rather than a tile id. All three are
+      M8b's work. Today's behaviour is recorded in KNOWNISSUES.
 
-## M7 — Quality
+## M7 — Quality · next
 
 - [ ] **A basic AI opponent**, so a single player can finish a game. The seeded
       PRNG and the Phaser-free model make headless simulation straightforward —
@@ -173,10 +196,20 @@ currently prevents it, so none of this is an estimate.
 - [ ] **Card-effect registry.** `CardEffects.execute()` is a second closed switch
       over the `CardAction` union. Same treatment, so a game can add an effect
       without touching the engine.
-- [ ] **A real rule set.** Start by making the four existing `HouseRules` flags do
-      something (they are read by nothing today), then widen it to the things the
-      classic rules currently hardcode: starting cash, GO salary, jail term and
-      fine, doubles-to-jail count, build rules, win condition.
+- [ ] **A real rule set.** The three `HouseRules` flags are now read (M6), which is
+      the shape of the idea but not the thing: widen it to what the classic rules
+      still hardcode — starting cash, GO salary, jail term and fine,
+      doubles-to-jail count, build rules, win condition — and let a game supply its
+      own. The `speedDie` variant dropped in M6 belongs here too: a third die and
+      two new face effects are a rule set, not a boolean.
+- [ ] **Contention, and auctioning scarce houses** (moved from M6). The standard
+      rule auctions houses when "two or more players wish to buy more than the Bank
+      has", and a turn-based click UI never produces simultaneous demand — players
+      ask one at a time and turn order settles it. Making the rule expressible
+      needs three things that land here: a notion of who *else* wants to build
+      right now (a rule set, or the M7 bot, can answer that), a step where the
+      auction winner nominates the lot, and `Auction` bidding on an arbitrary
+      subject rather than a tile id.
 - [ ] **Generalise the turn structure.** `TurnManager`'s phase FSM is the hardest
       piece to open up and should come last — a phase pipeline a rule set can
       extend, rather than a fixed enum.
@@ -186,14 +219,21 @@ currently prevents it, so none of this is an estimate.
 - [x] **Extract `BoardRenderer`.** Done alongside M3, before the ownership and
       building work went in — `src/ui/BoardRenderer.ts` owns everything inside the
       board square, `GameScene` owns the tokens, buttons and wiring.
-- [x] **Use the asset pipeline** `BootScene` half-provides: the `house` and
-      `hotel` textures it generates are drawn. The token textures are still unused
-      — tokens are coloured circles (M6).
+- [x] **Use the asset pipeline** `BootScene` half-provides. Done in M6: the
+      `house` and `hotel` textures are drawn on the board, and the `token_*`
+      textures — unused since M1 — are now baked per token type and drawn as the
+      pieces.
 - [ ] **A theme object** for colours, fonts and tile decoration, replacing the
       `GROUP_COLORS` / `TOKEN_HEX` constants and the literals still inside
       `BoardRenderer`.
 - [ ] **Per-element draw overrides**, so a game can replace how one tile type or
       token renders without forking the renderer.
+- [ ] **Diff a panel instead of redrawing it** (moved from M6). The three panels
+      skip a rebuild when the view has not changed (M6), but a view that *has*
+      changed still destroys and re-creates every child. Updating in place is the
+      same problem as rendering a theme — hold references to the drawn elements and
+      write to them — so it is worth solving once, here, rather than three times in
+      three hand-written panels.
 
 ### Sequencing — why some of this did not wait
 
@@ -215,27 +255,21 @@ enough to know what needs to vary.
 
 ## Blocked / deferred, with reasons
 
-### Save/load needs a deserialiser, not a save button
+### What a save deliberately does not carry — *resolved in M6*
 
-`SaveLoad.ts` (localStorage, versioned) and `GameScene.serialize()` both work, and
-`serialize()` is what the playtest harness reads state through. Restoring is the
-hard half and is genuinely not written:
+Save/load works (`game/Snapshot.ts`). Two things are left out on purpose rather
+than by omission, and both are why saving is refused while they are happening:
 
-- `Board.toJSON()` emits tile ownership and house counts, but there is no
-  `fromJSON` on any model class — every class would need one.
-- **Deck state is not serialised at all.** `CardDeck` keeps its draw and discard
-  piles in private arrays with no `toJSON`, so a restored game would reshuffle
-  both decks and hand out cards a player has already seen.
-- The PRNG stream position is not captured either. `PRNG.getSeed()` returns the
-  *current* state, which is actually the right value to persist — but nothing
-  calls it, and restoring it has to happen before any deck is rebuilt or the
-  shuffles diverge.
-- Phaser state (token sprites, the active scene, an open card overlay) has to be
-  rebuilt to match, which means a restore path through `GameScene.create()`
-  rather than a simple field assignment.
+- **Mid-turn state.** A restore resumes at the *start* of the saved player's
+  turn. Nothing captures a half-finished move, an open card overlay, a running
+  auction clock or a half-built trade offer, so the save button says "finish what
+  you are doing first" instead of pretending otherwise.
+- **One save slot.** `SaveLoad` keeps a single localStorage key. Named slots,
+  autosave and export-to-file are all straightforward from here; none is written.
 
-Deferred past M3, whose ownership and building work changed the shape of the state
-that would need saving — houses, hotels and mortgage flags now all move in play.
+A save is refused by a build that cannot read it: `validateSnapshot` checks the
+version, that every tile is on this board, that no deed is owned by a player who
+is not in the save, and that the turn points at somebody real.
 
 ### Multiple simultaneous animations
 
