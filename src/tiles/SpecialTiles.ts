@@ -3,7 +3,11 @@ import { bus } from '@/utils/EventBus';
 import { GO_SALARY } from '@/config';
 
 // ─── Railroad ─────────────────────────────────────────────────────────────────
-const RAILROAD_RENT = [25, 50, 100, 200];
+/** Rent by number of railroads the owner holds — also read by the property panel. */
+export const RAILROAD_RENT = [25, 50, 100, 200];
+
+/** Dice multiplier by number of utilities the owner holds. */
+export const UTILITY_MULTIPLIERS = [4, 10];
 
 export class RailroadTile extends Tile {
   readonly price: number;
@@ -52,7 +56,7 @@ export class UtilityTile extends Tile {
   }
 
   rentMultiplier(ownedCount: number): number {
-    return ownedCount === 2 ? 10 : 4;
+    return ownedCount >= 2 ? UTILITY_MULTIPLIERS[1] : UTILITY_MULTIPLIERS[0];
   }
 
   onLand(playerId: string): void {

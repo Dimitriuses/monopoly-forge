@@ -1,6 +1,7 @@
 import { HOUSE_LIMIT, HOTEL_LIMIT } from '@/config';
 import type { Player } from './Player';
 import type { PropertyTile } from '@/tiles/PropertyTile';
+import type { Ownable } from '@/tiles/Tile';
 
 export class Bank {
   cash: number = Infinity; // Bank has unlimited cash per standard rules
@@ -30,8 +31,10 @@ export class Bank {
   }
 
   // ─── Property purchase ───────────────────────────────────────────────────────
+  // Ownable, not PropertyTile: railroads and utilities change hands the same way,
+  // and used to be bought through a hand-written cast in GameScene instead.
 
-  sellPropertyToPlayer(player: Player, tile: PropertyTile): boolean {
+  sellPropertyToPlayer(player: Player, tile: Ownable): boolean {
     if (!player.canAfford(tile.price) || tile.ownerId !== null) return false;
     player.pay(tile.price);
     tile.ownerId = player.id;
@@ -41,14 +44,14 @@ export class Bank {
 
   // ─── Mortgage ────────────────────────────────────────────────────────────────
 
-  mortgage(player: Player, tile: PropertyTile): boolean {
+  mortgage(player: Player, tile: Ownable): boolean {
     if (tile.ownerId !== player.id || tile.isMortgaged) return false;
     tile.isMortgaged = true;
     player.receive(tile.mortgage);
     return true;
   }
 
-  unmortgage(player: Player, tile: PropertyTile): boolean {
+  unmortgage(player: Player, tile: Ownable): boolean {
     const cost = Math.floor(tile.mortgage * 1.1); // 110% of mortgage value
     if (tile.ownerId !== player.id || !tile.isMortgaged || !player.canAfford(cost)) return false;
     tile.isMortgaged = false;

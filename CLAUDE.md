@@ -45,10 +45,18 @@ shuffles draw from the shared seeded Mulberry32 in `src/utils/PRNG.ts`. A stray
 `Math.random` silently destroys reproducibility — and the playtest harness, which
 relies on a seed producing the same game every run.
 
-**6. Prefer `board.length` and named anchors over `40` and `10`.** Both literals
-are still hardcoded in several places (9 and 4 respectively, catalogued in
-ROADMAP M8a). Do not add more: new code should read the board's length and ask for
-a tile's role rather than assuming the classic layout.
+**6. Never write `40` or `10` for the board.** Both literals are gone. Length comes
+from `board.size` (or `board.move` / `board.stepsBetween`, which wrap for you), and
+jail and GO come from `board.anchor('jail')` / `board.anchor('start')`. `Board`
+takes the map as a constructor argument, so a test can hand it a 12-tile board —
+`tests/board.test.ts` does, and that is what stops the literals creeping back.
+
+**7. The bank does not know the rules.** `Bank` moves cash and inventory and asks
+no questions, because it has no view of the board — `bank.buyHouse` will happily
+put a house on a lot whose colour group you do not own. Legality lives in
+`game/BuildRules.ts`, and every path that builds, sells or mortgages must check
+there first. The checks return a *reason*, which is what the property panel shows
+when a button is dead.
 
 **4. Use `dlog` / `dwarn`, not `console.log`.** `src/utils/log.ts` is silent
 unless switched on (dev server, or `?debug=1` on any build). `console.error` is
@@ -107,6 +115,19 @@ instead of returning `undefined`, and `TurnManager` resets an out-of-range
 `player.position` to 0 rather than propagating it. A corrupted position used to
 cascade into every subsequent roll.
 
+### The board is drawn once, its state many times
+
+`ui/BoardRenderer.ts` holds everything inside the board square. `draw()` lays down
+the static layer (tile outlines, colour stripes, names, click zones) and must be
+called once; `refresh()` clears and redraws the *state* layer — owner bands,
+houses, hotels, mortgage marks — and has to be called after anything that changes
+tile state: buying, building, selling, mortgaging.
+
+There is one loop over tiles, not one per side. Each tile's footprint, orientation
+and which edge faces the board interior come from its `TileLayout`, so a new
+decoration is written once rather than four times. `GameScene` keeps the tokens,
+the buttons and the wiring.
+
 ### Phaser API traps
 
 - `this.make.graphics({ add: false })` still *works* at runtime but no longer
@@ -120,6 +141,10 @@ cascade into every subsequent roll.
 - `setVisible(false)` does not remove an object from the input hit list — pair it
   with `disableInteractive()`, as `setJailBtnVisible` does, or invisible buttons
   still fire.
+- `Phaser.Scene` already has a `renderer` property (the WebGL/Canvas renderer).
+  A scene field of that name fails to compile with a misleading "type `this` is
+  not assignable to parameter of type `Scene`" — `GameScene` calls its
+  `BoardRenderer` `boardView` for that reason.
 
 ### A local `npm ci` does not prove CI will install
 
@@ -153,9 +178,13 @@ update that table**, or the harness clicks empty space and fails with a vague
 "no property was bought in the whole run".
 
 `GameScene.exposeDebugHandle()` publishes `window.__forge` (state, phase,
-`isAnimating`, whether a prompt or card is open) so the harness can assert on real
-model state rather than pixels. It is gated on the same switch as debug logging,
-so a plain production load exposes nothing.
+`isAnimating`, whether a prompt, card or property panel is open) so the harness can
+assert on real model state rather than pixels. It is gated on the same switch as
+debug logging, so a plain production load exposes nothing.
+
+Board *tiles* are the exception to the hotspot table: `__forge.tileCentre(id)`
+returns a tile's centre, so the harness clicks tiles without keeping its own copy
+of the board geometry. Keep it that way — the table is for scene buttons only.
 
 ## Deployment
 

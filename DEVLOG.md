@@ -239,6 +239,10 @@ executing multiple card effects and calling `safeEndTurn` multiple times.
 
 ## File Map
 
+*As of M2. The current layout — which adds `game/BuildRules.ts`,
+`ui/BoardRenderer.ts` and `ui/PropertyPanel.ts`, and no longer has switcher
+buttons in `PlayerPanel` — is in [README.md](README.md#layout).*
+
 ```
 src/
 ├── main.ts                  Phaser.Game bootstrap
@@ -281,12 +285,12 @@ src/
 |---|---|
 | M1 — Foundation | ✅ Complete |
 | M2 — Core Loop | ✅ Complete |
-| M3 — Ownership (houses/hotels, mortgage, color-group enforcement) | 🟡 Model written and tested; **no UI**, no group rules |
+| M3 — Ownership (houses/hotels, mortgage, color-group enforcement) | ✅ Complete — see [M3 below](#m3--ownership-and-development--2026-08-12) |
 | M4 — Cards & Jail (all edge cases) | 🟡 Decks and jail work; `goBack` animation and "nearest railroad" outstanding |
 | M5 — Multiplayer UI (trade dialog, auction system) | 🔲 Not started |
 | M6 — Polish (animations, sound, save/load, house rules) | 🔲 Not started — save/load blocked, see ROADMAP |
-| M7 — QA (AI opponent, edge-case testing, balance) | 🟡 100 unit tests + a headless playtest in CI; no AI |
-| **M8 — Engine** (configurable maps, rules and presentation) | 🔲 The destination — see [ROADMAP.md](ROADMAP.md). Groundwork in place: Phaser-free core, event-decoupled renderer, data-driven tiles |
+| M7 — QA (AI opponent, edge-case testing, balance) | 🟡 129 unit tests + a headless playtest in CI; no AI |
+| **M8 — Engine** (configurable maps, rules and presentation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). 8a: board length and anchors done, shape still a square. 8c: `BoardRenderer` extracted. 8b: not started |
 
 ---
 
@@ -391,3 +395,87 @@ error and check 3 names the cause (`vite 5.4.21` at `node_modules/vite` vs
 `vite 8.2.0` at `node_modules/vitest/node_modules/vite`). Both workflows now
 resolve Node from `.nvmrc` and print `node --version && npm --version` before
 installing, so the next such failure is diagnosable from the log alone.
+
+---
+
+## M3 — Ownership and development — 2026-08-12
+
+The milestone that turns a working rules engine into a game worth finishing: you
+can now see who owns what, and put houses on it.
+
+### Refactor first, on purpose
+
+ROADMAP's sequencing note argued that two pieces of the M8 engine work get more
+expensive with every feature drawn on a tile, so they were done **before** the M3
+features rather than after M7:
+
+- **Board length and anchors (8a).** `Board` now takes a `TileDefinition[]`,
+  publishes `size`, and resolves `start` / `jail` / `goToJail` to indices by role.
+  Every `% 40` went through `move` / `stepsBetween`, both `position > 39` guards
+  became `isOnBoard`, and the four `player.position = 10` assignments became
+  `board.anchor('jail')`. `config.ts`'s `BOARD_SIZE` was deleted rather than wired
+  up: nothing read it, and `board.size` is the real answer.
+- **`BoardRenderer` (8c).** `GameScene.drawBoard()` was four near-identical loops,
+  one per side. `TileLayout` now carries each tile's footprint, orientation and
+  whether it is a corner, so the renderer has a single loop and asks each tile
+  which edge faces the middle of the board. Owner bands, houses, hotels and the
+  mortgage mark were written once each instead of four times.
+
+`computeLayout` derives the corners from `perSide = (size - 4) / 4` and throws on
+a length that cannot make a square, which is what a 12-tile test board in
+`tests/board.test.ts` pins down along with its anchors and its wrap-around. The
+existing 100 tests stayed green through both refactors — the point of having them.
+
+### The two rules the model was missing
+
+`Bank.buyHouse` and friends move cash and inventory and ask no questions, because
+`Bank` has no view of the board. Rather than give it one, the legality half lives
+in `game/BuildRules.ts`:
+
+- you may only build on a colour group you own outright, none of it mortgaged;
+- buildings stay within one of each other across the group, going up *and* coming
+  down (a hotel counts as the fifth);
+- a group with buildings on it cannot be mortgaged;
+- a hotel cannot be broken up unless the bank has four houses to hand back —
+  otherwise `Bank.sellHotel` silently leaves the lot bare.
+
+Every check returns a *reason*, not just a verdict, which is what lets a greyed-out
+button in the panel say why it is dead instead of doing nothing.
+
+### The interface
+
+- **Owner bands** on the rim edge of each owned tile, in the owner's token colour
+  and carrying their **seat number**. The first draft used the owner's initial and
+  every tile on the board read `P` — the default names are all `Player N`.
+- **Houses and hotels** along the colour stripe, using the textures `BootScene`
+  had been generating for nothing since M1.
+- **A property panel** in the dead column between board and HUD (x=770–1045):
+  rent ladder with the tier actually being charged highlighted, prices, mortgage
+  and redemption values, group-complete marker, and the six build/sell/mortgage
+  actions. Clicking a tile opens it, clicking the same tile again closes it.
+
+`Tile.ts` grew an `Ownable` interface and an `isOwnable` guard, which properties,
+railroads and utilities all satisfy. That deleted the `as any` block in
+`doBuyTile` where railroads and utilities used to have their `ownerId` assigned by
+hand, and let `Bank.mortgage` / `unmortgage` / `sellPropertyToPlayer` widen from
+`PropertyTile` to `Ownable` with no change to their bodies.
+
+### Verification
+
+- 29 new unit tests (129 total): `tests/build.test.ts` for the rules, and the
+  12-tile map in `tests/board.test.ts` for the generalisation.
+- `tools/playtest.mjs` now clicks an owned tile, asserts the panel opens on it and
+  closes on a second click, and screenshots it. Tile coordinates come from a new
+  `__forge.tileCentre(id)` rather than the `HOTSPOTS` table, so the harness holds
+  no copy of the board geometry.
+- The build path itself was driven once by hand against the real canvas — grant a
+  monopoly, click **🏠 Build**, and the house appears, $50 leaves the player and
+  the bank's stock drops 32 → 31; a second click is refused by the even-build rule.
+  Only the temporary grant was thrown away.
+
+### A trap worth recording
+
+Naming the field `this.renderer` in `GameScene` fails to compile: `Phaser.Scene`
+already has a `renderer` (the WebGL/Canvas renderer), and the error surfaces as
+`Argument of type 'this' is not assignable to parameter of type 'Scene'` at every
+`new Notification(this)` — nowhere near the actual clash. It is `boardView`.

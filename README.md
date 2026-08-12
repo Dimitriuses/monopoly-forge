@@ -36,6 +36,8 @@ Everything is mouse-driven — there is no keyboard input.
 | Roll | **🎲 ROLL DICE**, below the board (greyed out when it is not your turn to roll) |
 | Buy the property you landed on | **✅ BUY** in the prompt |
 | Decline it | **❌ PASS** |
+| Inspect any tile | Click it — the panel on the right shows the rent ladder, costs and owner. Click it again to close |
+| Build, sell, mortgage | Buttons in that panel, on your own turn, for tiles you own. A greyed-out button still tells you why when clicked |
 | Dismiss a Chance / Community Chest card | **OK** |
 | Leave jail | **🔓 Pay $50** (or **🃏 Use Card** if you hold one) — appears below the board only when you are in jail and can afford it |
 
@@ -65,6 +67,8 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 - **Property** — buy prompt for streets, railroads and utilities; rent from the tier table; railroad rent by how many the owner holds; utility rent at 4× or 10× the dice
 - **Cards** — 16 Chance and 17 Community Chest, with advance / go-back / jail / collect / pay / pay-per-house effects, drawn from a shuffled deck with a discard pile that reshuffles
 - **Jail** — enter by tile, card or three doubles; leave by doubles, a $50 fine, a Get Out of Jail Free card, or the forced fine after three turns
+- **Ownership on the board** — an owner-coloured band with the owner's seat number on every owned tile, `M` when it is mortgaged, houses and hotels drawn along the colour stripe
+- **Development** — click a tile for its rent ladder, costs and owner; build and sell houses and hotels, mortgage and redeem, with the colour-group and even-building rules enforced and every refusal explained
 - **HUD** — animated dice, per-player cash, active-player highlight, jail markers, stacking toast notifications
 - **Determinism** — `?seed=12345` replays an identical game
 
@@ -72,12 +76,10 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 
 Named honestly, because the board looks more finished than it is:
 
-- **Houses, hotels and mortgages have no UI.** The bank logic is written and
-  unit-tested — including returning four houses to the bank when a hotel goes up,
-  and the 110% unmortgage fee — but nothing in the game calls it, so rent never
-  rises above the bare-lot tier in play.
-- **Ownership is invisible on the board.** Buying works and rent is charged, but
-  no marker is drawn on the tile.
+- **Rent does not double on an unimproved colour group.** The panel tells you the
+  group is complete; the rent charged does not yet reflect it.
+- **Building is offered only on your own turn**, where the real game lets you
+  develop at almost any point.
 - **No auctions and no trading.** Declining a property just ends the turn.
 - **Bankruptcy does not settle the estate** — a broke player is skipped, but their
   properties are not transferred.
@@ -100,7 +102,9 @@ headless browser — see [tools/playtest.mjs](tools/playtest.mjs).
 | ![Buy prompt](screenshots/3-buy-prompt.png) | ![Card](screenshots/4-card.png) |
 | **Buy prompt** — price, base rent, your cash | **Cards** — Chance and Community Chest |
 | ![Jail](screenshots/5-jail.png) | ![Late game](screenshots/6-late-game.png) |
-| **Jail** — entered by card, HUD shows the state | **Later** — cash diverging through rent and tax |
+| **Jail** — entered by card, HUD shows the state | **Later** — owner bands on the tiles, cash diverging |
+| ![Property panel](screenshots/7-property-panel.png) | |
+| **Property panel** — rent ladder, costs, build and mortgage actions | |
 
 ---
 
@@ -112,14 +116,14 @@ Three axes of customisation, none of which should require editing engine code:
 
 | Axis | What you should be able to supply |
 |---|---|
-| **Maps** | A board of any length and shape — not 40 tiles in a square — with your own tiles, groups, prices and named anchors (where "jail" is, where "start" is) |
+| **Maps** | A board of any length and shape — not 40 tiles in a square — with your own tiles, groups, prices and named anchors (where "jail" is, where "start" is). *Length and anchors already work; the shape is still a square* |
 | **Rules** | New tile types and card effects registered from outside, and a rule set that decides turn order, jail terms, building rules and win conditions |
 | **Presentation** | How each element draws — tiles, tokens, cards, HUD — swapped per theme, without touching the rules |
 
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 100 unit tests pin down.
+it is what the 129 unit tests pin down.
 
 ### What already supports it
 
@@ -136,31 +140,35 @@ looks the way it does:
 - **Tiles are already polymorphic** — `Tile.onLand()` is a real extension point.
 - **Games are deterministic from a seed**, which is what makes comparing two rule
   sets, or reproducing a custom-map bug, tractable.
+- **The board's length and its anchors come from the map.** `Board` takes a
+  `TileDefinition[]`, publishes `board.size`, and resolves `start` / `jail` /
+  `goToJail` to indices by role; no `40` or `10` is left in the model. A 12-tile
+  board is a test case, not a thought experiment.
+- **The renderer is separate from the scene.** `BoardRenderer` draws everything
+  inside the board square from per-tile layout data, in one loop rather than one
+  per side.
 
 ### What has to change first
 
 Honestly measured against the current code, not estimated:
 
-- **The number 40 is hardcoded in 9 places** across `Board`, `TurnManager`,
-  `CardDeck` and `GameScene` — and `config.ts` already exports a `BOARD_SIZE`
-  constant that *nothing reads*. Board length has to come from the map.
-- **The board's shape is hardcoded twice** — `Board.computeLayout()` and
-  `GameScene.drawBoard()` each contain four loops over literal index ranges
-  (0–10, 11–19, 20–30, 31–39) assuming a square with 11 tiles a side. Geometry
-  needs to be computed from, or supplied by, the map.
-- **Jail is the literal tile 10 in 4 places.** Anchors must be named roles, not
-  indices.
+- **The board is still a square with equal sides.** `Board.computeLayout()` now
+  derives the corners from `(size - 4) / 4` instead of literal index ranges, and
+  rejects a length that cannot make a square — but an arbitrary shape needs
+  per-tile coordinates, or a segment description, supplied by the map.
+- **A map is not yet a file.** `BOARD_TILES` still lives in `config.ts`, with no
+  schema, loader or validation.
 - **Two closed `switch` statements** decide what can exist: tile construction in
   `Board`, and card effects in `CardEffects.execute()`. Both need to become
   registries so a game can add a type without editing the engine.
-- **Rendering is one 683-line scene.** `BoardRenderer` was in the original plan and
-  was never written; it is the seam a theme would plug into.
+- **Presentation is not yet a theme.** The renderer is extracted, but its colours,
+  fonts and decorations are still constants inside it and in `config.ts`.
 
 None of that is a rewrite — it is parameterising code that already has the right
-shape. The sequencing matters more than the size, though: every new thing drawn
-inside `drawBoard()` raises the cost of extracting a renderer later, so the board
-geometry and the renderer split are best done **alongside** the ownership work in
-M3 rather than after M7. That reasoning, and the full breakdown, is in
+shape. The sequencing mattered more than the size: the board-length work and the
+renderer split were done **as part of** M3, before ownership markers, houses and
+hotels were drawn, because every feature added inside the old `drawBoard()` would
+have raised the cost of extracting it. The full breakdown is in
 [ROADMAP.md](ROADMAP.md).
 
 ---
@@ -191,7 +199,7 @@ Three consequences worth the trouble:
 **The model runs in Node.** `src/config.ts` deliberately contains no Phaser
 import — the `Phaser.Game` options live in `main.ts` instead — so everything under
 `game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 100 unit tests run in ~8 s with no jsdom, and it is the seam a
+That is what lets 129 unit tests run in ~8 s with no jsdom, and it is the seam a
 headless AI opponent would plug into.
 
 **Games are reproducible.** Every dice roll and both deck shuffles draw from one
@@ -209,17 +217,18 @@ available on any build — including the deployed demo — with `?debug=1`.
 ```
 src/
 ├── main.ts               Phaser bootstrap, debug-logging switch
-├── config.ts             40 tile definitions, geometry, economy constants  [no Phaser]
+├── config.ts             The classic map, tile sizes, economy constants  [no Phaser]
 ├── game/
-│   ├── Board.ts          Tile registry, layout maths, validated getTile/move
+│   ├── Board.ts          Tile registry, anchors by role, layout maths, validated getTile/move
 │   ├── Player.ts         Position, cash, holdings, jail state
 │   ├── Dice.ts           Rolls via the seeded PRNG
 │   ├── Bank.ts           Transfers, purchase, mortgage, house/hotel stock
+│   ├── BuildRules.ts     Colour-group, even-building and mortgage legality
 │   └── TurnManager.ts    Phase FSM, doubles, jail, turn order
-├── tiles/                Tile base class ▸ PropertyTile, SpecialTiles
+├── tiles/                Tile base class ▸ PropertyTile, SpecialTiles, Ownable
 ├── cards/CardDeck.ts     Deck, discard/reshuffle, CardEffects, both decks
-├── scenes/               Boot, Menu, Game (board + wiring), UI (HUD), Card
-├── ui/                   DiceView, PlayerPanel, Notification
+├── scenes/               Boot, Menu, Game (tokens + wiring), UI (HUD), Card
+├── ui/                   BoardRenderer, PropertyPanel, DiceView, PlayerPanel, Notification
 └── utils/                EventBus, PRNG, SaveLoad, log
 tests/                    Vitest — model only, plain Node
 tools/playtest.mjs        Plays the built game in a real browser
@@ -256,7 +265,7 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test                # 100 unit tests, plain Node, ~7 s
+npm test                # 129 unit tests, plain Node, ~8 s
 npm run typecheck       # tsc --noEmit
 npm run playtest        # build first: plays 30 seeded turns in a headless browser
 npm run screenshots
@@ -291,9 +300,9 @@ dependency has been installed at two different majors. Run it whenever
 - [DEVLOG.md](DEVLOG.md) — the design decisions and the bug hunts behind them
 - [CLAUDE.md](CLAUDE.md) — conventions and invariants for working in this codebase
 
-The short version: the rules engine is solid and tested, the presentation layer
-stops at "you can play a full turn loop". The next milestone is making ownership
-visible and letting players build.
+The short version: the rules engine is solid and tested, and a full game of buy →
+develop → charge rent is now playable. What is missing is the multiplayer
+interaction — auctions, trading and a real bankruptcy settlement.
 
 ---
 
@@ -308,8 +317,10 @@ Issues and pull requests are welcome. Two conventions matter more than style:
    loudly if that breaks.
 
 New tile types extend `Tile` and implement `onLand()`; new card effects extend the
-`CardAction` union in `cards/CardDeck.ts`. Run `npm test` and `npm run playtest`
-before opening a PR.
+`CardAction` union in `cards/CardDeck.ts`. A third convention is worth knowing
+before touching the economy: `Bank` executes, it does not adjudicate — anything
+that builds, sells or mortgages checks `game/BuildRules.ts` first. Run `npm test`
+and `npm run playtest` before opening a PR.
 
 ---
 

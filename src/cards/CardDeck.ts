@@ -79,15 +79,15 @@ export class CardEffects {
         this.advanceTo(player, 0);
         break;
       case 'goToJail':
-        player.position = 10;
+        player.position = this.board.anchor('jail');
         player.inJail = true;
         player.jailTurns = 0;
-        dlog(`[CardEffects] goToJail: ${player.name} → position=10`);
+        dlog(`[CardEffects] goToJail: ${player.name} → position=${player.position}`);
         bus.emit('jail:enter', { playerId: player.id, reason: 'card' });
         break;
       case 'goBack': {
         const from = player.position;
-        const to   = (from - a.spaces + 40) % 40;
+        const to   = this.board.move(from, -a.spaces).to;
         const destTile = this.board.getTile(to);
         dlog(
           `[CardEffects] goBack ${a.spaces} spaces: ${player.name} pos ${from} → ${to} ` +
@@ -95,8 +95,8 @@ export class CardEffects {
         );
         dwarn(
           `[CardEffects] ⚠️  goBack emits player:move with steps=${a.spaces} and from=${from}. ` +
-          `moveTokenStepByStep animates FORWARD ((from + s) % 40), so the token will visually ` +
-          `walk to tile ${(from + a.spaces) % 40} instead of backward to ${to}. ` +
+          `moveTokenStepByStep animates FORWARD, so the token will visually ` +
+          `walk to tile ${this.board.move(from, a.spaces).to} instead of backward to ${to}. ` +
           `player.position is correctly set to ${to}, so resolveLanding() will fire on the ` +
           `right tile — but the token graphic will be in the wrong place.`,
         );
@@ -149,13 +149,13 @@ export class CardEffects {
 
   private advanceTo(player: Player, targetTile: number): void {
     const from  = player.position;
-    const steps = (targetTile - from + 40) % 40;
+    const steps = this.board.stepsBetween(from, targetTile);
     if (steps === 0) {
       dlog(`[CardEffects] advanceTo tile=${targetTile}: ${player.name} already there — no move`);
       return; // already on the target tile
     }
 
-    const passedGo = from + steps >= 40;
+    const { passedGo } = this.board.move(from, steps);
     const destTile = this.board.getTile(targetTile);
     dlog(
       `[CardEffects] advanceTo: ${player.name} pos ${from} → tile ${targetTile} ` +
@@ -164,7 +164,7 @@ export class CardEffects {
 
     // Passed Go when the path wraps around the board
     if (passedGo) {
-      this.board.getTile(0).onPass(player.id);
+      this.board.getTile(this.board.anchor('start')).onPass(player.id);
     }
     player.position = targetTile;
     bus.emit('player:move', { playerId: player.id, from, to: targetTile, steps, isDoubles: false });

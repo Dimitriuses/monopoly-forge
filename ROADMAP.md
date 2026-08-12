@@ -3,10 +3,11 @@
 Where Monopoly Forge is going. Defects that exist *today* are listed separately in
 [KNOWNISSUES.md](KNOWNISSUES.md); this file is about work not yet done.
 
-**Status:** active. The turn loop, cards, jail and rent all work end to end — a
-seeded 45-turn game runs with no console errors (`npm run playtest`). The next
-milestone is what turns a working rules engine into a game worth finishing:
-visible ownership and property development.
+**Status:** active. The turn loop, cards, jail, rent and property development all
+work end to end — a seeded game runs with no console errors (`npm run playtest`).
+M3 is done: ownership is drawn on the board, tiles are clickable, and houses,
+hotels and mortgages are reachable from the property panel. Next is M4's card and
+jail edge cases.
 
 **The destination is M8: an engine for Monopoly-style games** — configurable maps,
 rules and presentation. M1–M7 build the classic game that the engine has to be able
@@ -16,27 +17,31 @@ is cheaper to do early — see the sequencing note at the end.
 
 ---
 
-## M3 — Ownership and development · next
+## M3 — Ownership and development · done
 
-The model is already written and unit-tested; what is missing is the interface and
-the rule enforcement around it.
+- [x] **Draw ownership on the board.** An owner-coloured band on each owned tile's
+      rim edge, carrying the owner's seat number, plus an `M` on a mortgaged tile.
+      Drawn by `BoardRenderer.refresh()`.
+- [x] **Property detail panel.** Click any tile: rent ladder with the tier it
+      currently charges highlighted, house cost, mortgage and redemption values,
+      owner, and whether the colour group is complete. `src/ui/PropertyPanel.ts`,
+      in the column that used to be dead space between board and HUD.
+- [x] **Build houses and hotels.** The two missing rules now live in
+      `src/game/BuildRules.ts`: you must own the whole colour group (and none of
+      it mortgaged), and buildings must stay within one of each other going up
+      *and* coming down. `Bank` still does the cash and inventory and asks no
+      questions — it has no view of the board — so anything that builds must go
+      through the rule check first.
+- [x] **Mortgage / unmortgage UI.** In the same panel, including the rule that a
+      colour group with buildings on it cannot be mortgaged.
+- [x] **Render houses and hotels.** `BootScene`'s `house` and `hotel` textures are
+      drawn along each lot's colour stripe, on whichever side of the board it sits.
 
-- [ ] **Draw ownership on the board.** An owner-coloured bar or token pip per tile.
-      Nothing else on this list matters until you can see who owns what
-      (see *Property ownership is invisible* in KNOWNISSUES).
-- [ ] **Property detail panel.** Click a tile: full rent ladder, house cost,
-      mortgage value, current owner.
-- [ ] **Build houses and hotels.** `Bank.buyHouse` / `buyHotel` exist and pass
-      tests, including returning four houses to the bank stock when a hotel goes
-      up. They need a build UI and the two rules that are *not* in the model yet:
-      you must own the whole colour group, and houses must stay within one of each
-      other across the group.
-- [ ] **Mortgage / unmortgage UI.** Also model-complete (110% to lift), also
-      unreachable.
-- [ ] **Render houses and hotels.** `BootScene` already generates `house` and
-      `hotel` textures that nothing draws yet.
+Deliberately left out of M3, and now listed in KNOWNISSUES: rent does not double on
+an unimproved lot in a complete group, and building is only offered on the owner's
+own turn.
 
-## M4 — Cards and jail edge cases
+## M4 — Cards and jail edge cases · next
 
 - [ ] **Fix the `goBack` animation direction** — thread a signed direction through
       `player:move` so the token walks backwards.
@@ -65,9 +70,8 @@ the rule enforcement around it.
 - [ ] **Make the house rules real.** Four flags (`freeParkingJackpot`,
       `doubleGoSalary`, `noAuction`, `speedDie`) are declared and read by nothing.
       Either implement them or delete the type.
-- [ ] **Use the empty right-hand third of the canvas.** The board occupies
-      x≈80–760 and the HUD starts at x=1055, leaving a dead column; the turn log
-      and property panel belong there.
+- [ ] **Fill the rest of the right-hand column.** The property panel now occupies
+      x=770–1045 down to y=480; the turn log belongs underneath it.
 - [ ] **Stop toasts covering the roll button.** Notifications stack upward from
       y=760, directly over the ROLL DICE button at y=738.
 - [ ] Sound effects, and a proper token sprite instead of a coloured circle.
@@ -91,25 +95,26 @@ currently prevents it, so none of this is an estimate.
 
 ### 8a — The board stops being 40 tiles in a square
 
-- [ ] **Take board length from the map.** `% 40` is hardcoded in 9 places across
-      `Board.getTile`, `Board.getLayout`, `Board.move`, `Board.computeLayout`,
-      `TurnManager` (two `position > 39` guards), `CardEffects.advanceTo`,
-      `CardEffects.goBack` and `GameScene.moveTokenStepByStep`. `config.ts` already
-      exports `BOARD_SIZE = 40` and **nothing reads it** — that constant becoming
-      `board.length` is most of this task.
-- [ ] **Stop assuming a square.** `Board.computeLayout()` and
-      `GameScene.drawBoard()` each hold four loops over literal ranges (0–10,
-      11–19, 20–30, 31–39) with `boardW = CORNER_SIZE * 2 + TILE_W * 9`. Replace
-      with geometry derived from a side/segment description, or supplied as
-      per-tile coordinates in the map.
-- [ ] **Name the anchors.** Jail is the literal `10` in `TurnManager` (twice),
-      `CardEffects.goToJail` and `GameScene`'s `jail:enter` handler. A map should
-      declare which tile plays each role (`start`, `jail`, `goToJail`), and the
-      rules should ask for the role.
-- [ ] **A map is a file.** `TileDefinition[]` is already plain data; give it a
-      schema, a loader and validation (every referenced tile exists, groups are
-      consistent, anchors resolve), then ship the classic board as the first map
-      rather than as `BOARD_TILES` in `config.ts`.
+- [x] **Take board length from the map.** Done alongside M3. `Board` takes a
+      `TileDefinition[]` (defaulting to the classic one), publishes `board.size`,
+      and every wrap goes through `move` / `stepsBetween`. The `BOARD_SIZE`
+      constant is gone rather than read.
+- [x] **Name the anchors.** `Board.anchor('start' | 'jail' | 'goToJail')` resolves
+      a role to an index by scanning the map; `TurnManager`, `CardEffects` and
+      `GameScene` all ask for the role. A map without a jail says so
+      (`tryAnchor` → `null`) instead of silently meaning tile 10.
+- [ ] **Stop assuming a square.** Half done: the four literal index ranges are
+      gone — `Board.computeLayout()` derives corners and sides from
+      `perSide = (size - 4) / 4`, and `TileLayout` now carries each tile's
+      footprint and orientation so the renderer has one loop instead of four. It
+      is still a square with equal sides: a map whose length is not `4n + 4` is
+      rejected with an explicit error rather than mis-drawn. Arbitrary shapes need
+      a side/segment description, or per-tile coordinates, in the map.
+- [ ] **A map is a file.** `TileDefinition[]` is already plain data and `Board`
+      already accepts one; what is missing is a schema, a loader and validation
+      (every referenced tile exists, groups are consistent, anchors resolve), and
+      shipping the classic board as the first map rather than as `BOARD_TILES` in
+      `config.ts`.
 
 ### 8b — Rules become registrable instead of switch statements
 
@@ -129,28 +134,33 @@ currently prevents it, so none of this is an estimate.
 
 ### 8c — Presentation becomes a theme
 
-- [ ] **Extract `BoardRenderer`** from `GameScene` (683 lines, drawing everything
-      inline). It was in the original plan and never written.
+- [x] **Extract `BoardRenderer`.** Done alongside M3, before the ownership and
+      building work went in — `src/ui/BoardRenderer.ts` owns everything inside the
+      board square, `GameScene` owns the tokens, buttons and wiring.
+- [x] **Use the asset pipeline** `BootScene` half-provides: the `house` and
+      `hotel` textures it generates are drawn. The token textures are still unused
+      — tokens are coloured circles (M6).
 - [ ] **A theme object** for colours, fonts and tile decoration, replacing the
-      `GROUP_COLORS` / `TOKEN_HEX` constants.
+      `GROUP_COLORS` / `TOKEN_HEX` constants and the literals still inside
+      `BoardRenderer`.
 - [ ] **Per-element draw overrides**, so a game can replace how one tile type or
       token renders without forking the renderer.
-- [ ] **Use the asset pipeline** `BootScene` already half-provides — it generates
-      `house`, `hotel` and token textures that nothing draws.
 
-### Sequencing — why some of this should not wait
+### Sequencing — why some of this did not wait
 
 Extracting a renderer gets more expensive with every feature drawn inside
 `drawBoard()`, and un-hardcoding the board gets more expensive with every rule that
-assumes 40 tiles. M3 is about to add ownership markers, houses and hotels to
+assumes 40 tiles. M3 was about to add ownership markers, houses and hotels to
 exactly those places.
 
-So the cheap order is: do **8a** (board length + geometry + anchors) and the
-`BoardRenderer` extraction from **8c** *alongside* M3, while the surface is small,
-and leave 8b's registries and the rule set until the classic rules are complete
-enough to know what needs to vary. The 100 unit tests are the safety net that makes
-this refactor-first order safe — they pin the classic behaviour, so a
-parameterisation that breaks it fails loudly.
+So board length, the anchors and the `BoardRenderer` split were done **first**,
+as part of M3, while the surface was small: the ownership and building work then
+landed in a renderer that loops over the board once and asks each tile for its
+own footprint. That order held up — the refactor changed no behaviour and the
+existing tests stayed green throughout, which is exactly what they are for.
+
+8b's registries and the rule set still wait until the classic rules are complete
+enough to know what needs to vary.
 
 ---
 
@@ -175,8 +185,8 @@ hard half and is genuinely not written:
   rebuilt to match, which means a restore path through `GameScene.create()`
   rather than a simple field assignment.
 
-Deferred until after M3, because the ownership work changes the shape of the state
-that would need saving.
+Deferred past M3, whose ownership and building work changed the shape of the state
+that would need saving — houses, hotels and mortgage flags now all move in play.
 
 ### Multiple simultaneous animations
 

@@ -11,8 +11,9 @@ export const GAME_WIDTH = 1280;
 export const GAME_HEIGHT = 800;
 
 // ─── Board geometry ────────────────────────────────────────────────────────────
-export const BOARD_SIZE = 40;
-export const TILE_COUNT_PER_SIDE = 9; // excluding corners
+// Tile *sizes* only. How many tiles there are, how many sit on a side and which
+// tile plays which role are all derived from the map — see Board.computeLayout
+// and Board.anchor. Nothing may reintroduce a board-length constant here.
 export const CORNER_SIZE = 88;
 export const TILE_W = 56;
 export const TILE_H = 88;

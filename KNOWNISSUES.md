@@ -41,21 +41,31 @@ misleading; renaming it is a small, safe cleanup.
 - `Player.pay` clamps at zero (`Math.max(0, …)`), so a player can never actually
   owe more than they hold, which is why partial payment silently "works".
 
-### Houses, hotels and mortgages have no user interface
+### Rent does not double on an unimproved colour group
 
-`Bank.buyHouse`, `buyHotel`, `sellHouse`, `sellHotel`, `mortgage` and
-`unmortgage` are implemented and unit-tested (see `tests/economy.test.ts`,
-including bank-stock conservation and the 110% unmortgage fee), but **nothing in
-the game calls them**. Rent therefore never rises above the bare-lot tier in
-actual play, and the colour-group and even-building rules described in the
-original design are not enforced anywhere.
+Under the standard rules, owning every lot in a colour group doubles the bare-lot
+rent until houses go up. `PropertyTile.currentRent` returns `rentTiers[houses]`
+with no view of the board, so it cannot know. The property panel *does* show
+`★ Group complete`, which makes the omission easy to spot in play.
 
-### Property ownership is invisible on the board
+Fixing it means resolving rent where the board is in scope — the `rent:pay`
+handler in `GameScene`, which already resolves railroad and utility rent —
+using `ownsWholeGroup` from `BuildRules`.
 
-Buying a tile updates the model — `ownerId`, `player.ownedTileIds`, and rent is
-charged correctly on later landings — but the board draws no owner marker, so
-there is no way to tell who owns what without reading the console. This is the
-single biggest gap between "the rules work" and "the game is playable".
+### Building is only offered on the owner's own turn
+
+Real Monopoly lets you build, sell and mortgage at almost any point, including
+during another player's turn. Here `GameScene.actionsFor` only offers the buttons
+to `turnManager.currentPlayer`, so a player who wants to develop must wait for
+their turn to come round. Inspecting any tile works at any time; only the actions
+are gated.
+
+### Selling a hotel is blocked when the bank has fewer than four houses
+
+`Bank.sellHotel` hands back four houses only `if (this.houses >= 4)` — otherwise
+the lot silently ends up bare and the buildings vanish. Rather than change the
+bank, `BuildRules.canSellHotel` refuses the sale in that case and says why. The
+standard rules would instead force an auction of the scarce houses.
 
 ### The two "nearest Railroad" Chance cards are fixed destinations
 
@@ -113,12 +123,12 @@ delays are tuned by feel against animation lengths rather than sequenced from
 completion callbacks, so changing an animation duration can reorder events. It
 has been stable across long playtests, but it is timing-coupled by construction.
 
-### Board drawing is duplicated four times
+### The property panel is rebuilt from scratch on every refresh
 
-`GameScene.drawBoard` has one near-identical loop per side of the board, differing
-only in tile dimensions and colour-stripe edge. That duplication is what allowed
-the original top-row orientation bug, and it is the natural thing to extract when
-houses and owner markers need drawing per tile.
+`PropertyPanel.show()` calls `removeAll(true)` and re-creates every text object,
+and `GameScene.refreshPanel()` calls it after each build, sale, mortgage and
+turn change. It is a few dozen objects and has not been measurable, but it is
+churn where a diff would do.
 
 ---
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Board } from '@/game/Board';
 import { BOARD_TILES } from '@/config';
+import type { TileDefinition } from '@/tiles/Tile';
 
 describe('Board — tile registry', () => {
   const board = new Board();
@@ -26,6 +27,16 @@ describe('Board — tile registry', () => {
       go: 1, property: 22, railroad: 4, utility: 2, tax: 2,
       chance: 3, communityChest: 3, jail: 1, freeParking: 1, goToJail: 1,
     });
+  });
+
+  it('takes its size from the map rather than a constant', () => {
+    expect(board.size).toBe(BOARD_TILES.length);
+  });
+
+  it('resolves the anchors by role instead of by index', () => {
+    expect(board.anchor('start')).toBe(0);
+    expect(board.anchor('jail')).toBe(10);
+    expect(board.anchor('goToJail')).toBe(30);
   });
 
   it('keeps tile ids aligned with their board index', () => {
@@ -116,5 +127,79 @@ describe('Board — layout geometry', () => {
   it('runs the left column bottom-to-top and the right column top-to-bottom', () => {
     for (let i = 12; i < 20; i++) expect(layouts[i].y).toBeLessThan(layouts[i - 1].y);
     for (let i = 32; i < 40; i++) expect(layouts[i].y).toBeGreaterThan(layouts[i - 1].y);
+  });
+
+  it('gives the renderer a footprint per tile, corners square', () => {
+    expect(layouts[0].isCorner).toBe(true);
+    expect(layouts[0].w).toBe(layouts[0].h);
+    // Mid-row tiles are tall and narrow; the columns are the same tile rotated.
+    expect(layouts[1].w).toBeLessThan(layouts[1].h);
+    expect(layouts[15].w).toBe(layouts[1].h);
+    expect(layouts[15].h).toBe(layouts[1].w);
+  });
+});
+
+// ROADMAP 8a: the classic board is one map, not the only one. These pin the
+// generalisation — a shorter circuit has to lay out and wrap on its own terms.
+describe('Board — a map that is not the classic 40 tiles', () => {
+  const property = (id: number, group: 'brown' | 'red'): TileDefinition => ({
+    id, type: 'property', name: `Lot ${id}`, group,
+    price: 100, houseCost: 50, mortgage: 50, rent: [1, 2, 3, 4, 5, 6],
+  });
+
+  // 12 tiles: four corners with two lots on each side.
+  const TINY: TileDefinition[] = [
+    { id: 0, type: 'go', name: 'GO' },
+    property(1, 'brown'), property(2, 'brown'),
+    { id: 3, type: 'jail', name: 'Jail' },
+    property(4, 'red'), property(5, 'red'),
+    { id: 6, type: 'freeParking', name: 'Free Parking' },
+    { id: 7, type: 'chance', name: 'Chance' },
+    { id: 8, type: 'tax', name: 'Tax', amount: 50 },
+    { id: 9, type: 'goToJail', name: 'Go to Jail' },
+    { id: 10, type: 'railroad', name: 'Depot', price: 200, mortgage: 100 },
+    { id: 11, type: 'utility', name: 'Waterworks', price: 150, mortgage: 75 },
+  ];
+
+  const tiny = new Board(TINY);
+
+  it('reports the map’s own size', () => {
+    expect(tiny.size).toBe(12);
+    expect(tiny.tiles).toHaveLength(12);
+  });
+
+  it('wraps at the map’s length, not at 40', () => {
+    expect(tiny.move(10, 5)).toEqual({ to: 3, passedGo: true });
+    expect(tiny.move(0, -1).to).toBe(11);
+    expect(tiny.stepsBetween(10, 2)).toBe(4);
+  });
+
+  it('finds the anchors wherever the map put them', () => {
+    expect(tiny.anchor('start')).toBe(0);
+    expect(tiny.anchor('jail')).toBe(3);
+    expect(tiny.anchor('goToJail')).toBe(9);
+  });
+
+  it('lays the corners out as a square with two tiles a side', () => {
+    const layouts = Array.from({ length: 12 }, (_, i) => tiny.getLayout(i));
+    expect(new Set(layouts.map((l) => `${l.x},${l.y}`)).size).toBe(12);
+    expect(layouts.filter((l) => l.isCorner)).toHaveLength(4);
+    expect([0, 3, 6, 9].every((i) => layouts[i].isCorner)).toBe(true);
+    expect(layouts[0].y).toBeCloseTo(layouts[3].y);   // bottom edge
+    expect(layouts[6].y).toBeCloseTo(layouts[9].y);   // top edge
+    expect(layouts[4].side).toBe('left');
+    expect(layouts[10].side).toBe('right');
+  });
+
+  it('reports a missing anchor rather than guessing an index', () => {
+    const noJail = new Board(TINY.map((t) =>
+      t.type === 'jail' ? { ...t, type: 'freeParking' as const, name: 'Rest Stop' } : t,
+    ));
+    expect(noJail.tryAnchor('jail')).toBeNull();
+    expect(() => noJail.anchor('jail')).toThrow(/no tile plays/);
+  });
+
+  it('refuses a tile count that cannot make a square', () => {
+    expect(() => new Board(TINY.slice(0, 11))).toThrow(/four corners and equal sides/);
   });
 });

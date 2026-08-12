@@ -31,6 +31,24 @@ export interface TileDefinition {
   amount?: number;
 }
 
+// ─── Ownable ──────────────────────────────────────────────────────────────────
+// What the bank, the build rules and the property panel need from a tile that
+// can change hands. Properties, railroads and utilities all satisfy it; the rest
+// of the board does not, and `isOwnable` is the only test anything should apply.
+
+export interface Ownable {
+  readonly id: number;
+  readonly name: string;
+  readonly price: number;
+  readonly mortgage: number;
+  ownerId: string | null;
+  isMortgaged: boolean;
+}
+
+export function isOwnable(tile: Tile): tile is Tile & Ownable {
+  return 'ownerId' in tile;
+}
+
 // ─── Base Tile class ──────────────────────────────────────────────────────────
 
 export abstract class Tile {

@@ -40,13 +40,14 @@ export class TurnManager {
         dlog(`[TurnManager] jail:enter received for ${player.name} — state already set by sendToJail()`);
         return;
       }
+      const jail = this.board.anchor('jail');
       dlog(
         `[TurnManager] jail:enter received for ${player.name} (external trigger — tile or card). ` +
-        `Setting inJail=true, position=10, jailTurns=0 (was position=${player.position})`,
+        `Setting inJail=true, position=${jail}, jailTurns=0 (was position=${player.position})`,
       );
       player.inJail    = true;
       player.jailTurns = 0;
-      player.position  = 10;
+      player.position  = jail;
     });
   }
 
@@ -102,7 +103,7 @@ export class TurnManager {
     );
 
     // Guard: NaN, Infinity, or any out-of-range value must not reach getTile.
-    if (!Number.isFinite(player.position) || player.position < 0 || player.position > 39) {
+    if (!this.isOnBoard(player.position)) {
       console.error(`[TurnManager] resolveLanding: ${player.name} position=${player.position} — resetting to 0`);
       player.position = 0;
     }
@@ -188,7 +189,7 @@ export class TurnManager {
     this.phase = 'MOVING';
 
     // Sanitise position — NaN, Infinity, or any out-of-range value cascades.
-    if (!Number.isFinite(player.position) || player.position < 0 || player.position > 39) {
+    if (!this.isOnBoard(player.position)) {
       console.error(`[TurnManager] movePlayer: ${player.name} position=${player.position} — resetting to 0`);
       player.position = 0;
     }
@@ -213,7 +214,7 @@ export class TurnManager {
     );
 
     if (passedGo) {
-      this.board.getTile(0).onPass(player.id);  // emits rent:pay reason:'go'
+      this.board.getTile(this.board.anchor('start')).onPass(player.id);  // emits rent:pay reason:'go'
     }
 
     player.position = to;
@@ -262,8 +263,13 @@ export class TurnManager {
     // NOTE: no player:move emitted here — GameScene snaps the token via jail:enter
     player.inJail    = true;
     player.jailTurns = 0;
-    player.position  = 10;
+    player.position  = this.board.anchor('jail');
     bus.emit('jail:enter', { playerId: player.id, reason: 'doubles' });
+  }
+
+  /** A finite index inside the map — the shape every position guard checks. */
+  private isOnBoard(position: number): boolean {
+    return Number.isFinite(position) && position >= 0 && position < this.board.size;
   }
 
   private advancePlayer(): void {

@@ -8,14 +8,26 @@ import { CardDeck, CardEffects, CHANCE_CARDS, COMMUNITY_CHEST_CARDS } from '@/ca
 import { bus } from '@/utils/EventBus';
 import { rng } from '@/utils/PRNG';
 import { dlog, dwarn, isDebugLogging } from '@/utils/log';
-import { Notification } from '@/ui/Notification';
+import { Notification, type NotifType } from '@/ui/Notification';
+import { BoardRenderer, type OwnerStyle } from '@/ui/BoardRenderer';
 import {
-  BOARD_ORIGIN_X, BOARD_ORIGIN_Y, CORNER_SIZE, TILE_W, TILE_H,
-  GROUP_COLORS, DEFAULT_HOUSE_RULES,
+  PropertyPanel,
+  type PanelAction, type PanelActionKey, type PropertyView, type RentRow,
+} from '@/ui/PropertyPanel';
+import {
+  DEFAULT_HOUSE_RULES, GROUP_COLORS, GROUP_SIZES, GO_SALARY,
   type TokenType, type HouseRules,
 } from '@/config';
 import { PropertyTile } from '@/tiles/PropertyTile';
-import type { RailroadTile, UtilityTile } from '@/tiles/SpecialTiles';
+import { isOwnable, type Tile } from '@/tiles/Tile';
+import {
+  RailroadTile, UtilityTile, TaxTile, RAILROAD_RENT, UTILITY_MULTIPLIERS,
+} from '@/tiles/SpecialTiles';
+import {
+  canBuildHouse, canBuildHotel, canSellHouse, canSellHotel,
+  canMortgage, canUnmortgage, unmortgageCost, ownsWholeGroup,
+  type RuleCheck,
+} from '@/game/BuildRules';
 
 const TOKEN_HEX: Record<string, string> = {
   topHat: '#222222', car: '#e74c3c', dog: '#e67e22', battleship: '#3498db',
@@ -51,6 +63,9 @@ export class GameScene extends Phaser.Scene {
   private jailBtn!:     Phaser.GameObjects.Text;
   private buyPrompt!:   Phaser.GameObjects.Container;
   private notif!:       Notification;
+  /** Not `renderer` — Phaser.Scene already owns that name for the WebGL renderer. */
+  private boardView!:   BoardRenderer;
+  private panel!:       PropertyPanel;
 
   /** Incremented on every turn:start — stale safeEndTurn timers check against this */
   private turnGen = 0;
@@ -76,11 +91,21 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.drawBoard();
+    this.notif = new Notification(this);
+
+    this.boardView = new BoardRenderer(this, this.board, (id) => this.ownerStyle(id));
+    this.boardView.draw((tileId) => this.selectTile(tileId));
+    this.boardView.refresh();
+
+    this.panel = new PropertyPanel(
+      this,
+      (key) => this.runPanelAction(key),
+      (reason) => this.notif.show(reason, 'warning'),
+    );
+
     this.spawnTokens();
     this.buildButtons();
     this.buildBuyPrompt();
-    this.notif = new Notification(this);
     this.registerBusListeners();
 
     this.scene.launch('UIScene', { players: this.players });
@@ -102,88 +127,29 @@ export class GameScene extends Phaser.Scene {
       activeId:    () => this.turnManager.currentPlayer.id,
       buyPromptOpen: () => this.buyPrompt.visible,
       cardOpen:    () => this.scene.isActive('CardScene'),
+      panelOpen:   () => this.panel.isOpen,
+      panelTile:   () => this.panel.tileId,
+      // Lets the harness click a tile without keeping its own copy of the
+      // board geometry — unlike the button HOTSPOTS, which it must.
+      tileCentre:  (tileId: number) => {
+        const layout = this.board.getLayout(tileId);
+        return { x: layout.x, y: layout.y };
+      },
     };
   }
 
-  // ── Board drawing ─────────────────────────────────────────────────────────────
+  // ── Ownership ─────────────────────────────────────────────────────────────────
 
-  private drawBoard(): void {
-    const g     = this.add.graphics();
-    const boardW = CORNER_SIZE * 2 + TILE_W * 9;
-
-    g.fillStyle(0xd4e8c2, 1);
-    g.fillRect(BOARD_ORIGIN_X, BOARD_ORIGIN_Y, boardW, boardW);
-    g.lineStyle(1, 0x555544, 1);
-
-    // Bottom (0–10): face UP, stripe on TOP
-    for (let i = 0; i <= 10; i++) {
-      const layout = this.board.getLayout(i);
-      const w = (i === 0 || i === 10) ? CORNER_SIZE : TILE_W;
-      g.strokeRect(layout.x - w / 2, layout.y - TILE_H / 2, w, TILE_H);
-      const tile = this.board.getTile(i);
-      if (tile.type === 'property') {
-        g.fillStyle(GROUP_COLORS[(tile as PropertyTile).group], 1);
-        g.fillRect(layout.x - w / 2, layout.y - TILE_H / 2, w, 14);
-      }
-      this.add.text(layout.x, layout.y + 4, tile.name, {
-        fontFamily: 'Arial', fontSize: '6px', color: '#111111',
-        wordWrap: { width: w - 4 }, align: 'center',
-      }).setOrigin(0.5, 0.5);
-    }
-
-    // Left (11–19): face RIGHT, stripe on RIGHT
-    for (let i = 11; i <= 19; i++) {
-      const layout = this.board.getLayout(i);
-      g.strokeRect(layout.x - TILE_H / 2, layout.y - TILE_W / 2, TILE_H, TILE_W);
-      const tile = this.board.getTile(i);
-      if (tile.type === 'property') {
-        g.fillStyle(GROUP_COLORS[(tile as PropertyTile).group], 1);
-        g.fillRect(layout.x + TILE_H / 2 - 14, layout.y - TILE_W / 2, 14, TILE_W);
-      }
-      this.add.text(layout.x, layout.y, tile.name, {
-        fontFamily: 'Arial', fontSize: '6px', color: '#111111',
-        wordWrap: { width: TILE_H - 18 }, align: 'center',
-      }).setOrigin(0.5, 0.5);
-    }
-
-    // Top (20–30): face DOWN, stripe on BOTTOM
-    for (let i = 20; i <= 30; i++) {
-      const layout = this.board.getLayout(i);
-      const w = (i === 20 || i === 30) ? CORNER_SIZE : TILE_W;
-      g.strokeRect(layout.x - w / 2, layout.y - TILE_H / 2, w, TILE_H);
-      const tile = this.board.getTile(i);
-      if (tile.type === 'property') {
-        g.fillStyle(GROUP_COLORS[(tile as PropertyTile).group], 1);
-        g.fillRect(layout.x - w / 2, layout.y + TILE_H / 2 - 14, w, 14);
-      }
-      this.add.text(layout.x, layout.y - 4, tile.name, {
-        fontFamily: 'Arial', fontSize: '6px', color: '#111111',
-        wordWrap: { width: w - 4 }, align: 'center',
-      }).setOrigin(0.5, 0.5);
-    }
-
-    // Right (31–39): face LEFT, stripe on LEFT
-    for (let i = 31; i <= 39; i++) {
-      const layout = this.board.getLayout(i);
-      g.strokeRect(layout.x - TILE_H / 2, layout.y - TILE_W / 2, TILE_H, TILE_W);
-      const tile = this.board.getTile(i);
-      if (tile.type === 'property') {
-        g.fillStyle(GROUP_COLORS[(tile as PropertyTile).group], 1);
-        g.fillRect(layout.x - TILE_H / 2, layout.y - TILE_W / 2, 14, TILE_W);
-      }
-      this.add.text(layout.x, layout.y, tile.name, {
-        fontFamily: 'Arial', fontSize: '6px', color: '#111111',
-        wordWrap: { width: TILE_H - 18 }, align: 'center',
-      }).setOrigin(0.5, 0.5);
-    }
-
-    const cx = BOARD_ORIGIN_X + boardW / 2;
-    const cy = BOARD_ORIGIN_Y + boardW / 2;
-    this.add.text(cx, cy - 20, '🏦', { fontSize: '48px' }).setOrigin(0.5);
-    this.add.text(cx, cy + 30, 'MONOPOLY\nFORGE', {
-      fontFamily: 'Georgia, serif', fontSize: '20px', color: '#222244',
-      align: 'center', fontStyle: 'bold',
-    }).setOrigin(0.5);
+  /** How BoardRenderer should mark a tile owned by this player. */
+  private ownerStyle(playerId: string): OwnerStyle | null {
+    const index = this.players.findIndex((p) => p.id === playerId);
+    if (index === -1) return null;
+    return {
+      color: Phaser.Display.Color.HexStringToColor(TOKEN_HEX[this.players[index].token] ?? '#ffffff').color,
+      // The seat number, not the initial: everyone is "Player N" by default, so
+      // an initial marks every tile on the board with the same letter.
+      initial: String(index + 1),
+    };
   }
 
   // ── Tokens ────────────────────────────────────────────────────────────────────
@@ -202,7 +168,7 @@ export class GameScene extends Phaser.Scene {
         .setDepth(10).setStrokeStyle(1.5, 0xffffff);
 
       const label = this.add.text(layout.x + ox, layout.y + oy,
-        player.name[0].toUpperCase(),
+        String(i + 1),   // seat number — see ownerStyle for why not the initial
         { fontFamily: 'Arial', fontSize: '8px', color: '#ffffff', fontStyle: 'bold' },
       ).setOrigin(0.5).setDepth(11);
 
@@ -218,8 +184,7 @@ export class GameScene extends Phaser.Scene {
     if (!sprite || !label) return;
 
     for (let s = 1; s <= steps; s++) {
-      const tileIndex = (from + s) % 40;
-      const layout    = this.board.getLayout(tileIndex);
+      const layout = this.board.getLayout(this.board.move(from, s).to);
       await new Promise<void>((resolve) => {
         this.tweens.add({
           targets: [sprite, label],
@@ -360,28 +325,256 @@ export class GameScene extends Phaser.Scene {
 
   private doBuyTile(player: Player, tileId: number, price: number, tileName: string): void {
     const tile = this.board.getTile(tileId);
-
-    // Manually set ownerId for Railroad / Utility (bank.sellPropertyToPlayer only handles PropertyTile)
-    if (tile.type === 'property') {
-      this.bank.sellPropertyToPlayer(player, tile as PropertyTile);
-    } else if (tile.type === 'railroad' || tile.type === 'utility') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const t = tile as any;
-      if (!t.ownerId && player.canAfford(price)) {
-        player.pay(price);
-        t.ownerId = player.id;
-        player.ownedTileIds.add(tileId);
-      }
-    }
+    // Properties, railroads and utilities all change hands through the bank —
+    // they share the Ownable shape, so there is no per-type branch here.
+    if (isOwnable(tile)) this.bank.sellPropertyToPlayer(player, tile);
 
     this.notif.show(`${player.name} bought ${tileName} for $${price}!`, 'success');
     this.hideBuyPrompt();
+    this.boardView.refresh();
     this.pushUIUpdate();
+    this.refreshPanel();
     this.safeEndTurn(400);
   }
 
   private hideBuyPrompt(): void {
     this.buyPrompt.setVisible(false);
+  }
+
+  // ── Property panel ────────────────────────────────────────────────────────────
+
+  /** Board click: inspect a tile, or close the panel by clicking it again. */
+  private selectTile(tileId: number): void {
+    if (this.panel.isOpen && this.panel.tileId === tileId) {
+      this.panel.hide();
+      this.boardView.setSelected(null);
+      return;
+    }
+    this.boardView.setSelected(tileId);
+    this.panel.show(this.buildPropertyView(tileId));
+  }
+
+  /** Re-render the open panel — cash, buildings and whose turn it is all move. */
+  private refreshPanel(): void {
+    if (this.panel.isOpen && this.panel.tileId !== null) {
+      this.panel.show(this.buildPropertyView(this.panel.tileId));
+    }
+  }
+
+  private runPanelAction(key: PanelActionKey): void {
+    const tileId = this.panel.tileId;
+    if (tileId === null) return;
+    const tile = this.board.getTile(tileId);
+    if (!isOwnable(tile)) return;
+
+    const player   = this.turnManager.currentPlayer;
+    const property = tile instanceof PropertyTile ? tile : null;
+
+    // The buttons were drawn from a snapshot; cash and bank stock may have moved
+    // since, so every action is re-checked on the way in.
+    const attempt = (check: RuleCheck, run: () => boolean, done: string, type: NotifType): void => {
+      if (!check.ok) {
+        this.notif.show(check.reason, 'warning');
+        return;
+      }
+      if (!run()) {
+        this.notif.show(`The bank turned that down for ${tile.name}.`, 'danger');
+        return;
+      }
+      this.notif.show(done, type);
+      this.boardView.refresh();
+      this.pushUIUpdate();
+      this.refreshPanel();
+    };
+
+    switch (key) {
+      case 'buildHouse':
+        if (!property) return;
+        attempt(
+          canBuildHouse(this.board, this.bank, player, property),
+          () => this.bank.buyHouse(player, property),
+          `${player.name} built a house on ${property.name}.`, 'success',
+        );
+        break;
+      case 'buildHotel':
+        if (!property) return;
+        attempt(
+          canBuildHotel(this.board, this.bank, player, property),
+          () => this.bank.buyHotel(player, property),
+          `${player.name} opened a hotel on ${property.name}!`, 'success',
+        );
+        break;
+      case 'sellHouse':
+        if (!property) return;
+        attempt(
+          canSellHouse(this.board, player, property),
+          () => this.bank.sellHouse(player, property),
+          `${player.name} sold a house on ${property.name}.`, 'info',
+        );
+        break;
+      case 'sellHotel':
+        if (!property) return;
+        attempt(
+          canSellHotel(this.bank, player, property),
+          () => this.bank.sellHotel(player, property),
+          `${player.name} sold the hotel on ${property.name}.`, 'info',
+        );
+        break;
+      case 'mortgage':
+        attempt(
+          canMortgage(this.board, player, tile),
+          () => this.bank.mortgage(player, tile),
+          `${player.name} mortgaged ${tile.name} for $${tile.mortgage}.`, 'warning',
+        );
+        break;
+      case 'unmortgage':
+        attempt(
+          canUnmortgage(player, tile),
+          () => this.bank.unmortgage(player, tile),
+          `${player.name} lifted the mortgage on ${tile.name}.`, 'success',
+        );
+        break;
+    }
+  }
+
+  // ── Panel view model ──────────────────────────────────────────────────────────
+  // Every rule decision is made here so PropertyPanel stays a renderer.
+
+  private buildPropertyView(tileId: number): PropertyView {
+    const tile     = this.board.getTile(tileId);
+    const property = tile instanceof PropertyTile ? tile : null;
+    const owner    = isOwnable(tile) && tile.ownerId
+      ? this.players.find((p) => p.id === tile.ownerId) ?? null
+      : null;
+
+    const facts: string[] = [];
+    if (isOwnable(tile)) {
+      facts.push(`Price  $${tile.price}`);
+      if (property) facts.push(`House / hotel  $${property.houseCost} each`);
+      facts.push(`Mortgage value  $${tile.mortgage}`);
+      facts.push(`Lift mortgage  $${unmortgageCost(tile)}`);
+    } else {
+      facts.push(this.describeTile(tile));
+    }
+
+    const status: string[] = [];
+    if (property?.hasHotel)    status.push('🏨 Hotel');
+    else if (property?.houses) status.push(`🏠 ${property.houses} house${property.houses > 1 ? 's' : ''}`);
+    if (isOwnable(tile) && tile.isMortgaged) status.push('⚠ Mortgaged');
+    if (owner && property && ownsWholeGroup(this.board, owner, property)) status.push('★ Group complete');
+
+    return {
+      tileId,
+      name: tile.name,
+      subtitle: this.subtitleFor(tile),
+      groupColor: property ? GROUP_COLORS[property.group] : null,
+      ownerLabel: owner ? `Owned by ${owner.name}` : isOwnable(tile) ? 'Unowned' : '—',
+      ownerColor: owner ? (this.ownerStyle(owner.id)?.color ?? null) : null,
+      facts,
+      rentRows: this.rentRowsFor(tile, owner),
+      status: status.join('   '),
+      actions: this.actionsFor(tile),
+      note: this.actionNoteFor(tile, owner),
+    };
+  }
+
+  private subtitleFor(tile: Tile): string {
+    if (tile instanceof PropertyTile) {
+      const group = tile.group.replace(/([A-Z])/g, ' $1').toLowerCase();
+      return `Property · ${group} group of ${GROUP_SIZES[tile.group]}`;
+    }
+    const labels: Record<string, string> = {
+      railroad: 'Railroad', utility: 'Utility', tax: 'Tax',
+      chance: 'Chance', communityChest: 'Community Chest',
+      go: 'Corner', jail: 'Corner', freeParking: 'Corner', goToJail: 'Corner',
+    };
+    return labels[tile.type] ?? tile.type;
+  }
+
+  private describeTile(tile: Tile): string {
+    if (tile instanceof TaxTile) return `Pay $${tile.amount} to the bank.`;
+    switch (tile.type) {
+      case 'go':          return `Collect $${GO_SALARY} as you pass.`;
+      case 'chance':
+      case 'communityChest': return 'Draw the top card.';
+      case 'jail':        return 'Just visiting — unless you were sent here.';
+      case 'goToJail':    return 'Go straight to jail. No salary.';
+      case 'freeParking': return 'Nothing happens here.';
+      default:            return '';
+    }
+  }
+
+  private rentRowsFor(tile: Tile, owner: Player | null): RentRow[] {
+    if (tile instanceof PropertyTile) {
+      const charging = owner !== null && !tile.isMortgaged;
+      const tier     = tile.hasHotel ? 5 : tile.houses;
+      const labels   = ['Bare lot', '1 house', '2 houses', '3 houses', '4 houses', 'Hotel'];
+      return tile.rentTiers.map((rent, i) => ({
+        label: labels[i], value: `$${rent}`, active: charging && i === tier,
+      }));
+    }
+
+    if (tile instanceof RailroadTile) {
+      const held = owner ? this.countOwnedOfType(owner, 'railroad') : 0;
+      return RAILROAD_RENT.map((rent, i) => ({
+        label: `${i + 1} railroad${i ? 's' : ''}`,
+        value: `$${rent}`,
+        active: !tile.isMortgaged && held === i + 1,
+      }));
+    }
+
+    if (tile instanceof UtilityTile) {
+      const held = owner ? this.countOwnedOfType(owner, 'utility') : 0;
+      return UTILITY_MULTIPLIERS.map((mult, i) => ({
+        label: `${i + 1} utilit${i ? 'ies' : 'y'}`,
+        value: `${mult} × dice`,
+        active: !tile.isMortgaged && held === i + 1,
+      }));
+    }
+
+    return [];
+  }
+
+  /** Buttons are offered to the player whose turn it is — this is hot-seat play. */
+  private actionsFor(tile: Tile): PanelAction[] {
+    if (!isOwnable(tile)) return [];
+    const player = this.turnManager.currentPlayer;
+    if (tile.ownerId !== player.id) return [];
+
+    const button = (key: PanelActionKey, label: string, check: RuleCheck): PanelAction =>
+      ({ key, label, enabled: check.ok, reason: check.reason });
+
+    const actions: PanelAction[] = [];
+    if (tile instanceof PropertyTile) {
+      actions.push(
+        button('buildHouse', `🏠 Build  $${tile.houseCost}`,
+          canBuildHouse(this.board, this.bank, player, tile)),
+        button('buildHotel', `🏨 Hotel  $${tile.houseCost}`,
+          canBuildHotel(this.board, this.bank, player, tile)),
+        button('sellHouse', `Sell house  +$${Math.floor(tile.houseCost / 2)}`,
+          canSellHouse(this.board, player, tile)),
+        button('sellHotel', `Sell hotel  +$${Math.floor(tile.houseCost / 2)}`,
+          canSellHotel(this.bank, player, tile)),
+      );
+    }
+    actions.push(
+      button('mortgage', `Mortgage  +$${tile.mortgage}`, canMortgage(this.board, player, tile)),
+      button('unmortgage', `Redeem  −$${unmortgageCost(tile)}`, canUnmortgage(player, tile)),
+    );
+    return actions;
+  }
+
+  private actionNoteFor(tile: Tile, owner: Player | null): string {
+    if (!isOwnable(tile)) return 'Nothing to manage on this tile.';
+    if (!owner)           return 'Nobody owns this yet — land on it to buy it.';
+    if (owner.id !== this.turnManager.currentPlayer.id) {
+      return `${owner.name} manages this one. Buttons appear on their turn.`;
+    }
+    return '';
+  }
+
+  private countOwnedOfType(player: Player, type: Tile['type']): number {
+    return [...player.ownedTileIds].filter((id) => this.board.getTile(id).type === type).length;
   }
 
   // ── Safe end-turn (generation-guarded) ───────────────────────────────────────
@@ -469,6 +662,9 @@ export class GameScene extends Phaser.Scene {
       const jailLabel    = player.getOutOfJailCards > 0 ? '🃏  Use Card' : '🔓  Pay $50';
       this.setJailBtnVisible(jailActAvail, jailActAvail ? jailLabel : undefined);
 
+      // Whose buttons the panel offers depends on whose turn it is.
+      this.refreshPanel();
+
       this.scene.get('UIScene').events.emit('turn:start', { player, players: this.players });
     });
 
@@ -505,14 +701,10 @@ export class GameScene extends Phaser.Scene {
         const creditor = this.players.find((p) => p.id === creditorId);
         if (!creditor) return;
 
-        if (tile.type === 'railroad') {
-          const owned = [...creditor.ownedTileIds]
-            .filter((id) => this.board.getTile(id).type === 'railroad').length;
-          resolved = (tile as unknown as RailroadTile).rentFor(owned);
-        } else if (tile.type === 'utility') {
-          const owned = [...creditor.ownedTileIds]
-            .filter((id) => this.board.getTile(id).type === 'utility').length;
-          const mult = (tile as unknown as UtilityTile).rentMultiplier(owned);
+        if (tile instanceof RailroadTile) {
+          resolved = tile.rentFor(this.countOwnedOfType(creditor, 'railroad'));
+        } else if (tile instanceof UtilityTile) {
+          const mult = tile.rentMultiplier(this.countOwnedOfType(creditor, 'utility'));
           resolved = mult * (this.dice.lastResult?.total ?? 7);
         }
       }
@@ -553,7 +745,7 @@ export class GameScene extends Phaser.Scene {
       const player = this.players.find((p) => p.id === playerId)!;
 
       // Snap token directly — no move tween needed
-      this.snapToken(playerId, 10);
+      this.snapToken(playerId, this.board.anchor('jail'));
 
       const why = reason === 'doubles' ? 'rolled three doubles'
                 : reason === 'tile'    ? 'landed on Go to Jail'
@@ -660,6 +852,8 @@ export class GameScene extends Phaser.Scene {
       const winner = this.players.find((p) => p.id === winnerId);
       this.setRollEnabled(false);
       this.hideBuyPrompt();
+      this.panel.hide();
+      this.boardView.setSelected(null);
 
       this.add.rectangle(512, 400, 520, 190, 0x000000, 0.88)
         .setStrokeStyle(3, 0xf0c040).setDepth(90);

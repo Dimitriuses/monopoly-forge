@@ -242,6 +242,33 @@ async function main() {
     await waitFor(page, idle, { timeout: 10000 });
     await sleep(400);
 
+    // ── Property panel ────────────────────────────────────────────────────────
+    // Click an owned tile on the board and check the inspector opens on it.
+    // Tile centres come from __forge.tileCentre so the harness does not keep a
+    // second copy of the board geometry.
+    let panelTileId = null;
+    const ownedByAnyone = await page.evaluate(() =>
+      window.__forge.state().players.flatMap((p) => p.ownedTileIds));
+
+    if (ownedByAnyone.length) {
+      panelTileId = ownedByAnyone[0];
+      const centre = await page.evaluate((id) => window.__forge.tileCentre(id), panelTileId);
+      await clickGame(page, box, [centre.x, centre.y]);
+      await sleep(300);
+
+      const opened = await page.evaluate((id) =>
+        window.__forge.panelOpen() && window.__forge.panelTile() === id, panelTileId);
+      if (!opened) throw new Error(`clicking tile ${panelTileId} did not open the property panel`);
+      await shot(page, box, '7-property-panel');
+
+      // Clicking the same tile again closes it.
+      await clickGame(page, box, [centre.x, centre.y]);
+      await sleep(250);
+      if (await page.evaluate(() => window.__forge.panelOpen())) {
+        throw new Error('clicking the selected tile again did not close the property panel');
+      }
+    }
+
     // ── Assertions ────────────────────────────────────────────────────────────
     const end = await page.evaluate(() => window.__forge.state());
     const positions = end.players.map((p) => p.position);
@@ -259,6 +286,7 @@ async function main() {
     }
     if (positions.every((p) => p === 0)) problems.push('no token ever left GO');
     if (owned === 0) problems.push('no property was bought in the whole run');
+    if (panelTileId === null) problems.push('no owned tile to inspect — the panel was never exercised');
     if (!['WAITING_FOR_ROLL', 'END_TURN', 'LANDING', 'AWAITING_BUY_DECISION', 'MOVING', 'ROLLING']
       .includes(end.turn.phase)) {
       problems.push(`turn manager left in an unknown phase: ${end.turn.phase}`);
@@ -274,6 +302,7 @@ async function main() {
     console.log(`  cash              ${cash.map((c) => `$${c}`).join(', ')}`);
     console.log(`  tiles owned       ${owned}`);
     console.log(`  final phase       ${end.turn.phase}`);
+    console.log(`  panel opened on   ${panelTileId === null ? 'nothing' : `tile ${panelTileId}`}`);
     console.log(`  bank houses/hotels ${end.bank.houses}/${end.bank.hotels}`);
     console.log('');
 
