@@ -915,3 +915,53 @@ thing it is watching.
 - Development was verified by handing a bot a complete colour group and watching
   it put three houses on each lot — evenly, within its cash reserve, and inside
   the bank's stock.
+
+---
+
+## Tokens that share a square — 2026-08-13
+
+**Reported:** pieces on the same tile sat on top of each other, so a square with
+three players on it looked like one player with a smudge.
+
+The cause was a single line repeated in three places: every mover tweened to
+`layout.x, layout.y` — the exact centre of the tile. `spawnTokens` had a table of
+fixed per-seat offsets that scattered the pieces at GO, but the first move threw
+that away and they converged for the rest of the game.
+
+### The arrangement
+
+`ui/TokenCluster.ts` is pure geometry with no Phaser: one token sits dead centre,
+two take the ends of a line, three make a triangle point-up, and more spread
+evenly around a ring. Pieces shrink as the crowd grows, because six 22px tokens do
+not fit inside a 56px tile however they are arranged. A test pins the properties
+that matter — evenly spaced on one ring, balanced about the centre, no two in the
+same spot, and the whole cluster inside the narrow side of a tile.
+
+### The part that was not obvious
+
+Rebuilding a cluster means knowing who is standing on the tile, and **the model
+cannot answer that during a move**: `TurnManager` sets `player.position` to the
+destination before the walk begins, so mid-animation the model already believes
+the walker has arrived. `GameScene.tokenTile` tracks where each piece is *on
+screen* instead, and that is what the clustering reads.
+
+With that in place the per-step rule is simple, and it covers the case in the
+report — a token merely passing through:
+
+1. book the walker onto the next tile,
+2. re-space the tile it just left,
+3. re-space the tile it is entering, minus the walker,
+4. tween the walker into its own slot there.
+
+So walking across a busy square makes the occupants open up, then close again as
+the walker leaves.
+
+### Verification
+
+- Three tokens on GO form a triangle; when one walks away the other two fall back
+  to a line, 22px apart on the same y.
+- Sampling token positions every 60 ms during a walk shows the stationary pieces
+  shuffling *while* the walker is in flight, not after it lands.
+- The playtest now asserts, at the start and after every turn, that no two tokens
+  on the same tile are within 8px of each other — the glitch cannot come back
+  quietly.

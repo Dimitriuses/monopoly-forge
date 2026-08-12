@@ -15,6 +15,7 @@ import {
 import { Notification, type NotifType } from '@/ui/Notification';
 import { sfx } from '@/ui/Sfx';
 import { BoardRenderer, type OwnerStyle } from '@/ui/BoardRenderer';
+import { tokenSlot } from '@/ui/TokenCluster';
 import {
   PropertyPanel,
   type PanelAction, type PanelActionKey, type PropertyView, type RentRow,
@@ -45,6 +46,8 @@ const BOT_THINK = 600;
 const MAX_BOT_BUILDS = 6;
 /** How long a bot leaves its drawn card on screen before closing it. */
 const BOT_CARD_LINGER = 1600;
+/** How quickly the tokens already on a tile shuffle over to make room. */
+const CLUSTER_SHUFFLE = 140;
 import { settleDebt, announceSettlement } from '@/game/Estate';
 import { Auction } from '@/game/Auction';
 import { AuctionPanel, type AuctionView } from '@/ui/AuctionPanel';
@@ -94,6 +97,8 @@ export class GameScene extends Phaser.Scene {
 
   /** Piece + seat badge per player, moved as one. */
   private tokens: Map<string, Phaser.GameObjects.Container> = new Map();
+  /** Which tile each token is standing on *on screen* — see the clustering note. */
+  private tokenTile: Map<string, number> = new Map();
   private rollBtn!:     Phaser.GameObjects.Text;
   private jailBtn!:     Phaser.GameObjects.Text;
   private buyPrompt!:   Phaser.GameObjects.Container;
@@ -241,6 +246,11 @@ export class GameScene extends Phaser.Scene {
       },
       tradeOpen:   () => this.tradePanel.isOpen,
       tradeOffer:  () => (this.offer ? { ...this.offer, mode: this.tradeMode } : null),
+      // Where each piece actually sits, so the harness can prove that tokens
+      // sharing a tile are not sitting on top of each other.
+      tokens:      () => Object.fromEntries([...this.tokens].map(([id, token]) => [
+        id, { x: Math.round(token.x), y: Math.round(token.y), tile: this.tokenTile.get(id) ?? -1 },
+      ])),
       // Lets the harness click a tile without keeping its own copy of the
       // board geometry — unlike the button HOTSPOTS, which it must.
       tileCentre:  (tileId: number) => {
@@ -267,13 +277,8 @@ export class GameScene extends Phaser.Scene {
   // ── Tokens ────────────────────────────────────────────────────────────────────
 
   private spawnTokens(): void {
-    const offsets: [number, number][] = [
-      [-10, -10], [10, -10], [-10, 10], [10, 10],
-      [0, -16],  [0, 16],  [-16, 0],  [16, 0],
-    ];
     this.players.forEach((player, i) => {
       const layout = this.board.getLayout(player.position);
-      const [ox, oy] = offsets[i] ?? [0, 0];
 
       // BootScene bakes a disc-and-emblem texture per token type; the seat
       // number rides in the corner so a token matches its owner band on a tile.
@@ -287,11 +292,58 @@ export class GameScene extends Phaser.Scene {
       ).setOrigin(0.5);
 
       // One container per player: the badge has to keep its corner as the piece
-      // moves, and tokens converge on the same tile centre when they share one.
+      // moves, and the whole cluster scales together when a tile gets crowded.
       this.tokens.set(player.id, this.add
-        .container(layout.x + ox, layout.y + oy, [piece, label])
+        .container(layout.x, layout.y, [piece, label])
         .setDepth(10));
+      this.tokenTile.set(player.id, player.position);
     });
+
+    // A restored game can start with several players already sharing a square.
+    new Set(this.tokenTile.values()).forEach((tile) => this.relayoutTile(tile, false));
+  }
+
+  // ── Token clustering ──────────────────────────────────────────────────────────
+  // Tokens used to converge on the exact centre of a tile and hide each other.
+  // Each one now takes a slot in a cluster, and the cluster is rebuilt whenever
+  // the occupants change — including for the tiles a token merely walks across.
+  //
+  // This tracks where each token *is on screen*, which is not the same as
+  // `player.position`: TurnManager sets the model to the destination before the
+  // walk begins, so asking the model who is on a tile mid-animation is wrong.
+
+  private occupantsOf(tileIndex: number): string[] {
+    return this.players
+      .filter((p) => this.tokenTile.get(p.id) === tileIndex)
+      .map((p) => p.id);   // seat order keeps the arrangement stable
+  }
+
+  /** Place a token in its slot on a tile, tweening unless told otherwise. */
+  private placeToken(playerId: string, tileIndex: number, animate: boolean): void {
+    const token = this.tokens.get(playerId);
+    if (!token) return;
+
+    const occupants = this.occupantsOf(tileIndex);
+    const layout = this.board.getLayout(tileIndex);
+    const slot   = tokenSlot(Math.max(0, occupants.indexOf(playerId)), occupants.length);
+    const x = layout.x + slot.dx;
+    const y = layout.y + slot.dy;
+
+    if (!animate) {
+      token.setPosition(x, y).setScale(slot.scale);
+      return;
+    }
+    this.tweens.add({
+      targets: token, x, y, scaleX: slot.scale, scaleY: slot.scale,
+      duration: CLUSTER_SHUFFLE, ease: 'Sine.easeOut',
+    });
+  }
+
+  /** Re-space everyone standing on a tile. `except` is mid-move and placed by the walk. */
+  private relayoutTile(tileIndex: number, animate = true, except?: string): void {
+    for (const id of this.occupantsOf(tileIndex)) {
+      if (id !== except) this.placeToken(id, tileIndex, animate);
+    }
   }
 
   /** Animate token step-by-step, one tile at a time, forwards or backwards */
@@ -302,11 +354,25 @@ export class GameScene extends Phaser.Scene {
     if (!token) return;
 
     for (let s = 1; s <= steps; s++) {
-      const layout = this.board.getLayout(this.board.move(from, s * direction).to);
+      const left = this.tokenTile.get(playerId) ?? from;
+      const next = this.board.move(from, s * direction).to;
+
+      // Book the new tile before working anything out, so both clusters are
+      // computed against where the tokens will be. Passing *through* a busy
+      // square re-spaces it too, which is the point of doing this per step.
+      this.tokenTile.set(playerId, next);
+      this.relayoutTile(left, true);
+      this.relayoutTile(next, true, playerId);
+
+      const occupants = this.occupantsOf(next);
+      const layout = this.board.getLayout(next);
+      const slot = tokenSlot(Math.max(0, occupants.indexOf(playerId)), occupants.length);
+
       await new Promise<void>((resolve) => {
         this.tweens.add({
           targets: token,
-          x: layout.x, y: layout.y,
+          x: layout.x + slot.dx, y: layout.y + slot.dy,
+          scaleX: slot.scale, scaleY: slot.scale,
           duration: 110,
           ease: 'Sine.easeInOut',
           onComplete: () => resolve(),
@@ -317,8 +383,11 @@ export class GameScene extends Phaser.Scene {
 
   /** Instantly snap a token to a tile (no animation) */
   private snapToken(playerId: string, tileIndex: number): void {
-    const layout = this.board.getLayout(tileIndex);
-    this.tokens.get(playerId)?.setPosition(layout.x, layout.y);
+    const left = this.tokenTile.get(playerId);
+    this.tokenTile.set(playerId, tileIndex);
+    if (left !== undefined && left !== tileIndex) this.relayoutTile(left, true);
+    this.relayoutTile(tileIndex, true, playerId);
+    this.placeToken(playerId, tileIndex, false);
   }
 
   // ── Buttons ───────────────────────────────────────────────────────────────────

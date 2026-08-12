@@ -193,6 +193,21 @@ An estate can change hands outside a turn now (auction win, trade, bankruptcy),
 so anything that moves a deed must call `boardView.refresh()` — the owner bands
 and buildings are drawn from tile state, not re-derived per frame.
 
+### A token's screen tile is not its model position
+
+`TurnManager` sets `player.position` to the destination *before* the walk starts,
+so asking the model who is standing on a tile mid-animation gives the wrong
+answer. `GameScene.tokenTile` tracks where each piece is **on screen**, and it is
+what `occupantsOf` reads.
+
+Tokens sharing a tile are clustered by `ui/TokenCluster.ts` — one centred, two on
+a line, three in a triangle, more around a ring, shrinking as the crowd grows.
+The cluster is rebuilt for the tile being left *and* the tile being entered on
+every step of a walk, so a token passing through an occupied square makes its
+occupants shuffle and then close up again. Anything that moves a token must go
+through `placeToken` / `snapToken` rather than setting a position directly, or it
+will land on top of somebody.
+
 ### The board is drawn once, its state many times
 
 `ui/BoardRenderer.ts` holds everything inside the board square. `draw()` lays down

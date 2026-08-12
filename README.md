@@ -82,6 +82,7 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 - **Save and resume** — the whole game to localStorage and back, including both deck piles in order and the random stream's position, so a resumed game rolls exactly what the saved one would have
 - **House rules** — Free Parking jackpot, double salary for landing on GO, and no-auction, switchable on the menu and all actually read
 - **HUD** — animated dice, per-player cash, active-player highlight, jail markers, and a turn log beside the board that keeps the last dozen events readable
+- **Tokens that share a square** cluster instead of stacking — a line for two, a triangle for three, a ring beyond that — reshaping as pieces arrive and leave, including ones just passing through
 - **Sound** — seven effects synthesised at runtime with Web Audio, no audio files, with a mute button
 - **Determinism** — `?seed=12345` replays an identical game
 

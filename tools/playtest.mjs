@@ -125,6 +125,27 @@ async function waitFor(page, fn, { timeout = 8000, interval = 60 } = {}) {
 const forgeReady = () => typeof window.__forge !== 'undefined';
 const idle = () => window.__forge && !window.__forge.isAnimating();
 
+/**
+ * Tokens sharing a square must be clustered, not stacked. Returns a complaint
+ * string, or null when every piece on a shared tile has its own spot.
+ */
+async function checkTokenSpacing(page, where) {
+  const tokens = await page.evaluate(() => window.__forge.tokens());
+  const entries = Object.entries(tokens);
+  for (let i = 0; i < entries.length; i++) {
+    for (let j = i + 1; j < entries.length; j++) {
+      const [idA, a] = entries[i];
+      const [idB, b] = entries[j];
+      if (a.tile !== b.tile) continue;
+      const apart = Math.hypot(a.x - b.x, a.y - b.y);
+      if (apart < 8) {
+        return `${where}: ${idA} and ${idB} share tile ${a.tile} but sit ${apart.toFixed(1)}px apart`;
+      }
+    }
+  }
+  return null;
+}
+
 async function shot(page, canvasBox, name) {
   if (!TAKE_SHOTS) return;
   await mkdir(SHOTS, { recursive: true });
@@ -203,6 +224,11 @@ async function main() {
     await sleep(700);
     console.log('  ✓ board rendered, game started');
     await shot(page, box, '2-board');
+
+    // Everyone starts on GO — the busiest square a game ever has.
+    const stacked = await checkTokenSpacing(page, 'at the start');
+    if (stacked) throw new Error(stacked);
+    console.log('  ✓ tokens on GO are clustered, not stacked');
 
     const start = await page.evaluate(() => window.__forge.state());
     if (start.players.length !== 3) {
@@ -362,6 +388,9 @@ async function main() {
         await shot(page, box, '5-jail');
         capturedJail = true;
       }
+
+      const overlap = await checkTokenSpacing(page, `turn ${turn}`);
+      if (overlap) throw new Error(overlap);
 
       const afterRoll = JSON.stringify([view.state.dice, view.state.players]);
       if (afterRoll === beforeRoll && !view.card && !view.buy) {
