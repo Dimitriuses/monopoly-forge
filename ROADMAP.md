@@ -13,8 +13,11 @@ against. A seeded game runs with no console errors (`npm run playtest`), which
 also saves, reloads the page and resumes; `--bots` hands every seat to a bot and
 watches them play it out.
 
-What is left is the engine itself (M8), including the simulation platform (8d)
-that runs M7's bots a thousand games at a time.
+What is left is the engine itself (M8). **8a is done**: the board is a file, and
+the game ships three of them — the classic square, a 24-tile circle and 30 tiles
+across three concentric rings, all playable with the same rules and the same
+bots. Next is 8b (registrable rules), 8c (presentation as a theme) and 8d (the
+simulation platform that runs M7's bots a thousand games at a time).
 
 **The destination is M8: an engine for Monopoly-style games** — configurable maps,
 rules and presentation. M1–M7 build the classic game that the engine has to be able
@@ -186,7 +189,7 @@ Turn the game into something that *runs* games: bring your own map, rules and
 artwork, and never edit engine code to do it. Each item below names the code that
 currently prevents it, so none of this is an estimate.
 
-### 8a — The board stops being 40 tiles in a square
+### 8a — The board stops being 40 tiles in a square · done
 
 - [x] **Take board length from the map.** Done alongside M3. `Board` takes a
       `TileDefinition[]` (defaulting to the classic one), publishes `board.size`,
@@ -196,18 +199,27 @@ currently prevents it, so none of this is an estimate.
       a role to an index by scanning the map; `TurnManager`, `CardEffects` and
       `GameScene` all ask for the role. A map without a jail says so
       (`tryAnchor` → `null`) instead of silently meaning tile 10.
-- [ ] **Stop assuming a square.** Half done: the four literal index ranges are
-      gone — `Board.computeLayout()` derives corners and sides from
-      `perSide = (size - 4) / 4`, and `TileLayout` now carries each tile's
-      footprint and orientation so the renderer has one loop instead of four. It
-      is still a square with equal sides: a map whose length is not `4n + 4` is
-      rejected with an explicit error rather than mis-drawn. Arbitrary shapes need
-      a side/segment description, or per-tile coordinates, in the map.
-- [ ] **A map is a file.** `TileDefinition[]` is already plain data and `Board`
-      already accepts one; what is missing is a schema, a loader and validation
-      (every referenced tile exists, groups are consistent, anchors resolve), and
-      shipping the classic board as the first map rather than as `BOARD_TILES` in
-      `config.ts`.
+- [x] **Stop assuming a square.** `game/BoardLayout.ts` takes a shape a map asks
+      for and returns coordinates: `square` (the classic four corners and equal
+      sides), `ring` (one circle, any number of tiles) or `rings` (concentric
+      circles the circuit is dealt into). The idea that makes it work is that
+      **every tile is a rectangle in its own frame with the board's interior past
+      its local top edge** — a bottom-row tile is that frame unrotated, a left
+      column tile is the same turned 90°, and a tile on a circle is turned to
+      whatever angle points it at the centre. `BoardRenderer` draws all of them
+      through one path with `translateCanvas`/`rotateCanvas`, so a stripe, a
+      house, an owner band and a click zone all follow the tile round.
+- [x] **A map is a file.** `src/maps/` holds `GameMap` (tiles plus the shape they
+      are laid out in), `validateMap`, and three boards: the classic 40-tile
+      square, a 24-tile circle, and 30 tiles across three concentric rings. The
+      menu picks between them and `?map=<id>` preselects one. The classic board is
+      no longer *the* board — it is `src/maps/classic.ts`, the first map that ships.
+      `validateMap` refuses a map rather than half-drawing it: ids that do not
+      match the circuit, a missing `go` or `jail`, a colour group with one lot or
+      with lots that disagree on the house cost, a property with no rent ladder, a
+      shape its tile count cannot make, rings that do not add up or that would
+      overlap. It caught four real mistakes in the two test boards on their first
+      run.
 
 ### 8b — Rules become registrable instead of switch statements
 
@@ -217,6 +229,12 @@ currently prevents it, so none of this is an estimate.
 - [ ] **Card-effect registry.** `CardEffects.execute()` is a second closed switch
       over the `CardAction` union. Same treatment, so a game can add an effect
       without touching the engine.
+- [ ] **Decks belong to a map.** M8a made the board a file but left the two decks
+      global, and they name classic tiles — "Advance to Boardwalk" is tile 39,
+      which does not exist on a 24-tile board. Such a card now does nothing and
+      warns, rather than wrapping onto an unrelated square, but the real answer is
+      for a map to bring its own deck (and for `validateMap` to check that every
+      tile a card names exists).
 - [ ] **A real rule set.** The three `HouseRules` flags are now read (M6), which is
       the shape of the idea but not the thing: widen it to what the classic rules
       still hardcode — starting cash, GO salary, jail term and fine,

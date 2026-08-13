@@ -1,6 +1,5 @@
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable, type Ownable, type Tile } from '@/tiles/Tile';
-import { GROUP_SIZES } from '@/config';
 import {
   canBuildHouse, canBuildHotel, canUnmortgage, ownsWholeGroup, unmortgageCost,
 } from './BuildRules';
@@ -211,8 +210,11 @@ function isStrategic(ctx: BotContext, tile: Tile & Ownable): boolean {
 
   if (tile instanceof PropertyTile) {
     if (ownsWholeGroup(board, player, tile)) return true;
-    const owned = board.groupTiles(tile.group).filter((t) => t.ownerId === player.id).length;
-    return owned + 1 >= GROUP_SIZES[tile.group];
+    // How big a group is comes from the map, not from a table of the classic
+    // board's group sizes — this bot plays whatever board it is given.
+    const group = board.groupTiles(tile.group);
+    const owned = group.filter((t) => t.ownerId === player.id).length;
+    return owned + 1 >= group.length;
   }
   if (tile.type === 'railroad') return countOwnedOfType(board, player, 'railroad') >= 1;
   if (tile.type === 'utility')  return countOwnedOfType(board, player, 'utility') >= 1;

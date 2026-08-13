@@ -247,7 +247,7 @@ executing multiple card effects and calling `safeEndTurn` multiple times.
 
 *As of M2. The current layout — which adds `game/BuildRules.ts`, `game/Rent.ts`,
 `game/Auction.ts`, `game/Trade.ts`, `game/Estate.ts`, `game/Snapshot.ts`,
-`game/Bot.ts`, `ui/BoardRenderer.ts`, `ui/PropertyPanel.ts`, `ui/AuctionPanel.ts`,
+`game/Bot.ts`, `game/BoardLayout.ts`, `maps/`, `ui/BoardRenderer.ts`, `ui/PropertyPanel.ts`, `ui/AuctionPanel.ts`,
 `ui/TradePanel.ts` and `ui/Sfx.ts`, and no longer has switcher buttons in
 `PlayerPanel` — is in [README.md](README.md#layout).*
 
@@ -298,7 +298,7 @@ src/
 | M5 — Multiplayer UI (trade dialog, auction system) | ✅ Complete — see [M5 below](#m5--multiplayer-interaction--2026-08-12) |
 | M6 — Polish (animations, sound, save/load, house rules) | ✅ Complete — see [M6 below](#m6--polish--2026-08-12) |
 | M7 — Opponents (bots you can play against) | ✅ Complete — see [M7 below](#m7--opponents-you-can-play-against--2026-08-12) |
-| **M8 — Engine** (configurable maps, rules, presentation, simulation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). 8a: board length and anchors done, shape still a square. 8c: `BoardRenderer` extracted. 8b and 8d: not started |
+| **M8 — Engine** (configurable maps, rules, presentation, simulation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). **8a complete**: a map is a file, and three ship (square, circle, three rings). 8c: `BoardRenderer` extracted and shape-agnostic. 8b and 8d: not started |
 
 ---
 
@@ -965,3 +965,81 @@ the walker leaves.
 - The playtest now asserts, at the start and after every turn, that no two tokens
   on the same tile are within 8px of each other — the glitch cannot come back
   quietly.
+
+---
+
+## M8a — the board stops being 40 tiles in a square — 2026-08-13
+
+The half of M8a that was left: geometry that comes from the map, and a map that
+is a file. The test for it was suggested rather than invented — boards with two
+or three inner rings, or completely round ones — and it was the right test,
+because a circle breaks every assumption at once.
+
+### One idea does all the work
+
+**Every tile is a rectangle in its own frame, and the board's interior lies past
+its local top edge.**
+
+That single rule replaced every branch about sides. A bottom-row tile is that
+frame unrotated; a left-column tile is the same rectangle turned 90°; a tile on a
+ring is turned to whatever angle points it at the centre. `BoardRenderer` draws
+all of them through one path — `translateCanvas`, `rotateCanvas`, draw around the
+origin — and the stripe, the houses, the owner band and the click zone follow the
+tile round for free.
+
+`TileLayout` changed shape to suit: `w`/`h` are now the tile's *local* footprint
+rather than a pre-swapped screen rectangle, and `rotation` carries the
+orientation. The old `side` field survives for the square, where "which row is
+this" is still meaningful, and is `null` on a shape that has no sides.
+
+`game/BoardLayout.ts` turns a `LayoutSpec` into coordinates: `square`, `ring` and
+`rings`. `Board` no longer computes anything; it asks.
+
+### A map is a file
+
+`src/maps/` now holds `GameMap` — tiles plus the shape they are laid out in —
+`validateMap`, and three boards: the classic square, **Roundabout** (24 tiles on a
+circle, no corners) and **Orbits** (30 tiles across three concentric rings). The
+classic board moved out of `config.ts`, which is the point at which "the classic
+board" and "the board" stopped being the same thing.
+
+`validateMap` earned its place immediately: on their first run it rejected both
+new boards, for four real reasons — colour groups whose lots disagreed on the
+house cost (my helper derived it from price, so lots in a group differed), and a
+group with a single lot that could never be completed. Those are exactly the
+mistakes a hand-written map makes.
+
+It also flushed out a leak that had been sitting in plain sight: `GROUP_SIZES` in
+`config.ts` said how many lots each colour group has — **on the classic board** —
+and both `Bot.isStrategic` and the property panel believed it. On a board where
+light blue has two lots rather than three, the bot would misjudge every purchase.
+Group size now comes from `board.groupTiles(group).length`, and the table is gone.
+
+### What the circle taught
+
+Two things only a non-square board could have found:
+
+- **Tile widths must be sized off the arc at the tile's *inner* edge.** Sizing off
+  the arc at its middle looks obviously right and overlaps every neighbour, because
+  a rectangle's inner corners sit where the same angle buys less room. The first
+  render of Orbits was a pile of overlapping plates.
+- **Labels have to turn with the tile** — a wedge cannot hold horizontal text —
+  **but must never print upside down.** A tile facing away gets its text spun the
+  other half turn. The classic board's top row now reads the right way up, and its
+  side columns read vertically, which is what a real board does.
+
+The shipped card decks also name classic tiles: "Advance to Boardwalk" is tile 39,
+which a 24-tile board does not have. It used to wrap silently onto tile 15. Such a
+card now does nothing and says so; decks belonging to a map is 8b's work.
+
+### Verification
+
+- 287 unit tests (up from 256). The geometry ones assert the invariant directly:
+  on a ring every tile points exactly at the centre, on a square every tile points
+  *into* the board (a corner faces its row, not the diagonal), and neighbours on a
+  ring never overlap.
+- The bots played a full game on all three boards, and the human path — buy
+  prompts, auctions, a trade, save/reload/resume — was driven end to end on the
+  round board. `npm run playtest -- --map orbits --bots` is repeatable.
+- The classic board renders as it did before, which is the point: it is now one
+  map among three rather than the shape the code is made of.

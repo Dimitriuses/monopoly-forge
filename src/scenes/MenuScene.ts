@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import type { HouseRules, TokenType } from '@/config';
 import { TOKEN_LABELS, DEFAULT_HOUSE_RULES, HOUSE_RULE_LABELS } from '@/config';
 import { SaveLoad } from '@/utils/SaveLoad';
+import { MAPS, mapById } from '@/maps';
 import { validateSnapshot, type GameSnapshot } from '@/game/Snapshot';
 
 interface PlayerSetup {
@@ -16,6 +17,10 @@ export class MenuScene extends Phaser.Scene {
   private setupContainer!: Phaser.GameObjects.Container;
   private countButtons: Map<number, Phaser.GameObjects.Text> = new Map();
   private houseRules: HouseRules = { ...DEFAULT_HOUSE_RULES };
+  /** `?map=<id>` preselects a board; the chips override it. */
+  private mapId: string = mapById(
+    new URLSearchParams(window.location.search).get('map'),
+  ).id;
 
   constructor() {
     super({ key: 'MenuScene' });
@@ -41,6 +46,8 @@ export class MenuScene extends Phaser.Scene {
       fontSize: '18px',
       color: '#aaaacc',
     }).setOrigin(0.5);
+
+    this.buildMapSelector();
 
     // ── Player count selector ─────────────────────────────────────────────────
     this.add.text(width / 2, 200, 'Number of Players', {
@@ -90,6 +97,44 @@ export class MenuScene extends Phaser.Scene {
     startBtn.on('pointerdown', () => this.startGame());
 
     this.buildContinueButton();
+  }
+
+  /**
+   * Which board to play on. The alternatives are not decoration: they are what
+   * proves the rules and the renderer take their shape from the map rather than
+   * from a hardcoded square (ROADMAP M8a).
+   */
+  private buildMapSelector(): void {
+    const { width } = this.scale;
+    const maps = Object.values(MAPS);
+    const chipW = 150;
+    const gap = 10;
+    const left = width / 2 - (maps.length * chipW + (maps.length - 1) * gap) / 2;
+
+    // The chips draw from their top-left, so they occupy 148–172; the blurb sits
+    // under them and still clears "Number of Players" at y=200.
+    const blurb = this.add.text(width / 2, 176, '', {
+      fontFamily: 'Georgia, serif', fontSize: '11px', color: '#55667a',
+    }).setOrigin(0.5);
+
+    const chips = maps.map((map, i) => {
+      const chip = this.add.text(left + i * (chipW + gap), 148, map.name, {
+        fontFamily: 'Georgia, serif', fontSize: '14px',
+        padding: { x: 8, y: 5 }, fixedWidth: chipW, align: 'center',
+      }).setInteractive({ useHandCursor: true });
+      chip.on('pointerdown', () => { this.mapId = map.id; paint(); });
+      return chip;
+    });
+
+    const paint = () => {
+      maps.forEach((map, i) => {
+        const active = map.id === this.mapId;
+        chips[i].setColor(active ? '#ffffff' : '#8899aa');
+        chips[i].setBackgroundColor(active ? '#2a6b9b' : '#1a2640');
+        if (active) blurb.setText(map.blurb);
+      });
+    };
+    paint();
   }
 
   /**
@@ -242,6 +287,7 @@ export class MenuScene extends Phaser.Scene {
     this.scene.start('GameScene', {
       players: this.players,
       seed: this.readSeedFromUrl(),
+      mapId: this.mapId,
       houseRules: this.houseRules,
     });
     // UIScene is launched by GameScene once the model is ready

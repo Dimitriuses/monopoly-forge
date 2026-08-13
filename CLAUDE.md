@@ -45,11 +45,20 @@ shuffles draw from the shared seeded Mulberry32 in `src/utils/PRNG.ts`. A stray
 `Math.random` silently destroys reproducibility — and the playtest harness, which
 relies on a seed producing the same game every run.
 
-**6. Never write `40` or `10` for the board.** Both literals are gone. Length comes
-from `board.size` (or `board.move` / `board.stepsBetween`, which wrap for you), and
-jail and GO come from `board.anchor('jail')` / `board.anchor('start')`. `Board`
-takes the map as a constructor argument, so a test can hand it a 12-tile board —
-`tests/board.test.ts` does, and that is what stops the literals creeping back.
+**6. Never write `40` or `10` for the board, and never assume it is a square.**
+Length comes from `board.size` (or `board.move` / `board.stepsBetween`, which wrap
+for you); jail and GO come from `board.anchor('jail')` / `board.anchor('start')`;
+how many lots a colour group holds comes from `board.groupTiles(group).length`.
+`Board` takes a `GameMap`, and the game ships a circle and a three-ring board as
+well as the square — run `npm run playtest -- --bots --map round` before believing
+a board change is safe.
+
+**6b. Tiles are drawn in their own frame.** Every tile is a rectangle whose local
+top edge faces the middle of the board, positioned at `layout.x/y` and turned by
+`layout.rotation`. Anything drawn on a tile — a stripe, a house, an owner band, a
+click zone — must be placed in that frame (`translateCanvas`/`rotateCanvas` for
+graphics, `toWorld` for game objects) rather than as an axis-aligned rectangle,
+or it will be right on the classic board and wrong on every other one.
 
 **7. The bank does not know the rules.** `Bank` moves cash and inventory and asks
 no questions, because it has no view of the board — `bank.buyHouse` will happily

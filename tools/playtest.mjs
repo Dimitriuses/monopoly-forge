@@ -39,6 +39,8 @@ const BOTS = flag('bots');
 const TURNS = Number(value('turns', TAKE_SHOTS ? 26 : 30));
 const SEED = Number(value('seed', 20260512));
 const EXTERNAL_URL = value('url', null);
+/** Which board to play on — the alternatives are not 40 tiles in a square. */
+const MAP = value('map', null);
 
 // The Phaser canvas is a fixed 1280×800 with no scale manager, so game
 // coordinates map 1:1 onto canvas pixels.
@@ -169,7 +171,8 @@ async function main() {
     baseUrl = `http://127.0.0.1:${started.port}/`;
   }
 
-  const url = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}debug=1&seed=${SEED}`;
+  const url = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}debug=1&seed=${SEED}`
+            + (MAP ? `&map=${MAP}` : '');
   console.log(`▶ playtest: ${url}`);
   console.log(`  ${TURNS} turns, seed ${SEED}${TAKE_SHOTS ? ', capturing screenshots' : ''}`);
 

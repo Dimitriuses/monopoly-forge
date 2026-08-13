@@ -1,18 +1,23 @@
 import Phaser from 'phaser';
-import type { Board, TileLayout, BoardSide } from '@/game/Board';
-import { GROUP_COLORS, BOARD_ORIGIN_X, BOARD_ORIGIN_Y } from '@/config';
+import type { Board, TileLayout } from '@/game/Board';
+import { GROUP_COLORS } from '@/config';
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable } from '@/tiles/Tile';
 
 // ─── BoardRenderer ────────────────────────────────────────────────────────────
-// Everything drawn inside the board square. GameScene used to hold four
-// near-identical loops here, one per side, which is what made adding owner
-// markers and houses expensive. There is one loop now: each tile's footprint,
-// orientation and band edges come from its TileLayout.
+// Everything drawn inside the board. GameScene used to hold four near-identical
+// loops here, one per side of a square; then one loop that still assumed the four
+// sides were axis-aligned. Neither could draw a circle.
 //
-// The static layer (tile outlines, colour stripes, names) is drawn once. The
-// state layer (owner bands, houses, hotels, mortgage marks) is cleared and
-// redrawn by refresh(), which is cheap — 40 rectangles and a handful of sprites.
+// Now every tile is drawn **in its own frame**: translate to the tile's centre,
+// rotate by its angle, and lay the rectangle out around the origin with the
+// board's interior past the top edge. A tile on the bottom row is that frame
+// unrotated; one on the left column is turned 90°; one on a ring is turned to
+// whatever angle points it at the centre. One code path covers all of them.
+//
+// The static layer (outlines, colour stripes, names) is drawn once. The state
+// layer (owner bands, houses, hotels, mortgage marks) is cleared and redrawn by
+// refresh() after anything that changes tile state.
 
 /** How the owner of a tile should be drawn, or null when the tile is unowned. */
 export interface OwnerStyle {
@@ -23,16 +28,16 @@ export interface OwnerStyle {
 const BAND = 14;        // colour stripe on the board-interior edge
 const OWNER_BAND = 7;   // owner marker on the board-rim edge
 
-/** Which edge of a tile faces the middle of the board. */
-const INNER_EDGE: Record<BoardSide, 'top' | 'bottom' | 'left' | 'right'> = {
-  bottom: 'top', top: 'bottom', left: 'right', right: 'left',
-};
-
-const OPPOSITE: Record<'top' | 'bottom' | 'left' | 'right', 'top' | 'bottom' | 'left' | 'right'> = {
-  top: 'bottom', bottom: 'top', left: 'right', right: 'left',
-};
-
-interface Band { x: number; y: number; w: number; h: number; vertical: boolean }
+/**
+ * A label follows its tile — it has to, on a board where the tiles face every
+ * direction — but it is never printed upside down. A tile turned to face away
+ * gets its text spun the other half turn, so the far side of the board reads as
+ * easily as the near side.
+ */
+function readableAngle(rotation: number): number {
+  const turned = ((rotation % 360) + 360) % 360;
+  return turned > 90 && turned < 270 ? turned - 180 : turned;
+}
 
 export class BoardRenderer {
   private scene: Phaser.Scene;
@@ -59,46 +64,44 @@ export class BoardRenderer {
 
   /** Draw the board itself. Call once; nothing here changes during a game. */
   draw(onTileSelected: (tileId: number) => void): void {
-    const g      = this.scene.add.graphics();
-    const boardW = this.board.pixelSize;
-    const left   = BOARD_ORIGIN_X;
-    const top    = BOARD_ORIGIN_Y;
-
-    g.fillStyle(0xd4e8c2, 1);
-    g.fillRect(left, top, boardW, boardW);
+    const g = this.scene.add.graphics();
+    this.drawBackdrop(g);
     g.lineStyle(1, 0x555544, 1);
 
     for (let i = 0; i < this.board.size; i++) {
       const layout = this.board.getLayout(i);
       const tile   = this.board.getTile(i);
+      const half   = { w: layout.w / 2, h: layout.h / 2 };
 
-      g.strokeRect(layout.x - layout.w / 2, layout.y - layout.h / 2, layout.w, layout.h);
+      // Everything inside save/restore is drawn as if the tile were unrotated at
+      // the origin, with the board's middle beyond its top edge.
+      g.save();
+      g.translateCanvas(layout.x, layout.y);
+      g.rotateCanvas(Phaser.Math.DegToRad(layout.rotation));
 
+      g.strokeRect(-half.w, -half.h, layout.w, layout.h);
       if (tile instanceof PropertyTile) {
-        const band = this.band(layout, INNER_EDGE[layout.side], BAND);
         g.fillStyle(GROUP_COLORS[tile.group], 1);
-        g.fillRect(band.x, band.y, band.w, band.h);
+        g.fillRect(-half.w, -half.h, layout.w, BAND);
       }
+      g.restore();
 
-      // Nudge the label off the colour stripe on the two horizontal rows; the
-      // columns have room to stay centred.
-      const labelDy = layout.side === 'bottom' ? 4 : layout.side === 'top' ? -4 : 0;
-      const wrapAt  = layout.side === 'bottom' || layout.side === 'top'
-        ? layout.w - 4
-        : layout.w - 18;
-
-      this.scene.add.text(layout.x, layout.y + labelDy, tile.name, {
+      // Text cannot be drawn into that frame, so it is placed and turned to match.
+      const label = this.scene.add.text(0, 0, tile.name, {
         fontFamily: 'Arial', fontSize: '6px', color: '#111111',
-        wordWrap: { width: wrapAt }, align: 'center',
-      }).setOrigin(0.5, 0.5);
+        wordWrap: { width: layout.w - 4 }, align: 'center',
+      }).setOrigin(0.5, 0.5).setRotation(Phaser.Math.DegToRad(readableAngle(layout.rotation)));
+      // Nudged clear of the colour stripe, in the tile's own frame.
+      const nudged = this.toWorld(layout, 0, BAND / 2);
+      label.setPosition(nudged.x, nudged.y);
 
       this.scene.add.zone(layout.x, layout.y, layout.w, layout.h)
+        .setRotation(Phaser.Math.DegToRad(layout.rotation))
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => onTileSelected(i));
     }
 
-    const cx = left + boardW / 2;
-    const cy = top + boardW / 2;
+    const { x: cx, y: cy } = this.board.centre;
     this.scene.add.text(cx, cy - 20, '🏦', { fontSize: '48px' }).setOrigin(0.5);
     this.scene.add.text(cx, cy + 30, 'MONOPOLY\nFORGE', {
       fontFamily: 'Georgia, serif', fontSize: '20px', color: '#222244',
@@ -107,6 +110,16 @@ export class BoardRenderer {
 
     this.stateLayer = this.scene.add.graphics().setDepth(2);
     this.selection  = this.scene.add.graphics().setDepth(4);
+  }
+
+  private drawBackdrop(g: Phaser.GameObjects.Graphics): void {
+    const backdrop = this.board.backdrop;
+    g.fillStyle(0xd4e8c2, 1);
+    if (backdrop.kind === 'circle') {
+      g.fillCircle(backdrop.x, backdrop.y, backdrop.size);
+    } else {
+      g.fillRect(backdrop.x, backdrop.y, backdrop.size, backdrop.size);
+    }
   }
 
   // ── State layer ─────────────────────────────────────────────────────────────
@@ -125,15 +138,21 @@ export class BoardRenderer {
       const style = this.ownerStyle(tile.ownerId);
       if (!style) continue;
 
-      // Owner band on the rim edge — the group stripe already owns the inner one.
-      const band = this.band(layout, OPPOSITE[INNER_EDGE[layout.side]], OWNER_BAND);
-      this.stateLayer.fillStyle(style.color, tile.isMortgaged ? 0.35 : 1);
-      this.stateLayer.fillRect(band.x, band.y, band.w, band.h);
-      this.stateLayer.lineStyle(1, 0x000000, 0.5);
-      this.stateLayer.strokeRect(band.x, band.y, band.w, band.h);
+      const half = { w: layout.w / 2, h: layout.h / 2 };
 
+      // Owner band along the rim edge — the group stripe already owns the inner one.
+      this.stateLayer.save();
+      this.stateLayer.translateCanvas(layout.x, layout.y);
+      this.stateLayer.rotateCanvas(Phaser.Math.DegToRad(layout.rotation));
+      this.stateLayer.fillStyle(style.color, tile.isMortgaged ? 0.35 : 1);
+      this.stateLayer.fillRect(-half.w, half.h - OWNER_BAND, layout.w, OWNER_BAND);
+      this.stateLayer.lineStyle(1, 0x000000, 0.5);
+      this.stateLayer.strokeRect(-half.w, half.h - OWNER_BAND, layout.w, OWNER_BAND);
+      this.stateLayer.restore();
+
+      const badge = this.toWorld(layout, 0, half.h - OWNER_BAND / 2);
       this.stateObjects.push(
-        this.scene.add.text(band.x + band.w / 2, band.y + band.h / 2, style.initial, {
+        this.scene.add.text(badge.x, badge.y, style.initial, {
           fontFamily: 'Arial', fontSize: '7px', color: '#ffffff', fontStyle: 'bold',
         }).setOrigin(0.5).setDepth(3),
       );
@@ -157,11 +176,14 @@ export class BoardRenderer {
     if (tileId === null) return;
 
     const layout = this.board.getLayout(tileId);
+    this.selection.save();
+    this.selection.translateCanvas(layout.x, layout.y);
+    this.selection.rotateCanvas(Phaser.Math.DegToRad(layout.rotation));
     this.selection.lineStyle(2.5, 0xf0c040, 1);
     this.selection.strokeRect(
-      layout.x - layout.w / 2 + 1, layout.y - layout.h / 2 + 1,
-      layout.w - 2, layout.h - 2,
+      -layout.w / 2 + 1, -layout.h / 2 + 1, layout.w - 2, layout.h - 2,
     );
+    this.selection.restore();
   }
 
   get selected(): number | null {
@@ -174,40 +196,35 @@ export class BoardRenderer {
   private drawBuildings(tile: PropertyTile, layout: TileLayout): void {
     if (!tile.hasHotel && tile.houses === 0) return;
 
-    const band = this.band(layout, INNER_EDGE[layout.side], BAND);
-    const cx   = band.x + band.w / 2;
-    const cy   = band.y + band.h / 2;
+    const angle = Phaser.Math.DegToRad(layout.rotation);
+    const stripe = -layout.h / 2 + BAND / 2;   // middle of the colour band, locally
 
     if (tile.hasHotel) {
+      const at = this.toWorld(layout, 0, stripe);
       this.stateObjects.push(
-        this.scene.add.image(cx, cy, 'hotel').setScale(0.6).setDepth(3),
+        this.scene.add.image(at.x, at.y, 'hotel').setScale(0.6).setRotation(angle).setDepth(3),
       );
       return;
     }
 
-    // Four slots along the band's long axis, whichever way it runs.
-    const span = band.vertical ? band.h : band.w;
+    // Four slots along the stripe, however the tile happens to be turned.
     for (let k = 0; k < tile.houses; k++) {
-      const offset = (k + 0.5) * (span / 4) - span / 2;
+      const offset = (k + 0.5) * (layout.w / 4) - layout.w / 2;
+      const at = this.toWorld(layout, offset, stripe);
       this.stateObjects.push(
-        this.scene.add.image(
-          band.vertical ? cx : cx + offset,
-          band.vertical ? cy + offset : cy,
-          'house',
-        ).setScale(0.5).setDepth(3),
+        this.scene.add.image(at.x, at.y, 'house').setScale(0.5).setRotation(angle).setDepth(3),
       );
     }
   }
 
-  /** A strip of `thickness` px along one edge of a tile. */
-  private band(layout: TileLayout, edge: 'top' | 'bottom' | 'left' | 'right', thickness: number): Band {
-    const l = layout.x - layout.w / 2;
-    const t = layout.y - layout.h / 2;
-    switch (edge) {
-      case 'top':    return { x: l, y: t, w: layout.w, h: thickness, vertical: false };
-      case 'bottom': return { x: l, y: t + layout.h - thickness, w: layout.w, h: thickness, vertical: false };
-      case 'left':   return { x: l, y: t, w: thickness, h: layout.h, vertical: true };
-      case 'right':  return { x: l + layout.w - thickness, y: t, w: thickness, h: layout.h, vertical: true };
-    }
+  /** A point in a tile's own frame, in world coordinates. */
+  private toWorld(layout: TileLayout, localX: number, localY: number): { x: number; y: number } {
+    const angle = Phaser.Math.DegToRad(layout.rotation);
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    return {
+      x: layout.x + localX * cos - localY * sin,
+      y: layout.y + localX * sin + localY * cos,
+    };
   }
 }

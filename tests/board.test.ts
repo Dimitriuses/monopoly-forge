@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Board } from '@/game/Board';
-import { BOARD_TILES } from '@/config';
+import { CLASSIC_MAP } from '@/maps';
 import type { TileDefinition } from '@/tiles/Tile';
 
 describe('Board — tile registry', () => {
@@ -30,7 +30,7 @@ describe('Board — tile registry', () => {
   });
 
   it('takes its size from the map rather than a constant', () => {
-    expect(board.size).toBe(BOARD_TILES.length);
+    expect(board.size).toBe(CLASSIC_MAP.tiles.length);
   });
 
   it('resolves the anchors by role instead of by index', () => {
@@ -41,7 +41,7 @@ describe('Board — tile registry', () => {
 
   it('keeps tile ids aligned with their board index', () => {
     board.tiles.forEach((tile, i) => expect(tile.id).toBe(i));
-    BOARD_TILES.forEach((def, i) => expect(def.id).toBe(i));
+    CLASSIC_MAP.tiles.forEach((def, i) => expect(def.id).toBe(i));
   });
 
   // Board.getTile / getLayout throw descriptive errors instead of returning
@@ -129,13 +129,22 @@ describe('Board — layout geometry', () => {
     for (let i = 32; i < 40; i++) expect(layouts[i].y).toBeGreaterThan(layouts[i - 1].y);
   });
 
-  it('gives the renderer a footprint per tile, corners square', () => {
+  // Every tile is a rectangle in its own frame with the board's middle past its
+  // top edge, so a column tile is a *row* tile turned a quarter turn — same
+  // footprint, different rotation. That is what lets one draw path serve a
+  // square, a circle or anything else.
+  it('gives every tile the same footprint and lets rotation orient it', () => {
     expect(layouts[0].isCorner).toBe(true);
     expect(layouts[0].w).toBe(layouts[0].h);
-    // Mid-row tiles are tall and narrow; the columns are the same tile rotated.
-    expect(layouts[1].w).toBeLessThan(layouts[1].h);
-    expect(layouts[15].w).toBe(layouts[1].h);
-    expect(layouts[15].h).toBe(layouts[1].w);
+
+    expect(layouts[1].w).toBeLessThan(layouts[1].h);   // narrow across, deep inward
+    expect(layouts[15].w).toBe(layouts[1].w);
+    expect(layouts[15].h).toBe(layouts[1].h);
+
+    expect(layouts[1].rotation).toBe(0);      // bottom row: interior is up
+    expect(layouts[15].rotation).toBe(90);    // left column: interior is right
+    expect(layouts[25].rotation).toBe(180);   // top row: interior is down
+    expect(layouts[35].rotation).toBe(270);   // right column: interior is left
   });
 });
 

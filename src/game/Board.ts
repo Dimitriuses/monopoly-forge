@@ -1,12 +1,16 @@
-import { BOARD_TILES, BOARD_ORIGIN_X, BOARD_ORIGIN_Y, CORNER_SIZE, TILE_W, TILE_H } from '@/config';
 import { Tile, type TileDefinition } from '@/tiles/Tile';
+import { CLASSIC_MAP } from '@/maps/classic';
+import type { GameMap } from '@/maps/GameMap';
+import {
+  computeGeometry, type BoardGeometry, type Backdrop, type TileLayout,
+} from './BoardLayout';
 import { PropertyTile } from '@/tiles/PropertyTile';
 import {
   RailroadTile, UtilityTile, TaxTile, CardTile,
   JailTile, GoToJailTile, GoTile, FreeParkingTile,
 } from '@/tiles/SpecialTiles';
 
-export type BoardSide = 'bottom' | 'left' | 'top' | 'right';
+export type { BoardSide, TileLayout, Backdrop, LayoutSpec } from './BoardLayout';
 
 /**
  * The roles the rules ask for by name instead of by index. A map declares which
@@ -20,26 +24,25 @@ const ANCHOR_OF_TYPE: Partial<Record<Tile['type'], BoardAnchor>> = {
   goToJail: 'goToJail',
 };
 
-export interface TileLayout {
-  x: number;
-  y: number;
-  rotation: number; // degrees, used for label rendering
-  side: BoardSide;
-  /** Drawn footprint, already oriented for the side the tile sits on. */
-  w: number;
-  h: number;
-  isCorner: boolean;
-}
-
 export class Board {
   readonly tiles: Tile[];
   /** Number of tiles in a full circuit — every wrap-around goes through this. */
   readonly size: number;
-  private layoutCache: TileLayout[];
+  /** The map this board was built from, including the shape it is drawn in. */
+  readonly map: GameMap;
+  private geometry: BoardGeometry;
   private anchors: Map<BoardAnchor, number>;
 
-  constructor(definitions: TileDefinition[] = BOARD_TILES) {
-    this.tiles = definitions.map((def) => {
+  /**
+   * Takes a map, or a bare tile list for the tests that only care about the
+   * circuit. A bare list is laid out as a square, which is what it used to be.
+   */
+  constructor(source: GameMap | TileDefinition[] = CLASSIC_MAP) {
+    this.map = Array.isArray(source)
+      ? { ...CLASSIC_MAP, id: 'inline', name: 'Inline', tiles: source }
+      : source;
+
+    this.tiles = this.map.tiles.map((def) => {
       switch (def.type) {
         case 'property':      return new PropertyTile(def);
         case 'railroad':      return new RailroadTile(def);
@@ -57,9 +60,9 @@ export class Board {
           );
       }
     });
-    this.size        = this.tiles.length;
-    this.anchors     = this.resolveAnchors();
-    this.layoutCache = this.computeLayout();
+    this.size     = this.tiles.length;
+    this.anchors  = this.resolveAnchors();
+    this.geometry = computeGeometry(this.map.layout, this.size);
   }
 
   getTile(index: number): Tile {
@@ -79,7 +82,7 @@ export class Board {
       throw new Error(`[Board] getLayout: non-finite index ${index}`);
     }
     const i = Math.floor(index) % this.size;
-    const layout = this.layoutCache[i];
+    const layout = this.geometry.tiles[i];
     if (layout === undefined) {
       throw new Error(`[Board] getLayout(${index}): slot ${i} is undefined`);
     }
@@ -136,79 +139,18 @@ export class Board {
     return found;
   }
 
-  // ─── Layout math ─────────────────────────────────────────────────────────────
-  // Board origin = top-left corner of the full board square. The four corners sit
-  // at even fractions of the circuit, so everything below is derived from
-  // `perSide` rather than from the classic 0–10 / 11–19 / 20–30 / 31–39 ranges.
-  //
-  // Corners belong to the row they are drawn in: the bottom row runs corner →
-  // mid tiles → corner, and the columns hold only mid tiles.
-  private computeLayout(): TileLayout[] {
-    const perSide = (this.size - 4) / 4;
-    if (!Number.isInteger(perSide) || perSide < 0) {
-      throw new Error(
-        `[Board] the square layout needs four corners and equal sides — ` +
-        `${this.size} tiles leaves ${perSide} per side`,
-      );
-    }
+  // ─── Geometry ────────────────────────────────────────────────────────────────
+  // Where the tiles sit is the map's business, not the board's: see
+  // game/BoardLayout.ts. The board only forwards the answers.
 
-    // First index of each side, walking anticlockwise from Go in the bottom-right.
-    const [c0, c1, c2, c3] = [0, 1, 2, 3].map((k) => k * (perSide + 1));
-    const boardW = CORNER_SIZE * 2 + TILE_W * perSide;
-    const right  = BOARD_ORIGIN_X + boardW;
-    const bottom = BOARD_ORIGIN_Y + boardW;
-
-    const corner = (x: number, y: number, side: BoardSide, rotation: number): TileLayout =>
-      ({ x, y, rotation, side, w: CORNER_SIZE, h: CORNER_SIZE, isCorner: true });
-
-    const layouts: TileLayout[] = new Array(this.size);
-
-    for (let i = 0; i < this.size; i++) {
-      if (i === c0) {
-        layouts[i] = corner(right - CORNER_SIZE / 2, bottom - CORNER_SIZE / 2, 'bottom', 0);
-      } else if (i === c1) {
-        layouts[i] = corner(BOARD_ORIGIN_X + CORNER_SIZE / 2, bottom - CORNER_SIZE / 2, 'bottom', 0);
-      } else if (i === c2) {
-        layouts[i] = corner(BOARD_ORIGIN_X + CORNER_SIZE / 2, BOARD_ORIGIN_Y + CORNER_SIZE / 2, 'top', 180);
-      } else if (i === c3) {
-        layouts[i] = corner(right - CORNER_SIZE / 2, BOARD_ORIGIN_Y + CORNER_SIZE / 2, 'top', 180);
-      } else if (i < c1) {
-        // Bottom row, right-to-left
-        const k = i - c0 - 1;
-        layouts[i] = {
-          x: right - CORNER_SIZE - k * TILE_W - TILE_W / 2, y: bottom - CORNER_SIZE / 2,
-          rotation: 0, side: 'bottom', w: TILE_W, h: TILE_H, isCorner: false,
-        };
-      } else if (i < c2) {
-        // Left column, bottom-to-top
-        const k = i - c1 - 1;
-        layouts[i] = {
-          x: BOARD_ORIGIN_X + CORNER_SIZE / 2, y: bottom - CORNER_SIZE - k * TILE_W - TILE_W / 2,
-          rotation: 90, side: 'left', w: TILE_H, h: TILE_W, isCorner: false,
-        };
-      } else if (i < c3) {
-        // Top row, left-to-right
-        const k = i - c2 - 1;
-        layouts[i] = {
-          x: BOARD_ORIGIN_X + CORNER_SIZE + k * TILE_W + TILE_W / 2, y: BOARD_ORIGIN_Y + CORNER_SIZE / 2,
-          rotation: 180, side: 'top', w: TILE_W, h: TILE_H, isCorner: false,
-        };
-      } else {
-        // Right column, top-to-bottom
-        const k = i - c3 - 1;
-        layouts[i] = {
-          x: right - CORNER_SIZE / 2, y: BOARD_ORIGIN_Y + CORNER_SIZE + k * TILE_W + TILE_W / 2,
-          rotation: 270, side: 'right', w: TILE_H, h: TILE_W, isCorner: false,
-        };
-      }
-    }
-
-    return layouts;
+  /** The board's own outline — a square, a circle, whatever the map asked for. */
+  get backdrop(): Backdrop {
+    return this.geometry.backdrop;
   }
 
-  /** Outer dimension of the drawn board square, in pixels. */
-  get pixelSize(): number {
-    return CORNER_SIZE * 2 + TILE_W * ((this.size - 4) / 4);
+  /** Middle of the board, for the centrepiece and anything drawn inside it. */
+  get centre(): { x: number; y: number } {
+    return this.geometry.centre;
   }
 
   toJSON() {

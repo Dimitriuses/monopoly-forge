@@ -4,6 +4,7 @@ import { CardDeck, CardEffects, CHANCE_CARDS, COMMUNITY_CHEST_CARDS } from '@/ca
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable } from '@/tiles/Tile';
 import { DEFAULT_HOUSE_RULES, type HouseRules, type TokenType } from '@/config';
+import { MAPS, mapById } from '@/maps';
 import { Board } from './Board';
 import { Bank } from './Bank';
 import { Dice, type DiceResult } from './Dice';
@@ -29,7 +30,7 @@ import { TurnManager } from './TurnManager';
 // A restore resumes at the start of the saved player's turn. Mid-move state is
 // deliberately not captured: see `restoreGame`.
 
-export const SNAPSHOT_VERSION = 3;
+export const SNAPSHOT_VERSION = 4;
 
 export interface TileSnapshot {
   id: number;
@@ -61,6 +62,8 @@ export interface DeckSnapshot {
 
 export interface GameSnapshot {
   version: number;
+  /** Which board this game is being played on — a save is map-specific. */
+  mapId: string;
   /** Where the random stream had got to, not the seed the game started from. */
   rngState: number;
   players: PlayerSnapshot[];
@@ -90,6 +93,7 @@ export interface GameParts {
 export function captureGame(parts: GameParts): GameSnapshot {
   return {
     version:  SNAPSHOT_VERSION,
+    mapId:    parts.board.map.id,
     rngState: rng.getSeed(),
     players:  parts.players.map(capturePlayer),
     tiles:    parts.board.tiles.filter(isOwnable).map((tile) => ({
@@ -143,7 +147,7 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
   // but any later draw has to continue the saved stream, not restart it.
   rng.seed(snapshot.rngState);
 
-  const board = new Board();
+  const board = new Board(mapById(snapshot.mapId));
   const bank  = new Bank();
   const dice  = new Dice();
 
@@ -211,8 +215,11 @@ export function validateSnapshot(snapshot: unknown): snapshot is GameSnapshot {
   if (!s.turn || !Number.isFinite(s.turn.currentPlayerIndex)) return reject('no turn state');
   if (s.turn.currentPlayerIndex >= s.players.length) return reject('turn points at nobody');
 
-  // The map may have changed under the save.
-  const board = new Board();
+  // The map may have changed under the save — or be missing from this build.
+  if (typeof s.mapId !== 'string' || !MAPS[s.mapId]) {
+    return reject(`unknown map "${s.mapId}"`);
+  }
+  const board = new Board(mapById(s.mapId));
   for (const tile of s.tiles) {
     if (!Number.isFinite(tile?.id) || tile.id < 0 || tile.id >= board.size) {
       return reject(`tile ${tile?.id} is not on this board`);

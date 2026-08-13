@@ -21,7 +21,7 @@ import {
   type PanelAction, type PanelActionKey, type PropertyView, type RentRow,
 } from '@/ui/PropertyPanel';
 import {
-  DEFAULT_HOUSE_RULES, GROUP_COLORS, GROUP_SIZES, GO_SALARY, JAIL_FINE,
+  DEFAULT_HOUSE_RULES, GROUP_COLORS, GO_SALARY, JAIL_FINE,
   type TokenType, type HouseRules,
 } from '@/config';
 import { PropertyTile } from '@/tiles/PropertyTile';
@@ -49,6 +49,7 @@ const BOT_CARD_LINGER = 1600;
 /** How quickly the tokens already on a tile shuffle over to make room. */
 const CLUSTER_SHUFFLE = 140;
 import { settleDebt, announceSettlement } from '@/game/Estate';
+import { mapById } from '@/maps';
 import { Auction } from '@/game/Auction';
 import { AuctionPanel, type AuctionView } from '@/ui/AuctionPanel';
 import {
@@ -71,6 +72,8 @@ const TOKEN_HEX: Record<string, string> = {
 interface SceneData {
   players: Array<{ name: string; token: TokenType; isBot?: boolean }>;
   seed?: number;
+  /** Which board to play on; defaults to the classic one. */
+  mapId?: string;
   houseRules?: HouseRules;
   /** A saved game to resume instead of dealing a new one. */
   snapshot?: GameSnapshot;
@@ -140,7 +143,7 @@ export class GameScene extends Phaser.Scene {
   private newGame(data: SceneData): GameParts {
     if (data.seed !== undefined) rng.seed(data.seed);
 
-    const board   = new Board();
+    const board   = new Board(mapById(data.mapId));
     const bank    = new Bank();
     const dice    = new Dice();
     const players = data.players.map(
@@ -1119,7 +1122,7 @@ export class GameScene extends Phaser.Scene {
   private subtitleFor(tile: Tile): string {
     if (tile instanceof PropertyTile) {
       const group = tile.group.replace(/([A-Z])/g, ' $1').toLowerCase();
-      return `Property · ${group} group of ${GROUP_SIZES[tile.group]}`;
+      return `Property · ${group} group of ${this.board.groupTiles(tile.group).length}`;
     }
     const labels: Record<string, string> = {
       railroad: 'Railroad', utility: 'Utility', tax: 'Tax',

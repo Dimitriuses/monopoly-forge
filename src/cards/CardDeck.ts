@@ -224,6 +224,16 @@ export class CardEffects {
   }
 
   private advanceTo(player: Player, targetTile: number): void {
+    // The shipped decks name tiles on the classic board. On a shorter map those
+    // indices would silently wrap onto some unrelated square, so the card does
+    // nothing and says so instead. Decks belonging to a map is ROADMAP 8b.
+    if (targetTile >= this.board.size) {
+      dwarn(
+        `[CardEffects] advanceTo tile=${targetTile} is off this ${this.board.size}-tile ` +
+        `map — the card does nothing`,
+      );
+      return;
+    }
     const from  = player.position;
     const steps = this.board.stepsBetween(from, targetTile);
     if (steps === 0) {
