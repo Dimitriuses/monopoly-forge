@@ -1,4 +1,6 @@
 import Phaser from 'phaser';
+import { setTheme } from '@/ui/Theme';
+import { bakeTokenTextures, bakeBuildingTextures } from '@/ui/Textures';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -22,62 +24,13 @@ export class BootScene extends Phaser.Scene {
       bar.width = 400 * value;
     });
 
-    // ── Placeholder assets (replace with real sprites / atlases) ─────────────
-    // Board background - generated as a graphic for now
-    // In M1 you will swap these for TexturePacker atlases.
-
-    // ── Tokens ────────────────────────────────────────────────────────────────
-    // A disc in the player's colour with the token's own emblem baked in, so the
-    // eight pieces are told apart by shape as well as by colour. Drawn here into
-    // a RenderTexture rather than shipped as art: the repo carries no
-    // third-party assets, and this keeps that true.
-    const tokenColors: Record<string, number> = {
-      topHat: 0x222222, car: 0xe74c3c, dog: 0xe67e22, battleship: 0x3498db,
-      iron: 0x95a5a6,   boot: 0x8b4513, wheelbarrow: 0x2ecc71, thimble: 0xf1c40f,
-    };
-    const emblems: Record<string, string> = {
-      topHat: '🎩', car: '🚗', dog: '🐕', battleship: '🚢',
-      iron: '🔩', boot: '👢', wheelbarrow: '🛒', thimble: '🧵',
-    };
-
-    // `make.graphics` takes `addToScene` as its second argument; passing
-    // `{ add: false }` inside the config still works at runtime but no longer
-    // type-checks against Phaser 3.87's `Graphics.Options`.
-    Object.entries(tokenColors).forEach(([name, color]) => {
-      const g = this.make.graphics({}, false);
-      g.fillStyle(color, 1);
-      g.fillCircle(16, 16, 14);
-      g.lineStyle(2, 0xffffff, 1);
-      g.strokeCircle(16, 16, 14);
-
-      const emblem = this.make.text({
-        text: emblems[name] ?? '●',
-        style: { fontFamily: 'Arial', fontSize: '15px' },
-      }, false).setOrigin(0.5);
-
-      const rt = this.make.renderTexture({ width: 32, height: 32 }, false);
-      rt.draw(g);
-      rt.draw(emblem, 16, 17);
-      rt.saveTexture(`token_${name}`);   // the RT stays alive as the texture
-
-      g.destroy();
-      emblem.destroy();
-    });
-
-    // House / hotel
-    const houseG = this.make.graphics({}, false);
-    houseG.fillStyle(0x27ae60, 1);
-    houseG.fillRect(2, 6, 16, 12);
-    houseG.fillTriangle(0, 6, 10, 0, 20, 6);
-    houseG.generateTexture('house', 20, 18);
-    houseG.destroy();
-
-    const hotelG = this.make.graphics({}, false);
-    hotelG.fillStyle(0xe74c3c, 1);
-    hotelG.fillRect(2, 6, 22, 14);
-    hotelG.fillTriangle(0, 6, 13, 0, 26, 6);
-    hotelG.generateTexture('hotel', 26, 20);
-    hotelG.destroy();
+    // ── Assets ────────────────────────────────────────────────────────────────
+    // Drawn at runtime, not shipped: the repo carries no third-party art. Which
+    // colours they come out in is the theme's business, so the baking lives in
+    // `ui/Textures.ts` and runs again if the menu picks a different one.
+    setTheme(new URLSearchParams(window.location.search).get('theme'));
+    bakeTokenTextures(this);
+    bakeBuildingTextures(this);
 
     void barBg; // suppress unused warning — purely visual
   }

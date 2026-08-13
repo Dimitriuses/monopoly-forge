@@ -60,20 +60,13 @@ export type ColorGroup =
   | 'green'
   | 'darkBlue';
 
-export const GROUP_COLORS: Record<ColorGroup, number> = {
-  brown:    0x8b4513,
-  lightBlue:0x87ceeb,
-  pink:     0xff69b4,
-  orange:   0xff8c00,
-  red:      0xdc143c,
-  yellow:   0xffd700,
-  green:    0x228b22,
-  darkBlue: 0x00008b,
-};
-
-// How many lots a colour group holds is a property of the *map*, not of the
-// palette — ask `board.groupTiles(group).length`. A GROUP_SIZES table lived here
-// until M8a and quietly described the classic board to every other board.
+// What colour a group is drawn in is a property of the *theme*, not of the
+// rules — `theme().groups[group]` in `ui/Theme.ts`. A GROUP_COLORS table lived
+// here until M8c and meant every board had to look like the 1935 one.
+//
+// How many lots a colour group holds is a property of the *map* — ask
+// `board.groupTiles(group).length`. A GROUP_SIZES table lived here until M8a and
+// quietly described the classic board to every other board.
 
 // ─── House rules ───────────────────────────────────────────────────────────────
 // Every flag here is read by something. A fourth, `speedDie`, was declared from

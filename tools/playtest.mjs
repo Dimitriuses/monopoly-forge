@@ -50,6 +50,8 @@ const VARIANTS = value('variants', null);
  * this run depends on.
  */
 const HOUSE_RULES = flag('house-rules') ? 'freeParkingJackpot,doubleGoSalary' : null;
+/** Which palette to draw in — `--theme parchment` is the one that is not default. */
+const THEME = value('theme', null);
 
 // The Phaser canvas is a fixed 1280×800 with no scale manager, so game
 // coordinates map 1:1 onto canvas pixels.
@@ -75,12 +77,20 @@ const HOTSPOTS = {
   trade:        [180, 738],  // GameScene.buildButtons
   save:         [300, 738],
   continueSave: [640, 770],  // MenuScene.buildContinueButton, (width/2, height-30)
-  // TradePanel, container at (420,390): its layout hangs off LIST_TOP/BUTTON_Y,
-  // so these move whenever ROWS_VISIBLE or H changes there.
-  tradeRow1:    [200, 271],  // first deed row, left side
-  tradePropose: [420, 554],
-  tradeAccept:  [310, 554],
+  // The trade panel is not in this table any more. Its deed list is measured
+  // rather than reserved, so its buttons sit wherever the players' holdings put
+  // them — it reports its own positions through `__forge.tradeSpots()`.
 };
+
+/** Where a trade-panel control is right now, asked of the panel itself. */
+async function tradeSpot(page, name) {
+  const spots = await page.evaluate(() => window.__forge.tradeSpots());
+  const spot = spots[name];
+  if (!spot) {
+    throw new Error(`the trade panel has no "${name}" — it has ${Object.keys(spots).join(', ')}`);
+  }
+  return [spot.x, spot.y];
+}
 
 // ─── Static file server for dist/ ─────────────────────────────────────────────
 const MIME = {
@@ -183,7 +193,8 @@ async function main() {
   const url = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}debug=1&seed=${SEED}`
             + (MAP ? `&map=${MAP}` : '')
             + (VARIANTS ? `&variants=${VARIANTS}` : '')
-            + (HOUSE_RULES ? `&houseRules=${HOUSE_RULES}` : '');
+            + (HOUSE_RULES ? `&houseRules=${HOUSE_RULES}` : '')
+            + (THEME ? `&theme=${THEME}` : '');
   console.log(`▶ playtest: ${url}`);
   console.log(`  ${TURNS} turns, seed ${SEED}${TAKE_SHOTS ? ', capturing screenshots' : ''}`);
 
@@ -549,7 +560,7 @@ async function main() {
       }
       await shot(page, box, '9-trade');
 
-      await clickGame(page, box, HOTSPOTS.tradeRow1);
+      await clickGame(page, box, await tradeSpot(page, 'left:row1'));
       await sleep(200);
       const offer = await page.evaluate(() => window.__forge.tradeOffer());
       if (!offer || offer.fromTileIds.length !== 1) {
@@ -558,10 +569,10 @@ async function main() {
       tradedTile = offer.fromTileIds[0];
       const recipient = offer.toId;
 
-      await clickGame(page, box, HOTSPOTS.tradePropose);
+      await clickGame(page, box, await tradeSpot(page, 'propose'));
       await sleep(250);
       await shot(page, box, '10-trade-review');
-      await clickGame(page, box, HOTSPOTS.tradeAccept);
+      await clickGame(page, box, await tradeSpot(page, 'accept'));
       await sleep(400);
 
       if (await page.evaluate(() => window.__forge.tradeOpen())) {

@@ -301,7 +301,7 @@ src/
 | M7 — Opponents (bots you can play against) | ✅ Complete — see [M7 below](#m7--opponents-you-can-play-against--2026-08-12) |
 | **M8 — Engine** (configurable maps, rules, presentation, simulation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). **8a complete**: a map is a file, and three ship (square, circle, three rings). **8b complete**: registries for tile types, card effects, turn orders, win
 conditions and variants; a rule set a map overrides; a turn that is a list of
-phases; the speed die; and the last houses sold at auction. 8c: `BoardRenderer` extracted and shape-agnostic. 8d: not started |
+phases; the speed die; and the last houses sold at auction. **8c complete**: colours, fonts and per-tile-type decoration are a theme with two palettes; the panels update in place. 8d: not started |
 
 ---
 
@@ -1420,3 +1420,107 @@ would have been a turn that never ends.
   `--house-rules` (biggest pot $500 with the rule on, $0 with it off — both
   asserted). Bot runs on all three boards, each exercising a contested house, a
   returned estate, and a turn log longer than the screen.
+
+---
+
+## M8c — presentation becomes a theme
+
+Four items, and the two halves turned out to be the same idea twice: *hold a
+reference to what is drawn, and write to it.* A theme is that for colour, a
+`Surface` is that for a panel.
+
+### One object, and a second theme to keep it honest
+
+`ui/Theme.ts` gathers the board's ground and outlines, the colour groups, the
+token colours, the panel palette, the chrome around it and the log's stripes.
+`GROUP_COLORS` and `TOKEN_HEX` are gone rather than moved, and so are about a
+hundred literals across seven files.
+
+Two decisions worth recording:
+
+- **A theme is not game state.** It is not in `GameRules` and not in the
+  snapshot. A saved game is the same game whatever colour it was played in, and
+  restoring somebody else's palette over yours would be a strange thing for a
+  save file to do. It is chosen at boot from `?theme=`, or from a chip on the
+  menu, and that is all.
+- **A second theme is not decoration, it is the test.** *Parchment* exists
+  because one palette hides everything: a colour still hardcoded looks correct
+  until something else is meant to be different. Two catch it, and a unit test
+  refuses a token or colour group that only one of them has a colour for. Two
+  literals in `BootScene` were found exactly that way — the pieces stayed
+  brick-red on a paper board because their textures were baked with a private
+  table.
+
+That baking moved to `ui/Textures.ts` and runs again when the menu changes theme,
+which is also why switching mid-*game* is not offered: the HUD, the buttons and
+the board's static layer are drawn once at `create()`. Offering a switch that
+repainted half the screen would be worse than not offering one.
+
+### How a tile draws is a registry now
+
+`BoardRenderer` knew that a property has a colour band and that nothing else has
+anything. `registerTileDecoration(type, fn)` replaces that, and the handler is
+given the tile's **own frame** — origin at its centre, already rotated, the
+board's interior past its top edge. That is the geometry work from 8a paying off
+a second time: a decoration written once is right on a square board, a circle and
+a three-ring spiral, with no branch anywhere.
+
+The nine non-property types gained a glyph where a lot has its stripe, which is
+the first time the board has told a railroad from a utility at a glance.
+
+### The panels: written to, not rebuilt
+
+`ui/Retained.ts` is a `Surface` — named elements, a render pass between `begin()`
+and `end()`, and only what the pass did not ask for is destroyed. All three panels
+draw onto one.
+
+The part that needed care was buttons. A handler closes over the view it was drawn
+for, so re-adding a listener each render is how leaks start; instead the listener
+is registered once and calls whatever is in a slot the surface rewrites. Only the
+hover colours are re-bound, because those *are* the view.
+
+### Measuring a list, and what it cost
+
+`TradePanel` sizes its deed list to the players' actual holdings. Which moves its
+buttons — and the playtest clicked three of them at coordinates copied out of the
+file by hand, the fragility CLAUDE.md has warned about since M5.
+
+So the panel reports where its controls are, and the harness asks:
+
+```js
+await clickGame(page, box, await tradeSpot(page, 'propose'));
+```
+
+Three entries left `HOTSPOTS` and the warning above them went too. That is the
+better outcome than a comment telling the next person to recompute them.
+
+### A bug the matrix found
+
+Running every configuration afterwards turned up a real one, in the *previous*
+pass's work rather than this one:
+
+```
+🔴 BUG DETECTED — animation finished for Player 3
+   but turn has already advanced to Player 2
+```
+
+`finishAuction` ended the turn for any auction whose subject was a tile. That is
+right for a declined property — the buy prompt refused it and the turn is over as
+soon as it sells — and wrong for a returned estate, which is sold in the *middle*
+of somebody's turn and can open while a token is still walking. Ending the turn
+there fires the walk's landing on the next player.
+
+Two fixes: `auctionEndsTurn` says which auction is the reason a turn is ending,
+and a queued auction waits while a token is moving. Worth noting that this only
+appeared on Orbits with a particular turn count — the forced-bankruptcy and
+forced-shortage hooks fire at fractions of the run length, so a 40-tick run is a
+different game from a 50-tick one, not a prefix of it.
+
+### Verification
+
+- 375 unit tests (up from 367). The new file checks the theme registry and its
+  fallback, the `hex()` conversion, the decoration registry, and — the one that
+  will actually catch something — that every theme has a colour for every token
+  and every colour group on all three boards.
+- Ten playtest configurations green: the classic, round and orbit boards, human
+  and bot, plus `--variants speedDie`, `--house-rules` and `--theme parchment`.

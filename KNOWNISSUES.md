@@ -193,14 +193,17 @@ The consequence to know about: a phase a rule set adds runs on the way to
 move at all (a jailed player staying put). A handler that only makes sense after a
 landing has to check for itself.
 
-### A panel that *has* changed is still rebuilt from scratch
+### A panel updates in place; the board does not
 
-`PropertyPanel` and `TradePanel` skip the work when the incoming view matches the
-one they last drew (M6), so the common case — `refreshPanel()` on every turn
-change, with nothing actually different — costs nothing. A view that has genuinely
-changed still calls `removeAll(true)` and re-creates every child: roughly 120
-objects for the trade panel's two deed lists. Not measurable at this size, and
-updating in place is the same problem as drawing a theme, so it waits for M8c.
+*Fixed for the panels (M8c):* all three draw onto a `Surface` (`ui/Retained.ts`),
+so a view that has changed writes to the elements already on screen and only what
+has genuinely gone is destroyed. Hover survives a redraw, and a button's listener
+is registered once for the life of the panel.
+
+The board is still the other way round: `BoardRenderer.refresh()` clears the state
+layer and re-creates every owner band, house and mortgage mark on every change.
+That is a smaller list than a panel's and it is redrawn far less often — but it is
+the same pattern, and the machinery to fix it now exists.
 
 ### The turn log cannot be exported
 
@@ -214,17 +217,18 @@ What is missing is a way to get it *out*: no copy button, no download, and
 nothing is written to disk. A player who wants the record of a game after closing
 the tab still has nothing.
 
-### The trade panel's layout is fixed, not measured
+### The HUD is drawn once and never re-themed
 
-`TradePanel` reserves 11 deed rows per side whatever the players actually hold,
-so a two-deed trade shows a lot of empty space, and everything below the list
-hangs off constants derived from that. It also means the harness's `HOTSPOTS`
-entries have to be recalculated by hand whenever the layout constants change.
+*Fixed in M8c:* `TradePanel` measures its deed list, and because that moves its
+buttons, it reports where they are (`__forge.tradeSpots()`) instead of the harness
+holding a copy — three entries left `HOTSPOTS`.
 
-**Scheduled into ROADMAP 8c**, with the panel rework above it: measuring the list
-and updating a drawn panel in place are the same job on the same three files, and
-both change the constants the harness's hotspots hang off. Doing them separately
-means recomputing those hotspots by hand twice.
+What is left is when the theme can change: it is read at boot and when the menu's
+chip is clicked, and everything drawn after that takes it. Nothing re-themes a
+*running* game, so switching mid-game is not offered rather than being offered and
+half-working. The pieces and the buildings are baked textures and would need
+re-baking; the HUD, the buttons and the board's static layer are drawn once at
+`create()` and would need rebuilding.
 
 ---
 

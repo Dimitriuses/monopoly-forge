@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import type { Board, TileLayout } from '@/game/Board';
-import { GROUP_COLORS } from '@/config';
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable } from '@/tiles/Tile';
+import { theme } from './Theme';
+import { decorationFor, GROUP_BAND } from './TileDecor';
 
 // ─── BoardRenderer ────────────────────────────────────────────────────────────
 // Everything drawn inside the board. GameScene used to hold four near-identical
@@ -25,7 +26,8 @@ export interface OwnerStyle {
   initial: string;
 }
 
-const BAND = 14;        // colour stripe on the board-interior edge
+/** Colour stripe on the board-interior edge. Owned by `TileDecor`, which draws it. */
+const BAND = GROUP_BAND;
 const OWNER_BAND = 7;   // owner marker on the board-rim edge
 
 /**
@@ -64,9 +66,10 @@ export class BoardRenderer {
 
   /** Draw the board itself. Call once; nothing here changes during a game. */
   draw(onTileSelected: (tileId: number) => void): void {
+    const t = theme();
     const g = this.scene.add.graphics();
     this.drawBackdrop(g);
-    g.lineStyle(1, 0x555544, 1);
+    g.lineStyle(1, t.board.tileOutline, 1);
 
     for (let i = 0; i < this.board.size; i++) {
       const layout = this.board.getLayout(i);
@@ -78,22 +81,21 @@ export class BoardRenderer {
       g.save();
       g.translateCanvas(layout.x, layout.y);
       g.rotateCanvas(Phaser.Math.DegToRad(layout.rotation));
-
       g.strokeRect(-half.w, -half.h, layout.w, layout.h);
-      if (tile instanceof PropertyTile) {
-        g.fillStyle(GROUP_COLORS[tile.group], 1);
-        g.fillRect(-half.w, -half.h, layout.w, BAND);
-      }
+
+      // What goes *inside* the outline is the tile type's own business — a lot's
+      // colour band, a railroad's glyph, whatever a game registered. See TileDecor.
+      decorationFor(tile.type)({
+        scene: this.scene, g, tile, layout, theme: t,
+        label: (lx, ly, text, style) => this.label(layout, lx, ly, text, style),
+      });
       g.restore();
 
       // Text cannot be drawn into that frame, so it is placed and turned to match.
-      const label = this.scene.add.text(0, 0, tile.name, {
-        fontFamily: 'Arial', fontSize: '6px', color: '#111111',
+      this.label(layout, 0, BAND / 2, tile.name, {
+        fontFamily: t.font.body, fontSize: '6px', color: t.board.tileLabel,
         wordWrap: { width: layout.w - 4 }, align: 'center',
-      }).setOrigin(0.5, 0.5).setRotation(Phaser.Math.DegToRad(readableAngle(layout.rotation)));
-      // Nudged clear of the colour stripe, in the tile's own frame.
-      const nudged = this.toWorld(layout, 0, BAND / 2);
-      label.setPosition(nudged.x, nudged.y);
+      });
 
       this.scene.add.zone(layout.x, layout.y, layout.w, layout.h)
         .setRotation(Phaser.Math.DegToRad(layout.rotation))
@@ -102,9 +104,9 @@ export class BoardRenderer {
     }
 
     const { x: cx, y: cy } = this.board.centre;
-    this.scene.add.text(cx, cy - 20, '🏦', { fontSize: '48px' }).setOrigin(0.5);
+    this.scene.add.text(cx, cy - 20, t.board.emblem, { fontSize: '48px' }).setOrigin(0.5);
     this.scene.add.text(cx, cy + 30, 'MONOPOLY\nFORGE', {
-      fontFamily: 'Georgia, serif', fontSize: '20px', color: '#222244',
+      fontFamily: t.font.display, fontSize: '20px', color: t.board.centreTitle,
       align: 'center', fontStyle: 'bold',
     }).setOrigin(0.5);
 
@@ -112,9 +114,24 @@ export class BoardRenderer {
     this.selection  = this.scene.add.graphics().setDepth(4);
   }
 
+  /**
+   * Text at a point in a tile's own frame, turned to match it and never printed
+   * upside down. Every label on the board goes through here — the tile's name,
+   * an owner's seat number, whatever a decoration wants to write.
+   */
+  private label(
+    layout: TileLayout, localX: number, localY: number,
+    text: string, style: Phaser.Types.GameObjects.Text.TextStyle,
+  ): Phaser.GameObjects.Text {
+    const at = this.toWorld(layout, localX, localY);
+    return this.scene.add.text(at.x, at.y, text, style)
+      .setOrigin(0.5, 0.5)
+      .setRotation(Phaser.Math.DegToRad(readableAngle(layout.rotation)));
+  }
+
   private drawBackdrop(g: Phaser.GameObjects.Graphics): void {
     const backdrop = this.board.backdrop;
-    g.fillStyle(0xd4e8c2, 1);
+    g.fillStyle(theme().board.backdrop, 1);
     if (backdrop.kind === 'circle') {
       g.fillCircle(backdrop.x, backdrop.y, backdrop.size);
     } else {
@@ -126,6 +143,7 @@ export class BoardRenderer {
 
   /** Redraw owner bands, buildings and mortgage marks from current tile state. */
   refresh(): void {
+    const t = theme();
     this.stateLayer.clear();
     this.stateObjects.forEach((o) => o.destroy());
     this.stateObjects = [];
@@ -150,17 +168,18 @@ export class BoardRenderer {
       this.stateLayer.strokeRect(-half.w, half.h - OWNER_BAND, layout.w, OWNER_BAND);
       this.stateLayer.restore();
 
-      const badge = this.toWorld(layout, 0, half.h - OWNER_BAND / 2);
       this.stateObjects.push(
-        this.scene.add.text(badge.x, badge.y, style.initial, {
-          fontFamily: 'Arial', fontSize: '7px', color: '#ffffff', fontStyle: 'bold',
-        }).setOrigin(0.5).setDepth(3),
+        this.label(layout, 0, half.h - OWNER_BAND / 2, style.initial, {
+          fontFamily: t.font.body, fontSize: '7px',
+          color: t.board.ownerBadge, fontStyle: 'bold',
+        }).setDepth(3),
       );
 
       if (tile.isMortgaged) {
         this.stateObjects.push(
           this.scene.add.text(layout.x, layout.y, 'M', {
-            fontFamily: 'Arial', fontSize: '13px', color: '#cc2222', fontStyle: 'bold',
+            fontFamily: t.font.body, fontSize: '13px',
+            color: t.board.mortgageMark, fontStyle: 'bold',
           }).setOrigin(0.5).setDepth(3).setAlpha(0.85),
         );
       }
@@ -179,7 +198,7 @@ export class BoardRenderer {
     this.selection.save();
     this.selection.translateCanvas(layout.x, layout.y);
     this.selection.rotateCanvas(Phaser.Math.DegToRad(layout.rotation));
-    this.selection.lineStyle(2.5, 0xf0c040, 1);
+    this.selection.lineStyle(2.5, theme().board.selection, 1);
     this.selection.strokeRect(
       -layout.w / 2 + 1, -layout.h / 2 + 1, layout.w - 2, layout.h - 2,
     );

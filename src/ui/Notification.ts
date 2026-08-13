@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { theme, type LogKind } from './Theme';
 
 // ─── Notification / turn log ──────────────────────────────────────────────────
 // The running commentary, in the column between the board (which ends at x=760)
@@ -20,26 +21,12 @@ import Phaser from 'phaser';
 // the game reports events through it and a second, parallel notification system
 // would only fight this one for the same strip of screen.
 
-export type NotifType = 'info' | 'success' | 'warning' | 'danger';
+export type NotifType = LogKind;
 
 export interface LogEntry {
   message: string;
   type: NotifType;
 }
-
-const ACCENTS: Record<NotifType, number> = {
-  info:    0x5577cc,
-  success: 0x2ecc71,
-  warning: 0xf0c040,
-  danger:  0xe74c3c,
-};
-
-const TEXT: Record<NotifType, string> = {
-  info:    '#c8d6e8',
-  success: '#a9f0c1',
-  warning: '#f5dfa0',
-  danger:  '#f3b0a8',
-};
 
 const X = 770;              // aligned with the property panel above
 const W = 270;
@@ -63,18 +50,19 @@ export class Notification {
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
 
+    const t = theme();
     scene.add.text(X + W / 2, TOP - 14, '📜 LOG', {
-      fontFamily: 'Georgia, serif', fontSize: '9px', color: '#2a3a55',
+      fontFamily: t.font.display, fontSize: '9px', color: t.panel.subtitle,
     }).setOrigin(0.5, 0).setDepth(49);
 
     const rule = scene.add.graphics().setDepth(49);
-    rule.lineStyle(1, 0x2a3a55, 1);
+    rule.lineStyle(1, t.panel.divider, 1);
     rule.lineBetween(X, TOP - 2, X + W, TOP - 2);
 
     // Only visible while scrolled back, so the log looks exactly as it did
     // until somebody goes looking.
     this.marker = scene.add.text(X + W / 2, TOP - 14, '', {
-      fontFamily: 'Georgia, serif', fontSize: '9px', color: '#7788aa',
+      fontFamily: t.font.display, fontSize: '9px', color: t.chrome.dim,
     }).setOrigin(0.5, 0).setDepth(51).setVisible(false);
 
     scene.input.on('wheel', (
@@ -131,12 +119,13 @@ export class Notification {
     }
     this.drawn = [];
 
+    const t = theme();
     let y = TOP;
     let shown = 0;
 
     for (const entry of this.history.slice(this.offset)) {
       const text = this.scene.add.text(PAD + 4, PAD, entry.message, {
-        fontFamily: 'Georgia, serif', fontSize: '11px', color: TEXT[entry.type],
+        fontFamily: t.font.display, fontSize: '11px', color: t.log.text[entry.type],
         wordWrap: { width: W - PAD * 2 - 10 },
       });
       const height = Math.max(22, text.height + PAD * 2);
@@ -147,9 +136,9 @@ export class Notification {
       }
 
       const bg = this.scene.add.graphics();
-      bg.fillStyle(0x121c30, 1);
+      bg.fillStyle(t.log.background, 1);
       bg.fillRoundedRect(0, 0, W, height, 4);
-      bg.fillStyle(ACCENTS[entry.type], 1);
+      bg.fillStyle(t.log.accent[entry.type], 1);
       bg.fillRect(0, 0, 3, height);   // accent stripe carries the type
 
       // Older entries dim, so the newest reads first without being loud.

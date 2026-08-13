@@ -1,4 +1,6 @@
 import Phaser from 'phaser';
+import { theme } from './Theme';
+import { Surface } from './Retained';
 
 // ─── AuctionPanel ─────────────────────────────────────────────────────────────
 // The bidding modal. Like PropertyPanel it renders a view model and reports
@@ -30,6 +32,7 @@ const H = 280;
 export class AuctionPanel {
   private scene: Phaser.Scene;
   private container: Phaser.GameObjects.Container;
+  private surface: Surface;
   private onBid: (amount: number) => void;
   private onPass: () => void;
   private timer: Phaser.Time.TimerEvent | null = null;
@@ -44,6 +47,7 @@ export class AuctionPanel {
     this.onBid     = onBid;
     this.onPass    = onPass;
     this.container = scene.add.container(512, 400).setDepth(45).setVisible(false);
+    this.surface   = new Surface(scene, this.container);
   }
 
   get isOpen(): boolean { return this.container.visible; }
@@ -54,99 +58,110 @@ export class AuctionPanel {
 
   hide(): void {
     this.stopClock();
+    this.clockBar?.destroy();
+    this.clockBar = null;
+    this.surface.clear();
     this.container.setVisible(false);
   }
 
   show(view: AuctionView): void {
     this.stopClock();
-    this.container.removeAll(true);
 
-    const parts: Phaser.GameObjects.GameObject[] = [];
-    const frame = this.scene.add.graphics();
-    // Opaque: at 0.98 the board's centrepiece emoji glows faintly through it.
-    frame.fillStyle(0x0d1b35, 1);
-    frame.fillRoundedRect(-W / 2, -H / 2, W, H, 8);
-    frame.lineStyle(2, 0xf0c040, 1);
-    frame.strokeRoundedRect(-W / 2, -H / 2, W, H, 8);
-    if (view.groupColor !== null) {
-      frame.fillStyle(view.groupColor, 1);
-      frame.fillRect(-W / 2 + 2, -H / 2 + 2, W - 4, 7);
-    }
-    parts.push(frame);
+    const t = theme();
+    const s = this.surface;
+    s.begin();
 
-    parts.push(this.scene.add.text(0, -H / 2 + 16, '🔨  AUCTION', {
-      fontFamily: 'Georgia, serif', fontSize: '13px', color: '#f0c040', fontStyle: 'bold',
-    }).setOrigin(0.5, 0));
+    s.graphics('frame', `${view.groupColor}`, (g) => {
+      // Opaque: at 0.98 the board's centrepiece emoji glows faintly through it.
+      g.fillStyle(t.panel.background, 1);
+      g.fillRoundedRect(-W / 2, -H / 2, W, H, 8);
+      g.lineStyle(2, t.board.selection, 1);
+      g.strokeRoundedRect(-W / 2, -H / 2, W, H, 8);
+      if (view.groupColor !== null) {
+        g.fillStyle(view.groupColor, 1);
+        g.fillRect(-W / 2 + 2, -H / 2 + 2, W - 4, 7);
+      }
+    });
 
-    parts.push(this.scene.add.text(0, -H / 2 + 36, view.tileName, {
-      fontFamily: 'Georgia, serif', fontSize: '20px', color: '#ffffff', fontStyle: 'bold',
-    }).setOrigin(0.5, 0));
+    s.text('heading', 0, -H / 2 + 16, '🔨  AUCTION', {
+      fontFamily: t.font.display, fontSize: '13px', color: t.panel.title, fontStyle: 'bold',
+    }, [0.5, 0]);
 
-    parts.push(this.scene.add.text(0, -H / 2 + 60, `${view.subtitle}   ·   list price $${view.price}`, {
-      fontFamily: 'Georgia, serif', fontSize: '11px', color: '#7788aa',
-    }).setOrigin(0.5, 0));
+    s.text('name', 0, -H / 2 + 36, view.tileName, {
+      fontFamily: t.font.display, fontSize: '20px',
+      color: t.panel.button.text, fontStyle: 'bold',
+    }, [0.5, 0]);
+
+    s.text('subtitle', 0, -H / 2 + 60, `${view.subtitle}   ·   list price $${view.price}`, {
+      fontFamily: t.font.display, fontSize: '11px', color: t.chrome.dim,
+    }, [0.5, 0]);
 
     // ── Standing bid ──────────────────────────────────────────────────────────
-    const standing = view.highBidderName
+    s.text('standing', 0, -H / 2 + 84, view.highBidderName
       ? `${view.highBidderName} leads at $${view.highBid}`
-      : 'No bids yet';
-    parts.push(this.scene.add.text(0, -H / 2 + 84, standing, {
-      fontFamily: 'Georgia, serif', fontSize: '14px',
-      color: view.highBidderName ? '#88ff88' : '#8899aa',
-    }).setOrigin(0.5, 0));
+      : 'No bids yet', {
+      fontFamily: t.font.display, fontSize: '14px',
+      color: view.highBidderName ? t.chrome.positive : t.panel.dim,
+    }, [0.5, 0]);
 
     // ── Whose turn ────────────────────────────────────────────────────────────
-    parts.push(this.scene.add.circle(-96, -H / 2 + 118, 7, view.bidderColor)
-      .setStrokeStyle(1, 0xffffff));
-    parts.push(this.scene.add.text(-82, -H / 2 + 110,
+    s.circle('bidderDot', -96, -H / 2 + 118, 7, view.bidderColor);
+    s.text('bidder', -82, -H / 2 + 110,
       `${view.bidderName} to bid   ·   $${view.bidderCash.toLocaleString()} in hand`, {
-        fontFamily: 'Georgia, serif', fontSize: '13px', color: '#ddeeff',
-      }));
+        fontFamily: t.font.display, fontSize: '13px', color: t.chrome.text,
+      });
 
     // ── Clock ─────────────────────────────────────────────────────────────────
-    parts.push(this.scene.add.rectangle(-W / 2 + 20, -H / 2 + 136, W - 40, 4, 0x1e3454)
-      .setOrigin(0, 0));
-    this.clockBar = this.scene.add.rectangle(-W / 2 + 20, -H / 2 + 136, W - 40, 4, 0xf0c040)
+    s.rectangle('clockTrack', -W / 2 + 20, -H / 2 + 136, W - 40, 4, t.panel.highlight);
+    // Rebuilt every render on purpose: its width is animated away by the clock,
+    // so the retained copy is never in the state the signature would claim.
+    this.clockBar?.destroy();
+    this.clockBar = this.scene.add
+      .rectangle(-W / 2 + 20, -H / 2 + 136, W - 40, 4, t.board.selection)
       .setOrigin(0, 0);
-    parts.push(this.clockBar);
+    this.container.add(this.clockBar);
 
     // ── Bid buttons ───────────────────────────────────────────────────────────
     view.options.forEach((amount, i) => {
       const affordable = amount <= view.bidderCash;
-      const bg  = affordable ? '#1a6b35' : '#2c3542';
+      const off = affordable ? t.panel.button.on : t.panel.button.off;
       // Three 120px buttons with 10px gutters exactly fill the frame's inner
       // width (420 - 2×20); anything wider spills over the border.
-      const btn = this.scene.add.text(-W / 2 + 20 + i * 130, 26, `Bid $${amount}`, {
-        fontFamily: 'Georgia, serif', fontSize: '14px',
-        color: affordable ? '#ffffff' : '#5a6478',
-        backgroundColor: bg, padding: { x: 10, y: 9 },
-        fixedWidth: 120, align: 'center',
-      }).setOrigin(0, 0.5);
-
-      if (affordable) {
-        btn.setInteractive({ useHandCursor: true });
-        btn.on('pointerover', () => btn.setStyle({ backgroundColor: '#27ae60' }));
-        btn.on('pointerout',  () => btn.setStyle({ backgroundColor: bg }));
-        btn.on('pointerdown', () => { this.stopClock(); this.onBid(amount); });
-      }
-      parts.push(btn);
+      s.button(`bid:${i}`, -W / 2 + 20 + i * 130, 26, {
+        label: `Bid $${amount}`,
+        style: {
+          fontFamily: t.font.display, fontSize: '14px',
+          color: affordable ? t.panel.button.text : t.panel.button.textOff,
+          backgroundColor: off, padding: { x: 10, y: 9 },
+          fixedWidth: 120, align: 'center',
+        },
+        hover: { on: affordable ? t.panel.button.hover : off, off },
+        origin: [0, 0.5],
+        onPress: () => {
+          if (!affordable) return;
+          this.stopClock();
+          this.onBid(amount);
+        },
+      });
     });
 
-    const pass = this.scene.add.text(0, 84, '❌  PASS — and you are out', {
-      fontFamily: 'Georgia, serif', fontSize: '14px', color: '#ffffff',
-      backgroundColor: '#6b1e1e', padding: { x: 18, y: 9 },
-    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-    pass.on('pointerover', () => pass.setStyle({ backgroundColor: '#922b21' }));
-    pass.on('pointerout',  () => pass.setStyle({ backgroundColor: '#6b1e1e' }));
-    pass.on('pointerdown', () => { this.stopClock(); this.onPass(); });
-    parts.push(pass);
+    s.button('pass', 0, 84, {
+      label: '❌  PASS — and you are out',
+      style: {
+        fontFamily: t.font.display, fontSize: '14px', color: t.chrome.primary.text,
+        backgroundColor: t.chrome.primary.fill, padding: { x: 18, y: 9 },
+      },
+      hover: { on: t.chrome.primary.hover, off: t.chrome.primary.fill },
+      origin: [0.5, 0.5],
+      onPress: () => { this.stopClock(); this.onPass(); },
+    });
 
-    parts.push(this.scene.add.text(0, H / 2 - 22, `Still bidding: ${view.remaining.join(', ')}`, {
-      fontFamily: 'Georgia, serif', fontSize: '10px', color: '#55667a',
+    s.text('remaining', 0, H / 2 - 22, `Still bidding: ${view.remaining.join(', ')}`, {
+      fontFamily: t.font.display, fontSize: '10px', color: t.panel.subtitle,
       wordWrap: { width: W - 40 }, align: 'center',
-    }).setOrigin(0.5, 0));
+    }, [0.5, 0]);
 
-    this.container.add(parts);
+    s.end();
     this.container.setVisible(true);
     this.startClock(view.secondsPerBid);
   }
@@ -164,7 +179,7 @@ export class AuctionPanel {
       callback: () => {
         const left = 1 - (this.timer?.getOverallProgress() ?? 1);
         bar.width = full * left;
-        bar.fillColor = left < 0.3 ? 0xe74c3c : 0xf0c040;
+        bar.fillColor = left < 0.3 ? theme().log.accent.danger : theme().board.selection;
         // Running the clock out is a pass — the rule that keeps a hot-seat
         // auction from stalling on a player who has walked away.
         if (left <= 0) { this.stopClock(); this.onPass(); }

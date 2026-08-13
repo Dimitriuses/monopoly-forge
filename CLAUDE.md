@@ -20,9 +20,9 @@ npm run verify:install  # would CI's npm accept package-lock.json?
 
 `npm run playtest` accepts `--turns N`, `--seed N`, `--headed` (watch it play),
 `--url <url>` (drive a deployed site instead of `dist/`), `--map <id>`,
-`--variants <a,b>` and `--house-rules`. The last three go through the URL
-(`?map=`, `?variants=`, `?houseRules=`) because the switches are canvas text with
-no DOM for a harness to click.
+`--variants <a,b>`, `--house-rules` and `--theme <id>`. The last four go through
+the URL (`?map=`, `?variants=`, `?houseRules=`, `?theme=`) because the switches
+are canvas text with no DOM for a harness to click.
 
 ## Invariants
 
@@ -272,6 +272,35 @@ occupants shuffle and then close up again. Anything that moves a token must go
 through `placeToken` / `snapToken` rather than setting a position directly, or it
 will land on top of somebody.
 
+### Colours come from `theme()`, and a panel is written to, not rebuilt
+
+**10. No colour literal in `ui/` or `scenes/`.** `ui/Theme.ts` holds the board's
+ground and outlines, the colour groups, the token colours, the panel palette, the
+chrome and the log's stripes; `theme()` is how you get them, `hex()` converts a
+Graphics number to a Text `'#rrggbb'`. Two themes ship, and the second is not
+decoration — it is the test: a token or a colour group that only one theme has a
+colour for fails `tests/theme.test.ts`. A theme is **not** game state, so it is
+not in `GameRules` and not in the snapshot.
+
+**10b. How a tile type draws is `registerTileDecoration`, not a branch.** The
+handler gets the tile's own frame (origin at its centre, already rotated, the
+board's interior past its top edge) plus a `label()` that places text in that
+frame the right way up. That is what makes one decoration correct on all three
+board shapes. `BoardRenderer` must never grow a `tile instanceof X` again.
+
+**10c. Panels draw onto a `Surface` (`ui/Retained.ts`).** Elements have names;
+a render writes to what is already there and destroys only what it did not ask
+for. Never call `container.removeAll(true)` in a panel again — that is what
+dropped the hover state under the cursor and made a new listener on every draw.
+A `Surface.button`'s listener is registered *once* and its handler lives in a slot
+the surface rewrites; only the hover colours are re-bound per render.
+
+**10d. A panel that measures itself reports where its buttons are.**
+`TradePanel` sizes its deed list to what the players hold, so its buttons move —
+`spots()` publishes their positions and the playtest asks (`__forge.tradeSpots()`)
+instead of keeping coordinates in `HOTSPOTS`. Any panel whose layout stops being
+fixed owes the harness the same.
+
 ### The board is drawn once, its state many times
 
 `ui/BoardRenderer.ts` holds everything inside the board square. `draw()` lays down
@@ -368,6 +397,13 @@ on `this.auction` *and* `this.auctionQueue` — a bankruptcy mid-turn puts a who
 estate up for sale, and the next player must not start rolling into it. A queued
 subject stays in the queue until it actually opens, so there is never a frame
 where the queue looks empty and the turn slips out underneath it.
+
+**Only the auction a declined property started ends the turn.** `auctionEndsTurn`
+says which one that is. A contested house and a returned estate both happen in the
+*middle* of somebody's turn — the estate sale can even open while a token is still
+walking — so ending the turn when they settle fires the walk's landing on the next
+player. That is the "🔴 BUG DETECTED — animation finished for Player 3 but the turn
+has already advanced to Player 2" the harness caught on Orbits.
 
 `TradePanel`'s hotspots are the fragile ones: its rows and buttons hang off
 `LIST_TOP` / `BUTTON_Y` / `H`, so changing any of those means recomputing

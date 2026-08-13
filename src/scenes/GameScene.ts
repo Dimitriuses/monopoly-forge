@@ -21,9 +21,8 @@ import {
   PropertyPanel,
   type PanelAction, type PanelActionKey, type PropertyView, type RentRow,
 } from '@/ui/PropertyPanel';
-import {
-  GROUP_COLORS, type TokenType,
-} from '@/config';
+import { type TokenType } from '@/config';
+import { theme } from '@/ui/Theme';
 import { CLASSIC_RULES, type GameRules } from '@/game/Rules';
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable, type Tile } from '@/tiles/Tile';
@@ -67,10 +66,6 @@ import {
 } from '@/ui/TradePanel';
 
 
-const TOKEN_HEX: Record<string, string> = {
-  topHat: '#222222', car: '#e74c3c', dog: '#e67e22', battleship: '#3498db',
-  iron: '#95a5a6', boot: '#8b4513', wheelbarrow: '#2ecc71', thimble: '#f1c40f',
-};
 
 interface SceneData {
   players: Array<{ name: string; token: TokenType; isBot?: boolean }>;
@@ -124,6 +119,13 @@ export class GameScene extends Phaser.Scene {
   } | null = null;
   /** Subjects waiting their turn under the hammer — a returned estate is a queue. */
   private auctionQueue: AuctionSubject[] = [];
+  /**
+   * Whether the auction under way is the *reason* the current turn is ending.
+   * A declined property is: the buy prompt refused it and the turn is over as
+   * soon as it sells. A returned estate and a contested house are not — they
+   * happen in the middle of somebody's turn and must leave it alone.
+   */
+  private auctionEndsTurn = false;
   /** The offer being built or reviewed, if the trade panel is open. */
   private offer: TradeOffer | null = null;
   private tradeMode: 'edit' | 'review' = 'edit';
@@ -255,6 +257,10 @@ export class GameScene extends Phaser.Scene {
       gameOver:    () => this.gameOver,
       /** Everything the turn log has recorded, newest first. */
       log:         () => this.notif.log.map((e) => `${e.type}: ${e.message}`),
+      // The trade panel measures its deed list now, so its buttons are wherever
+      // the players' holdings put them. It reports where, the same way a tile
+      // reports its centre — the harness asks instead of holding a copy.
+      tradeSpots:  () => this.tradePanel.spots(),
       // The one hook here that *writes*. The contested-house rule needs a board
       // a played game reaches only at the very end — two complete colour groups
       // and a bank down to its last house — and arranging it is far cheaper, and
@@ -300,7 +306,7 @@ export class GameScene extends Phaser.Scene {
     const index = this.players.findIndex((p) => p.id === playerId);
     if (index === -1) return null;
     return {
-      color: Phaser.Display.Color.HexStringToColor(TOKEN_HEX[this.players[index].token] ?? '#ffffff').color,
+      color: theme().tokens[this.players[index].token] ?? 0xffffff,
       // The seat number, not the initial: everyone is "Player N" by default, so
       // an initial marks every tile on the board with the same letter.
       initial: String(index + 1),
@@ -319,7 +325,7 @@ export class GameScene extends Phaser.Scene {
       const label = this.add.text(8, 6,
         String(i + 1),   // seat number — see ownerStyle for why not the initial
         {
-          fontFamily: 'Arial', fontSize: '8px', color: '#ffffff', fontStyle: 'bold',
+          fontFamily: theme().font.body, fontSize: '8px', color: '#ffffff', fontStyle: 'bold',
           backgroundColor: '#000000cc', padding: { x: 2, y: 0 },
         },
       ).setOrigin(0.5);
@@ -428,43 +434,43 @@ export class GameScene extends Phaser.Scene {
   private buildButtons(): void {
     // Buttons sit below the board, inside the game area (x < 1055 = UIScene boundary)
     this.rollBtn = this.add.text(512, 738, '🎲  ROLL DICE', {
-      fontFamily: 'Georgia, serif', fontSize: '22px', color: '#ffffff',
-      backgroundColor: '#c0392b', padding: { x: 28, y: 12 },
+      fontFamily: theme().font.display, fontSize: '22px', color: '#ffffff',
+      backgroundColor: theme().chrome.primary.fill, padding: { x: 28, y: 12 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setDepth(20);
 
     this.rollBtn.on('pointerdown', () => {
       if (this.isAnimating) return;
       this.turnManager.rollDice();
     });
-    this.rollBtn.on('pointerover', () => this.rollBtn.setStyle({ backgroundColor: '#e74c3c' }));
-    this.rollBtn.on('pointerout',  () => this.rollBtn.setStyle({ backgroundColor: '#c0392b' }));
+    this.rollBtn.on('pointerover', () => this.rollBtn.setStyle({ backgroundColor: theme().chrome.primary.hover }));
+    this.rollBtn.on('pointerout',  () => this.rollBtn.setStyle({ backgroundColor: theme().chrome.primary.fill }));
 
     // Left of the roll button, clear of the toast stack at x≈360–680.
     const tradeBtn = this.add.text(180, 738, '🤝  TRADE', {
-      fontFamily: 'Georgia, serif', fontSize: '16px', color: '#ffffff',
-      backgroundColor: '#1a4a6b', padding: { x: 16, y: 10 },
+      fontFamily: theme().font.display, fontSize: '16px', color: '#ffffff',
+      backgroundColor: theme().panel.button.on, padding: { x: 16, y: 10 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setDepth(20);
-    tradeBtn.on('pointerover', () => tradeBtn.setStyle({ backgroundColor: '#2a6b9b' }));
-    tradeBtn.on('pointerout',  () => tradeBtn.setStyle({ backgroundColor: '#1a4a6b' }));
+    tradeBtn.on('pointerover', () => tradeBtn.setStyle({ backgroundColor: theme().panel.button.hover }));
+    tradeBtn.on('pointerout',  () => tradeBtn.setStyle({ backgroundColor: theme().panel.button.on }));
     tradeBtn.on('pointerdown', () => this.openTrade());
 
     const saveBtn = this.add.text(300, 738, '💾  SAVE', {
-      fontFamily: 'Georgia, serif', fontSize: '14px', color: '#ffffff',
-      backgroundColor: '#2a3a55', padding: { x: 12, y: 9 },
+      fontFamily: theme().font.display, fontSize: '14px', color: '#ffffff',
+      backgroundColor: theme().chrome.button.fill, padding: { x: 12, y: 9 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setDepth(20);
-    saveBtn.on('pointerover', () => saveBtn.setStyle({ backgroundColor: '#3d5170' }));
-    saveBtn.on('pointerout',  () => saveBtn.setStyle({ backgroundColor: '#2a3a55' }));
+    saveBtn.on('pointerover', () => saveBtn.setStyle({ backgroundColor: theme().chrome.button.hover }));
+    saveBtn.on('pointerout',  () => saveBtn.setStyle({ backgroundColor: theme().chrome.button.fill }));
     saveBtn.on('pointerdown', () => this.saveGame());
 
     const muteBtn = this.add.text(383, 738, '🔊', {
-      fontFamily: 'Arial', fontSize: '15px',
-      backgroundColor: '#2a3a55', padding: { x: 8, y: 8 },
+      fontFamily: theme().font.body, fontSize: '15px',
+      backgroundColor: theme().chrome.button.fill, padding: { x: 8, y: 8 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setDepth(20);
     muteBtn.on('pointerdown', () => muteBtn.setText(sfx.toggleMute() ? '🔊' : '🔇'));
 
     this.jailBtn = this.add.text(710, 738, '🔓  Pay $50 to leave jail', {
-      fontFamily: 'Georgia, serif', fontSize: '14px', color: '#ffffff',
-      backgroundColor: '#7d6608', padding: { x: 14, y: 7 },
+      fontFamily: theme().font.display, fontSize: '14px', color: '#ffffff',
+      backgroundColor: theme().chrome.button.fill, padding: { x: 14, y: 7 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setDepth(10).setVisible(false).disableInteractive();
 
     this.jailBtn.on('pointerdown', () => {
@@ -514,8 +520,8 @@ export class GameScene extends Phaser.Scene {
     // Container centred in the board area
     this.buyPrompt = this.add.container(512, 400).setDepth(40).setVisible(false);
 
-    const bg = this.add.rectangle(0, 0, 360, 220, 0x0d1b35, 0.97)
-      .setStrokeStyle(2, 0x4466aa);
+    const bg = this.add.rectangle(0, 0, 360, 220, theme().panel.background, 0.97)
+      .setStrokeStyle(2, theme().chrome.panelBorder);
     this.buyPrompt.add(bg);
   }
 
@@ -532,7 +538,7 @@ export class GameScene extends Phaser.Scene {
     const canAfford = player.canAfford(price);
 
     const title = this.add.text(0, -78, tileName, {
-      fontFamily: 'Georgia, serif', fontSize: '19px', color: '#f0c040',
+      fontFamily: theme().font.display, fontSize: '19px', color: theme().chrome.heading,
       fontStyle: 'bold', align: 'center',
     }).setOrigin(0.5);
 
@@ -540,23 +546,23 @@ export class GameScene extends Phaser.Scene {
       ? `Price: $${price}   Base rent: $${baseRent}`
       : `Price: $${price}`;
     const info = this.add.text(0, -48, rentLine, {
-      fontFamily: 'Georgia, serif', fontSize: '13px', color: '#aabbcc',
+      fontFamily: theme().font.display, fontSize: '13px', color: theme().panel.body,
     }).setOrigin(0.5);
 
     const cashLine = this.add.text(0, -26, `Your cash: $${player.cash.toLocaleString()}`, {
-      fontFamily: 'Georgia, serif', fontSize: '13px',
+      fontFamily: theme().font.display, fontSize: '13px',
       color: canAfford ? '#88ff88' : '#ff8888',
     }).setOrigin(0.5);
 
     const buyBg   = canAfford ? '#1a6b35' : '#445544';
     const buyBtn  = this.add.text(-88, 58, '✅  BUY', {
-      fontFamily: 'Georgia, serif', fontSize: '16px', color: '#ffffff',
+      fontFamily: theme().font.display, fontSize: '16px', color: '#ffffff',
       backgroundColor: buyBg, padding: { x: 16, y: 10 },
     }).setOrigin(0.5);
 
     if (canAfford) {
       buyBtn.setInteractive({ useHandCursor: true });
-      buyBtn.on('pointerover', () => buyBtn.setStyle({ backgroundColor: '#27ae60' }));
+      buyBtn.on('pointerover', () => buyBtn.setStyle({ backgroundColor: theme().chrome.positive }));
       buyBtn.on('pointerout',  () => buyBtn.setStyle({ backgroundColor: buyBg }));
       buyBtn.on('pointerdown', () => {
         this.doBuyTile(player, tileId, price, tileName);
@@ -564,11 +570,11 @@ export class GameScene extends Phaser.Scene {
     }
 
     const passBtn = this.add.text(88, 58, '❌  PASS', {
-      fontFamily: 'Georgia, serif', fontSize: '16px', color: '#ffffff',
-      backgroundColor: '#6b1e1e', padding: { x: 16, y: 10 },
+      fontFamily: theme().font.display, fontSize: '16px', color: '#ffffff',
+      backgroundColor: theme().chrome.primary.fill, padding: { x: 16, y: 10 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-    passBtn.on('pointerover', () => passBtn.setStyle({ backgroundColor: '#922b21' }));
-    passBtn.on('pointerout',  () => passBtn.setStyle({ backgroundColor: '#6b1e1e' }));
+    passBtn.on('pointerover', () => passBtn.setStyle({ backgroundColor: theme().chrome.primary.hover }));
+    passBtn.on('pointerout',  () => passBtn.setStyle({ backgroundColor: theme().chrome.primary.fill }));
     passBtn.on('pointerdown', () => {
       this.hideBuyPrompt();
       // Tournament rules put a declined property under the hammer; the
@@ -897,7 +903,7 @@ export class GameScene extends Phaser.Scene {
       .map((tile) => ({
         tileId: tile.id,
         name: tile.name + (tile.isMortgaged ? ' (mortgaged)' : ''),
-        color: tile instanceof PropertyTile ? GROUP_COLORS[tile.group] : null,
+        color: tile instanceof PropertyTile ? theme().groups[tile.group] : null,
         selected: offered.includes(tile.id),
         // Buildings anywhere in the group freeze every lot in it.
         blocked: tile instanceof PropertyTile && groupBuildingCount(this.board, tile) > 0,
@@ -993,6 +999,7 @@ export class GameScene extends Phaser.Scene {
   // ── Auction ───────────────────────────────────────────────────────────────────
 
   private startAuction(tileId: number): void {
+    this.auctionEndsTurn = true;
     this.startAuctionOf(tileSubject(tileId, this.board.getTile(tileId).name));
   }
 
@@ -1022,7 +1029,7 @@ export class GameScene extends Phaser.Scene {
     return {
       tileName:   auction.subject.label,
       subtitle:   tile ? this.subtitleFor(tile) : this.subjectSubtitle(auction.subject),
-      groupColor: property ? GROUP_COLORS[property.group] : null,
+      groupColor: property ? theme().groups[property.group] : null,
       price:      tile && isOwnable(tile) ? tile.price : 0,
       bidderName: bidder.name,
       bidderColor: this.ownerStyle(bidder.id)?.color ?? 0xffffff,
@@ -1083,16 +1090,20 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    // A house auction is a step inside somebody's turn, not the end of one: it
-    // can be triggered from the property panel on anybody's turn, and ending the
-    // turn here would end somebody else's.
-    if (result?.subject.kind === 'house') {
-      this.houseContention = null;
+    // Only the auction a *declined property* started ends the turn. A contested
+    // house and a returned estate happen in the middle of one — the estate sale
+    // can even open while a token is still walking — and ending the turn there
+    // fires the walk's landing on the next player. The harness found exactly
+    // that on Orbits: "animation finished for Player 3 but the turn has already
+    // advanced to Player 2".
+    this.houseContention = null;
+    if (this.auctionEndsTurn) {
+      this.auctionEndsTurn = false;
+      this.safeEndTurn(400);
+    } else {
       this.boardView.refresh();
       this.pushUIUpdate();
       this.refreshPanel();
-    } else {
-      this.safeEndTurn(400);
     }
   }
 
@@ -1145,6 +1156,12 @@ export class GameScene extends Phaser.Scene {
    */
   private startNextQueued(): void {
     if (this.auction || this.gameOver) return;
+    // Not while a token is walking: an auction that opens mid-move takes the
+    // screen away from an animation that still has a landing to resolve.
+    if (this.isAnimating) {
+      this.time.delayedCall(300, () => this.startNextQueued());
+      return;
+    }
     const next = this.auctionQueue.shift();
     if (next) this.startAuctionOf(next);
   }
@@ -1386,7 +1403,7 @@ export class GameScene extends Phaser.Scene {
       tileId,
       name: tile.name,
       subtitle: this.subtitleFor(tile),
-      groupColor: property ? GROUP_COLORS[property.group] : null,
+      groupColor: property ? theme().groups[property.group] : null,
       ownerLabel: owner ? `Owned by ${owner.name}` : isOwnable(tile) ? 'Unowned' : '—',
       ownerColor: owner ? (this.ownerStyle(owner.id)?.color ?? null) : null,
       facts,
@@ -1859,13 +1876,13 @@ export class GameScene extends Phaser.Scene {
       this.boardView.setSelected(null);
 
       this.add.rectangle(512, 400, 520, 190, 0x000000, 0.88)
-        .setStrokeStyle(3, 0xf0c040).setDepth(90);
+        .setStrokeStyle(3, theme().board.selection).setDepth(90);
       this.add.text(512, 380, `🏆 ${winner?.name ?? 'Nobody'} wins!`, {
-        fontFamily: 'Georgia, serif', fontSize: '36px', color: '#f0c040',
+        fontFamily: theme().font.display, fontSize: '36px', color: theme().chrome.heading,
         stroke: '#000', strokeThickness: 5,
       }).setOrigin(0.5).setDepth(91);
       this.add.text(512, 432, 'Refresh to play again.', {
-        fontFamily: 'Georgia, serif', fontSize: '16px', color: '#aaaacc',
+        fontFamily: theme().font.display, fontSize: '16px', color: theme().chrome.dim,
       }).setOrigin(0.5).setDepth(91);
     });
   }

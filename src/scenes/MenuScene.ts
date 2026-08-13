@@ -5,6 +5,8 @@ import { SaveLoad } from '@/utils/SaveLoad';
 import { MAPS, mapById } from '@/maps';
 import { validateSnapshot, type GameSnapshot } from '@/game/Snapshot';
 import { knownVariants, variantNamed } from '@/game/Variants';
+import { theme, setTheme, knownThemes } from '@/ui/Theme';
+import { bakeTokenTextures, bakeBuildingTextures } from '@/ui/Textures';
 
 interface PlayerSetup {
   name: string;
@@ -53,6 +55,7 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     this.buildMapSelector();
+    this.buildThemeSelector();
 
     // ── Player count selector ─────────────────────────────────────────────────
     this.add.text(width / 2, 200, 'Number of Players', {
@@ -220,6 +223,33 @@ export class MenuScene extends Phaser.Scene {
     this.add.text(this.scale.width / 2, this.scale.height - 8, `saved ${when}`, {
       fontFamily: 'Georgia, serif', fontSize: '10px', color: '#55667a',
     }).setOrigin(0.5);
+  }
+
+  /**
+   * How the game looks. A single cycling chip in the corner rather than a row of
+   * its own: a theme is a preference, not a decision about the game, and it does
+   * not deserve the same weight on the menu as the board or the rules.
+   */
+  private buildThemeSelector(): void {
+    const chip = this.add.text(this.scale.width - 20, 20, '', {
+      fontFamily: 'Georgia, serif', fontSize: '13px',
+      color: '#8899aa', backgroundColor: '#2a2a4a', padding: { x: 10, y: 5 },
+    }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
+
+    const paint = () => chip.setText(`🎨  ${theme().name}`);
+    paint();
+
+    chip.on('pointerdown', () => {
+      const ids = knownThemes().map((t) => t.id);
+      const next = ids[(ids.indexOf(theme().id) + 1) % ids.length];
+      setTheme(next);
+      paint();
+      // The pieces and the buildings are baked textures, so a new palette means
+      // baking them again. The menu itself keeps its own colours — it is the
+      // frame around the game, not part of the board.
+      bakeTokenTextures(this);
+      bakeBuildingTextures(this);
+    });
   }
 
   /**

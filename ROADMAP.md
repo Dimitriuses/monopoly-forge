@@ -21,8 +21,11 @@ switches; decks travel with a map; the numbers the classic game hardcoded are a
 rule set a map can override; a turn is a list of phases a rule set can add to;
 and the speed die is the proof, added without the engine learning what one is.
 The last rule the game was missing — auctioning the houses the bank is short of —
-went in with it. Next are 8c (presentation as a theme) and 8d (the simulation
-platform that runs M7's bots a thousand games at a time).
+went in with it. **8c is done too**: colours, fonts and per-tile-type decoration
+are a theme object with two palettes registered, and the panels update what is on
+screen instead of destroying it. That leaves **8d**, the simulation platform that
+runs M7's bots a thousand games at a time — and the last thing standing between
+the engine and being measurable.
 
 **The destination is M8: an engine for Monopoly-style games** — configurable maps,
 rules and presentation. M1–M7 build the classic game that the engine has to be able
@@ -309,7 +312,7 @@ house", "which lot the winner builds on", "what a bus face does on a board with
 no Chance tiles" — each is a decision, each is written down in the file that makes
 it, and each is a line in KNOWNISSUES where it departs from the printed rules.
 
-### 8c — Presentation becomes a theme
+### 8c — Presentation becomes a theme · done
 
 - [x] **Extract `BoardRenderer`.** Done alongside M3, before the ownership and
       building work went in — `src/ui/BoardRenderer.ts` owns everything inside the
@@ -318,24 +321,36 @@ it, and each is a line in KNOWNISSUES where it departs from the printed rules.
       `house` and `hotel` textures are drawn on the board, and the `token_*`
       textures — unused since M1 — are now baked per token type and drawn as the
       pieces.
-- [ ] **A theme object** for colours, fonts and tile decoration, replacing the
-      `GROUP_COLORS` / `TOKEN_HEX` constants and the literals still inside
-      `BoardRenderer`.
-- [ ] **Per-element draw overrides**, so a game can replace how one tile type or
-      token renders without forking the renderer.
-- [ ] **Diff a panel instead of redrawing it** (moved from M6). The three panels
-      skip a rebuild when the view has not changed (M6), but a view that *has*
-      changed still destroys and re-creates every child. Updating in place is the
-      same problem as rendering a theme — hold references to the drawn elements and
-      write to them — so it is worth solving once, here, rather than three times in
-      three hand-written panels.
-- [ ] **Measure a panel's list instead of reserving it** (moved from KNOWNISSUES).
-      `TradePanel` lays out 11 deed rows per side whatever the players hold, so a
-      two-deed trade is mostly empty space and everything below the list hangs off
-      constants derived from that count. It belongs with the item above rather
-      than on its own: both rewrite the same three panels, and both move the
-      layout constants the playtest's `HOTSPOTS` are computed from — doing them
-      separately means recalculating those by hand twice.
+- [x] **A theme object.** `ui/Theme.ts`: the board's ground, outlines and labels,
+      the colour groups, the token colours, the panel palette, the chrome around
+      it all, and the turn log's stripes — one object, registered by name and
+      reached through `theme()`. `GROUP_COLORS` and `TOKEN_HEX` are gone rather
+      than moved. A theme is *not* in the save file and not in `GameRules`: a game
+      is the same game whatever colour it was played in, and a person who prefers
+      one palette should not have it restored to somebody else's on load. Two
+      ship — **Classic** and **Parchment** — and the second one exists to catch
+      what one theme hides; a test refuses a token or a colour group that only
+      one of them has a colour for.
+- [x] **Per-element draw overrides.** `ui/TileDecor.ts`:
+      `registerTileDecoration(type, fn)`, handed the tile's own frame — origin at
+      its middle, already rotated, the board's interior past its top edge — which
+      is what makes a decoration written once correct on a square, a circle and a
+      three-ring spiral. A lot's colour band is now one of these rather than a
+      branch in the renderer, and the nine other built-in types gained a glyph
+      where a lot has its stripe. A type nobody decorated still draws.
+- [x] **Diff a panel instead of redrawing it** (moved from M6). `ui/Retained.ts`
+      is a `Surface`: elements have names, a render writes to whatever is already
+      there, and only what the pass did not ask for is destroyed. All three panels
+      draw onto one. A button's *listener* is registered once and its handler
+      lives in a slot the surface rewrites, so hovering keeps working when the
+      view changes under the cursor and nothing accumulates.
+- [x] **Measure a panel's list instead of reserving it** (moved from KNOWNISSUES).
+      `TradePanel` sizes its deed list to what the players actually hold, and its
+      whole layout follows from that. Which means the buttons move — so the panel
+      **reports where they are** (`spots()`, published as `__forge.tradeSpots()`)
+      and the playtest asks, exactly as it already asks a tile for its centre.
+      Three entries left the harness's `HOTSPOTS` table and the note warning that
+      they had to be recomputed by hand went with them.
 
 ### 8d — A simulation platform
 

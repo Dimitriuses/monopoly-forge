@@ -35,6 +35,7 @@ Everything is mouse-driven — there is no keyboard input.
 | Change a player's token | Click the token name next to `P1`, `P2`, … to cycle |
 | Play against the computer | Each seat says **🙋 Human** or **🤖 Bot** — click to swap. Seats 2+ are bots by default |
 | Turn on a house rule or a variant | Click a switch under **House rules & variants** before starting, or use `?variants=speedDie` |
+| Change how it looks | 🎨 in the menu's top-right corner cycles the theme, or `?theme=parchment` |
 | Start | **▶ START GAME**, or **↻ CONTINUE SAVED GAME** if one is waiting |
 | Roll | **🎲 ROLL DICE**, below the board (greyed out when it is not your turn to roll) |
 | Buy the property you landed on | **✅ BUY** in the prompt |
@@ -87,6 +88,7 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 - **House rules** — Free Parking jackpot, double salary for landing on GO, and no-auction, switchable on the menu and all actually read
 - **HUD** — animated dice, per-player cash, active-player highlight, jail markers, and a turn log beside the board. The log keeps the whole game, not just what fits: scroll the wheel over it to read back
 - **Tokens that share a square** cluster instead of stacking — a line for two, a triangle for three, a ring beyond that — reshaping as pieces arrive and leave, including ones just passing through
+- **Themes** — colours, fonts and how each tile type draws are one object, not literals scattered through the UI. **Classic** and **Parchment** ship; a new tile kind registers its own decoration and is drawn in the tile's own frame, so it comes out right on a square board, a circle and a three-ring spiral alike
 - **Sound** — seven effects synthesised at runtime with Web Audio, no audio files, with a mute button
 - **Determinism** — `?seed=12345` replays an identical game
 
@@ -141,12 +143,12 @@ Three axes of customisation, none of which should require editing engine code:
 |---|---|
 | **Maps** | A board of any length and shape — not 40 tiles in a square — with your own tiles, groups, prices and named anchors (where "jail" is, where "start" is). *Done: see the round and multi-ring boards that ship* |
 | **Rules** | New tile types and card effects registered from outside, a rule set that decides jail terms, building rules and the economy, and a turn whose phases, order and win condition come from that rule set. *Done — the speed die is the proof: its own dice and an extra phase, with the engine never learning what one is* |
-| **Presentation** | How each element draws — tiles, tokens, cards, HUD — swapped per theme, without touching the rules |
+| **Presentation** | How each element draws — tiles, tokens, panels, HUD — swapped per theme, without touching the rules. *Done: two themes ship, and how a tile type draws is a registered decoration rather than a branch in the renderer* |
 
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 367 unit tests pin down.
+it is what the 375 unit tests pin down.
 
 ### What already supports it
 
@@ -222,7 +224,7 @@ Three consequences worth the trouble:
 **The model runs in Node.** `src/config.ts` deliberately contains no Phaser
 import — the `Phaser.Game` options live in `main.ts` instead — so everything under
 `game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 367 unit tests run in ~8 s with no jsdom, and it is the seam a
+That is what lets 375 unit tests run in ~8 s with no jsdom, and it is the seam a
 headless AI opponent would plug into.
 
 **Games are reproducible.** Every dice roll and both deck shuffles draw from one
@@ -305,12 +307,13 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test                # 367 unit tests, plain Node, ~8 s
+npm test                # 375 unit tests, plain Node, ~8 s
 npm run typecheck       # tsc --noEmit
 npm run playtest        # build first: plays 30 seeded turns in a headless browser
 npm run playtest -- --bots   # hand every seat to a bot and watch them play it out
 npm run playtest -- --house-rules      # ...with the Free Parking jackpot on
 npm run playtest -- --variants speedDie
+npm run playtest -- --theme parchment    # ...and in the other palette
 npm run screenshots
 npm run verify:install  # would CI's npm accept this lockfile?
 ```
