@@ -41,6 +41,8 @@ const SEED = Number(value('seed', 20260512));
 const EXTERNAL_URL = value('url', null);
 /** Which board to play on — the alternatives are not 40 tiles in a square. */
 const MAP = value('map', null);
+/** Comma-separated variants to switch on, e.g. `--variants speedDie`. */
+const VARIANTS = value('variants', null);
 
 // The Phaser canvas is a fixed 1280×800 with no scale manager, so game
 // coordinates map 1:1 onto canvas pixels.
@@ -172,7 +174,8 @@ async function main() {
   }
 
   const url = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}debug=1&seed=${SEED}`
-            + (MAP ? `&map=${MAP}` : '');
+            + (MAP ? `&map=${MAP}` : '')
+            + (VARIANTS ? `&variants=${VARIANTS}` : '');
   console.log(`▶ playtest: ${url}`);
   console.log(`  ${TURNS} turns, seed ${SEED}${TAKE_SHOTS ? ', capturing screenshots' : ''}`);
 
@@ -238,6 +241,17 @@ async function main() {
       throw new Error(`expected 3 players, got ${start.players.length}`);
     }
 
+    // A variant that reshapes the turn has to be *in* the turn — and if the
+    // extra step ever held the turn without giving it back, the stall detector
+    // below is what would catch it.
+    if (VARIANTS?.includes('speedDie')) {
+      const turn = await page.evaluate(() => window.__forge.phases());
+      if (!turn.includes('SPEED_BONUS')) {
+        throw new Error(`the speed die was switched on but the turn is ${turn.join(' → ')}`);
+      }
+      console.log(`  ✓ speed die in play — the turn is ${turn.length} phases`);
+    }
+
     // ── Bot mode: no clicking, just check they play a real game ───────────────
     if (BOTS) {
       const bots = start.players.filter((p) => p.isBot).length;
@@ -247,8 +261,24 @@ async function main() {
       let stalls = 0;
       let finished = false;
       let previous = '';
+      // The last houses go under the hammer, and a played game only reaches that
+      // board at the very end. Arrange it a third of the way in and watch what
+      // the bots do — bidding for a house is a prompt they owe an answer to.
+      const shortageAt = Math.max(3, Math.floor(TURNS / 3));
+      let houseAuction = null;
+
       for (let tick = 0; tick < TURNS; tick++) {
         await sleep(1200);
+
+        if (tick === shortageAt) {
+          const lot = await page.evaluate(() => window.__forge.forceHouseShortage());
+          if (lot === null) console.log('  · this board cannot make a house shortage — skipped');
+          else console.log(`  · arranged a house shortage around tile ${lot}`);
+        }
+        if (!houseAuction) {
+          const state = await page.evaluate(() => window.__forge.auctionState());
+          if (state?.subject?.kind === 'house') houseAuction = state;
+        }
         if (await page.evaluate(() => window.__forge.gameOver())) {
           console.log(`  ✓ a bot won the game outright after ${tick} ticks`);
           finished = true;
@@ -295,10 +325,21 @@ async function main() {
       console.log(`  cash           ${end.players.map((p) => `$${p.cash}`).join(', ')}`);
       console.log(`  tiles owned    ${owned}`);
       console.log(`  bank h/h       ${end.bank.houses}/${end.bank.hotels}`);
+      const built = end.board.tiles.reduce((n, t) => n + (t.houses ?? 0), 0);
+      console.log(`  houses built   ${built}`);
+      console.log(`  house auction  ${houseAuction
+        ? `held, ${houseAuction.bidders.length} bidders, opened at $${houseAuction.minimumBid}`
+        : 'never happened'}`);
       console.log('');
 
       if (!moved) throw new Error('no bot token ever left GO');
       if (owned === 0) throw new Error('the bots never bought anything');
+      if (!houseAuction) {
+        throw new Error('the bank ran short of houses and nothing went under the hammer');
+      }
+      if (houseAuction.bidders.length < 2) {
+        throw new Error(`a contested house drew ${houseAuction.bidders.length} bidder(s)`);
+      }
 
       if (errors.length) {
         console.error(`✗ ${errors.length} console error(s):`);

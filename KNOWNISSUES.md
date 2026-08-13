@@ -15,20 +15,42 @@ are returned unowned (`Estate.transferEstate` with no creditor). The standard
 rules have the bank auction each of them immediately. Owing another player works
 correctly — the whole estate passes to them.
 
-### The last houses go to whoever's turn comes first
+The machinery is no longer the obstacle: `Auction` sells a *subject* rather than a
+tile id, so a queue of deeds is expressible. What is missing is the sequencing —
+several auctions one after another, in the middle of somebody else's turn.
 
-The bank's 32 houses and 12 hotels are a shared, limited supply, and the game
-enforces that: you cannot build when the stock is empty, and
-`BuildRules.canSellHotel` refuses to break a hotel the bank cannot hand four
-houses back for (`Bank.sellHotel` would otherwise leave the lot bare and lose
-them). What is missing is the standard rule for *contention* — when several
-players want more houses than the bank holds, they should be auctioned.
+### The winner of a contested house does not choose the lot
 
-Here, turn order decides instead: whoever clicks Build first gets them. This is
-not a small omission dressed up, but it is not straightforward either — a
-turn-based click UI never produces the simultaneous demand the rule is written
-for. See ROADMAP M8b item 4 for what implementing it actually needs; it is
-scheduled last there because it needs two of the other items first.
+The last houses *are* auctioned now (`game/Contention.ts`), which closes the gap
+that stood here from M5. Two readings of the rule were decided rather than asked,
+and both are deliberate:
+
+- **"Wishes to buy" means "could and can afford to."** A player who owns a lot
+  the build rules would allow a house on, and holds the cash, is bidding whether
+  they clicked anything or not. It is generous — somebody who was not going to
+  build still counts — which matters only when the bank is down to its last
+  houses, which is exactly when the rule is meant to bite.
+- **The winner does not nominate.** Whoever asked for the house gets the lot they
+  asked for; anybody else gets the cheapest lot they could legally build on. The
+  official rule lets the winner pick, and a hot-seat game could ask them — but
+  only with a prompt, which a bot would then also owe an answer to.
+
+Neither can be reached by a game played through: it needs two complete colour
+groups and a bank down to one house. `__forge.forceHouseShortage()` arranges it
+for the playtest, which is the only reason the browser run exercises it at all.
+
+### The speed die leaves out its triples rule
+
+`game/SpeedDie.ts` implements the third die, the Mr. Monopoly face and the bus
+face. Two parts of the official variant are missing on purpose:
+
+- **Triples** (all three dice alike) should let you move to any space you choose.
+  That needs a pick-a-tile prompt, and a bot owes an answer to every prompt.
+- **The speed die is not in play until you have been round the board once.** That
+  is a per-player flag, and anything that is game state has to go in the snapshot.
+
+Doubles are unaffected: `SpeedDice` reports them from the two white dice, so
+three doubles still means jail.
 
 ### The auction clock is fixed at 15 seconds
 
@@ -54,7 +76,8 @@ key, so a new save overwrites the old one with no warning.
 `game/Bot.ts` answers an offer (`acceptTrade`) but has nothing that *makes* one,
 so bots only ever trade when a human proposes. In a bot-only game that means
 colour groups are completed by chance alone, and often not at all — which is why
-a long `--bots` run usually ends with the bank's houses untouched.
+a long `--bots` run ends with the bank's houses untouched unless the harness
+arranges a shortage itself.
 
 ### The bots are a baseline, not a challenge
 
@@ -66,11 +89,15 @@ and something for M8d to measure a better policy against.
 
 ### What a repeated dice face means is still hardcoded
 
-The turn is a pipeline now, and a rule set names its order and win condition — but
-one turn rule is still an `if` inside `TurnManager.rollDice`: three doubles send
-you to jail. A variant that counts a third die, or wants triples to mean something
-else, cannot say so. It is the first job of ROADMAP 8b item 2 (the speed die),
-which is the variant that needs it.
+The turn is a pipeline, a rule set names its order and win condition, and a
+variant can supply its own dice — but one turn rule is still an `if` inside
+`TurnManager.rollDice`: *N* doubles in a row send you to jail. `doublesToJail` is
+a rule value and `Dice` is substitutable, which between them cover the speed die
+(it reports doubles from the two white dice and the classic rule applies
+unchanged). What no rule set can say is that a *triple* means something, which is
+why the speed die's triples rule is missing above. Opening it means the roll
+becoming a phase handler's business rather than `rollDice`'s, and there is no
+consumer for it yet beyond that one rule.
 
 ### The alternative boards are test boards
 
@@ -85,7 +112,9 @@ then jumps back out to GO.
 `tools/playtest.mjs` never touches the menu's house-rule switches, so the seeded
 run only ever exercises the default rule set. The Free Parking jackpot and the
 double GO salary were verified by hand against the real canvas; nothing stops
-them regressing silently.
+them regressing silently. Variants are better off — `--variants speedDie` selects
+one through the URL and the run asserts the turn actually grew a phase — but the
+three booleans beside them are still untested.
 
 ---
 

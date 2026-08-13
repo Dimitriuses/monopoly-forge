@@ -27,6 +27,12 @@ export interface GameRules {
   hotelLimit: number;
   /** Houses a lot needs before it can take a hotel. */
   housesBeforeHotel: number;
+  /**
+   * Sell a house at auction when more players could buy one than the bank has
+   * left. On in the classic rules, because it *is* the classic rule — see
+   * `game/Contention.ts`. Off, and turn order decides who gets the last ones.
+   */
+  houseAuctions: boolean;
 
   // ── The turn itself ─────────────────────────────────────────────────────────
   // Named strategies, not functions: a rule set is saved with the game, and a
@@ -38,6 +44,12 @@ export interface GameRules {
   winCondition: BuiltInWinCondition | (string & {});
   /** Rounds the `roundLimit` win condition allows. 0 means no limit. */
   roundLimit: number;
+  /**
+   * Variants switched on, by name — see `game/Variants.ts`. A variant is the
+   * rule that is neither a number nor a strategy: different dice, an extra step
+   * in the turn, or both. `['speedDie']` is the one that ships.
+   */
+  variants: string[];
 
   // ── House rules: switchable from the menu ───────────────────────────────────
   /** Taxes and fines pool on Free Parking instead of going to the bank. */
@@ -57,10 +69,12 @@ export const CLASSIC_RULES: GameRules = {
   houseLimit: 32,
   hotelLimit: 12,
   housesBeforeHotel: 4,
+  houseAuctions: true,
 
   turnOrder: 'seat',
   winCondition: 'lastSolvent',
   roundLimit: 0,
+  variants: [],
 
   freeParkingJackpot: false,
   doubleGoSalary: false,
@@ -78,8 +92,12 @@ export const HOUSE_RULE_LABELS: Record<HouseRuleFlag, string> = {
 
 /** Layer overrides — a map's, then a player's — over the classic rule set. */
 export function resolveRules(...overrides: Array<Partial<GameRules> | undefined>): GameRules {
-  return overrides.reduce<GameRules>(
+  const resolved = overrides.reduce<GameRules>(
     (rules, layer) => (layer ? { ...rules, ...layer } : rules),
     { ...CLASSIC_RULES },
   );
+  // A layer that names variants replaces the list rather than adding to it — a
+  // map saying "played with the speed die" is a statement about the whole game.
+  // Copied so no rule set ever shares `CLASSIC_RULES.variants` by reference.
+  return { ...resolved, variants: [...resolved.variants] };
 }

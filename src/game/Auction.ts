@@ -7,18 +7,42 @@ import type { Player } from './Player';
 //
 // No timer lives here. The UI runs a countdown and calls pass() when it expires,
 // which keeps the rule (a pass is final) in one place and the clock in the other.
+//
+// What is under the hammer is a *subject*, not a tile id. Bidding is the same
+// procedure whatever is being sold, and two other rules already want it: houses
+// the bank is short of go to auction (ROADMAP 8b), and a bankrupt player's
+// estate returned to the bank should be sold deed by deed (KNOWNISSUES). A tile
+// id in the constructor made both of those need a second implementation of
+// round-robin bidding, which is the wrong thing to have two of.
+
+/** What is being sold. `kind` says how to read `id`. */
+export interface AuctionSubject {
+  /** `'tile'` is the one the base game uses; a variant may add its own. */
+  kind: string;
+  /** A tile id for `'tile'`; whatever the kind means otherwise. */
+  id: number;
+  /** What the panel calls it. */
+  label: string;
+}
 
 export interface AuctionResult {
-  tileId: number;
+  subject: AuctionSubject;
   winnerId: string | null;   // null when every bidder passed without a bid
   amount: number;
 }
 
 export const MIN_BID_INCREMENT = 10;
 
+/** The subject for the ordinary case: a deed nobody bought. */
+export function tileSubject(id: number, label: string): AuctionSubject {
+  return { kind: 'tile', id, label };
+}
+
 export class Auction {
-  readonly tileId: number;
+  readonly subject: AuctionSubject;
   readonly increment: number;
+  /** The opening price. Defaults to one increment, which is no reserve at all. */
+  readonly reserve: number;
 
   /** Bidders still in, in seat order. A pass removes one for good. */
   private active: Player[];
@@ -28,11 +52,20 @@ export class Auction {
   highBidderId: string | null = null;
   complete = false;
 
-  constructor(tileId: number, bidders: Player[], increment: number = MIN_BID_INCREMENT) {
-    this.tileId    = tileId;
+  constructor(
+    subject: AuctionSubject, bidders: Player[],
+    increment: number = MIN_BID_INCREMENT, reserve: number = increment,
+  ) {
+    this.subject   = subject;
     this.increment = increment;
+    this.reserve   = Math.max(reserve, increment);
     this.active    = bidders.filter((p) => !p.isBankrupt);
     if (this.active.length === 0) this.complete = true;
+  }
+
+  /** The tile under the hammer, or null when it is not a tile that is being sold. */
+  get tileId(): number | null {
+    return this.subject.kind === 'tile' ? this.subject.id : null;
   }
 
   /** Whose turn it is to bid or pass, or null once the auction is over. */
@@ -45,9 +78,13 @@ export class Auction {
     return this.active;
   }
 
-  /** The lowest bid that would be accepted right now. */
+  /**
+   * The lowest bid that would be accepted right now. The first bid has to clear
+   * the reserve — a deed has none, but a contested house does, or scarcity would
+   * make houses *cheaper* than the printed price.
+   */
   get minimumBid(): number {
-    return this.highBid + this.increment;
+    return this.highBid === 0 ? this.reserve : this.highBid + this.increment;
   }
 
   /** Whether this player could raise at all — used to grey out the bid buttons. */
@@ -82,7 +119,7 @@ export class Auction {
 
   get result(): AuctionResult | null {
     if (!this.complete) return null;
-    return { tileId: this.tileId, winnerId: this.highBidderId, amount: this.highBid };
+    return { subject: this.subject, winnerId: this.highBidderId, amount: this.highBid };
   }
 
   // ─── Internals ──────────────────────────────────────────────────────────────

@@ -34,7 +34,7 @@ Everything is mouse-driven — there is no keyboard input.
 | Choose 2–6 players | Click a number on the menu |
 | Change a player's token | Click the token name next to `P1`, `P2`, … to cycle |
 | Play against the computer | Each seat says **🙋 Human** or **🤖 Bot** — click to swap. Seats 2+ are bots by default |
-| Turn on a house rule | Click a switch under **House rules** before starting |
+| Turn on a house rule or a variant | Click a switch under **House rules & variants** before starting, or use `?variants=speedDie` |
 | Start | **▶ START GAME**, or **↻ CONTINUE SAVED GAME** if one is waiting |
 | Roll | **🎲 ROLL DICE**, below the board (greyed out when it is not your turn to roll) |
 | Buy the property you landed on | **✅ BUY** in the prompt |
@@ -77,7 +77,9 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 - **Jail** — enter by tile, card or three doubles; leave by doubles, a $50 fine, a Get Out of Jail Free card, or the forced fine after three turns
 - **Ownership on the board** — an owner-coloured band with the owner's seat number on every owned tile, `M` when it is mortgaged, houses and hotels drawn along the colour stripe
 - **Development** — click a tile for its rent ladder, costs and owner; build and sell houses and hotels, mortgage and redeem, with the colour-group and even-building rules enforced and every refusal explained
-- **Auctions** — a declined property goes under the hammer: round-robin bidding, a pass forfeits, and a per-bidder clock passes for anyone who lets it run out
+- **Auctions** — a declined property goes under the hammer: round-robin bidding, a pass forfeits, and a per-bidder clock passes for anyone who lets it run out. What is being sold is a *subject*, not necessarily a deed, which is how the last houses get auctioned too
+- **The bank's last houses are contested** — when more players could buy a house than the bank has left, the next one is auctioned at a reserve rather than going to whoever asked first. "Wanting one" is decided from the board, not from a prompt, so a bot answers it the same way a person does
+- **Variants** — a rule that is neither a number nor a strategy is a registered bundle: its own dice, an extra step in the turn, or both. **The speed die** ships as one — a third die whose numbers add to your roll, whose Mr. Monopoly face sends you to the next deed that is not yours, and whose bus takes you to the next card tile. Switch it on from the menu or with `?variants=speedDie`
 - **Trading** — deeds, cash and jail cards in one offer, with propose / accept / decline / counter, netted cash, and buildings blocking the lots they stand on
 - **Bankruptcy that settles** — a debt is met from cash, then by selling buildings and mortgaging deeds, and only then does the player go under, handing their whole estate to the creditor. The last solvent player wins
 - **Bot opponents** — hand any seat to a bot and play on your own. They buy, bid, build, mortgage, answer trades and work out how to leave jail. The policy is a plain deterministic function of the game state, with no Phaser and no randomness of its own, so the same bots will drive the headless simulator
@@ -138,13 +140,13 @@ Three axes of customisation, none of which should require editing engine code:
 | Axis | What you should be able to supply |
 |---|---|
 | **Maps** | A board of any length and shape — not 40 tiles in a square — with your own tiles, groups, prices and named anchors (where "jail" is, where "start" is). *Done: see the round and multi-ring boards that ship* |
-| **Rules** | New tile types and card effects registered from outside, a rule set that decides jail terms, building rules and the economy, and a turn whose phases, order and win condition come from that rule set. *Done, except the speed-die variant and contention for scarce houses* |
+| **Rules** | New tile types and card effects registered from outside, a rule set that decides jail terms, building rules and the economy, and a turn whose phases, order and win condition come from that rule set. *Done — the speed die is the proof: its own dice and an extra phase, with the engine never learning what one is* |
 | **Presentation** | How each element draws — tiles, tokens, cards, HUD — swapped per theme, without touching the rules |
 
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 331 unit tests pin down.
+it is what the 359 unit tests pin down.
 
 ### What already supports it
 
@@ -220,7 +222,7 @@ Three consequences worth the trouble:
 **The model runs in Node.** `src/config.ts` deliberately contains no Phaser
 import — the `Phaser.Game` options live in `main.ts` instead — so everything under
 `game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 331 unit tests run in ~8 s with no jsdom, and it is the seam a
+That is what lets 359 unit tests run in ~8 s with no jsdom, and it is the seam a
 headless AI opponent would plug into.
 
 **Games are reproducible.** Every dice roll and both deck shuffles draw from one
@@ -249,7 +251,10 @@ src/
 │   ├── Bank.ts           Transfers, purchase, mortgage, house/hotel stock
 │   ├── BuildRules.ts     Colour-group, even-building and mortgage legality
 │   ├── Rent.ts           What a tile charges: monopolies, railroads, utilities
-│   ├── Auction.ts        Round-robin bidding, pass-forfeits, settlement
+│   ├── Auction.ts        Round-robin bidding over a subject, reserve, settlement
+│   ├── Contention.ts     Who is claiming the bank's last houses, and where one goes
+│   ├── Variants.ts       Variant registry: a rule set's own dice and turn steps
+│   ├── SpeedDie.ts       The speed die, built entirely on those two seams
 │   ├── Trade.ts          Two-sided offers: validation, netting, counters
 │   ├── Estate.ts         Fire sales, debt settlement, bankruptcy transfer
 │   ├── Snapshot.ts       Capture/restore the whole game, and validate a save
@@ -300,7 +305,7 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test                # 331 unit tests, plain Node, ~8 s
+npm test                # 359 unit tests, plain Node, ~8 s
 npm run typecheck       # tsc --noEmit
 npm run playtest        # build first: plays 30 seeded turns in a headless browser
 npm run playtest -- --bots   # hand every seat to a bot and watch them play it out

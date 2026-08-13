@@ -1,5 +1,11 @@
 import { dwarn } from '@/utils/log';
 import { liquidValue } from './Estate';
+import { applyVariants } from './Variants';
+// Side-effect import: the variants that ship register themselves, the same way
+// the built-in tile types do. It has to be a module everything that builds a
+// turn already reaches, and `SpeedDie` imports nothing from here but types, so
+// there is no cycle at runtime.
+import './SpeedDie';
 import type { Board } from './Board';
 import type { Dice } from './Dice';
 import type { Player } from './Player';
@@ -241,6 +247,8 @@ export class TurnFlow {
     this.rules    = rules;
     this.nextSeat = turnOrderNamed(rules.turnOrder);
     this.outcome  = winConditionNamed(rules.winCondition);
+    // Last, so a variant reshapes a turn that is otherwise fully built.
+    applyVariants(rules, this);
   }
 
   get names(): TurnPhase[] {

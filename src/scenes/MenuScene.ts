@@ -4,6 +4,7 @@ import { TOKEN_LABELS, DEFAULT_HOUSE_RULES, HOUSE_RULE_LABELS } from '@/config';
 import { SaveLoad } from '@/utils/SaveLoad';
 import { MAPS, mapById } from '@/maps';
 import { validateSnapshot, type GameSnapshot } from '@/game/Snapshot';
+import { knownVariants, variantNamed } from '@/game/Variants';
 
 interface PlayerSetup {
   name: string;
@@ -17,6 +18,9 @@ export class MenuScene extends Phaser.Scene {
   private setupContainer!: Phaser.GameObjects.Container;
   private countButtons: Map<number, Phaser.GameObjects.Text> = new Map();
   private houseRules: HouseRules = { ...DEFAULT_HOUSE_RULES };
+  /** Variants switched on. `?variants=speedDie` preselects, the chips override. */
+  private variants: string[] = new URLSearchParams(window.location.search)
+    .get('variants')?.split(',').filter((name) => knownVariants().includes(name)) ?? [];
   /** `?map=<id>` preselects a board; the chips override it. */
   private mapId: string = mapById(
     new URLSearchParams(window.location.search).get('map'),
@@ -143,19 +147,39 @@ export class MenuScene extends Phaser.Scene {
    */
   private buildHouseRules(): void {
     const { width } = this.scale;
-    const keys = Object.keys(HOUSE_RULE_LABELS) as Array<keyof HouseRules>;
+
+    // The switches are house rules *and* registered variants in one row: both
+    // are things you turn on before starting, and a variant that registers
+    // itself appears here without this scene being edited.
+    const chips: Array<{ label: string; on: () => boolean; toggle: () => void }> = [
+      ...(Object.keys(HOUSE_RULE_LABELS) as Array<keyof HouseRules>).map((key) => ({
+        label:  HOUSE_RULE_LABELS[key],
+        on:     () => this.houseRules[key],
+        toggle: () => { this.houseRules[key] = !this.houseRules[key]; },
+      })),
+      ...knownVariants().map((name) => ({
+        label:  variantNamed(name).label,
+        on:     () => this.variants.includes(name),
+        toggle: () => {
+          this.variants = this.variants.includes(name)
+            ? this.variants.filter((v) => v !== name)
+            : [...this.variants, name];
+        },
+      })),
+    ];
 
     // One row across, not a column: six player rows can reach y=578 and the
     // START button starts at y=690, so there is only one line's worth of space.
-    const chipW = 230;
+    // The chips shrink to fit rather than running off the edge as more register.
     const gap   = 15;
-    const left  = width / 2 - (keys.length * chipW + (keys.length - 1) * gap) / 2;
+    const chipW = Math.min(230, (width - 80 - (chips.length - 1) * gap) / chips.length);
+    const left  = width / 2 - (chips.length * chipW + (chips.length - 1) * gap) / 2;
 
-    this.add.text(width / 2, 600, 'House rules', {
+    this.add.text(width / 2, 600, 'House rules & variants', {
       fontFamily: 'Georgia, serif', fontSize: '14px', color: '#7788aa',
     }).setOrigin(0.5);
 
-    keys.forEach((key, i) => {
+    chips.forEach((chip, i) => {
       const row = this.add.text(left + i * (chipW + gap), 626, '', {
         fontFamily: 'Georgia, serif', fontSize: '15px',
         color: '#aaaacc', backgroundColor: '#2a2a4a',
@@ -163,16 +187,12 @@ export class MenuScene extends Phaser.Scene {
       }).setInteractive({ useHandCursor: true });
 
       const paint = () => {
-        const on = this.houseRules[key];
-        row.setText(`${on ? '☑' : '☐'}  ${HOUSE_RULE_LABELS[key]}`);
-        row.setColor(on ? '#f0c040' : '#8899aa');
+        row.setText(`${chip.on() ? '☑' : '☐'}  ${chip.label}`);
+        row.setColor(chip.on() ? '#f0c040' : '#8899aa');
       };
       paint();
 
-      row.on('pointerdown', () => {
-        this.houseRules[key] = !this.houseRules[key];
-        paint();
-      });
+      row.on('pointerdown', () => { chip.toggle(); paint(); });
     });
   }
 
@@ -288,7 +308,7 @@ export class MenuScene extends Phaser.Scene {
       players: this.players,
       seed: this.readSeedFromUrl(),
       mapId: this.mapId,
-      houseRules: this.houseRules,
+      houseRules: { ...this.houseRules, variants: this.variants },
     });
     // UIScene is launched by GameScene once the model is ready
   }

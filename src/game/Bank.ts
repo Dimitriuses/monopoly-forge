@@ -77,10 +77,11 @@ export class Bank {
 
   // ─── Houses / Hotels ─────────────────────────────────────────────────────────
 
-  buyHouse(player: Player, tile: PropertyTile): boolean {
-    if (this.houses <= 0 || !player.canAfford(tile.houseCost)) return false;
+  /** `price` overrides the printed cost — a contested house sells at the bid. */
+  buyHouse(player: Player, tile: PropertyTile, price: number = tile.houseCost): boolean {
+    if (this.houses <= 0 || !player.canAfford(price)) return false;
     if (tile.houses >= this.housesPerHotel || tile.hasHotel) return false;
-    player.pay(tile.houseCost);
+    player.pay(price);
     tile.houses++;
     this.houses--;
     return true;

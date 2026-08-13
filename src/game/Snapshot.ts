@@ -12,6 +12,7 @@ import { Dice, type DiceResult } from './Dice';
 import { Player } from './Player';
 import { TurnManager } from './TurnManager';
 import { knownTurnOrders, knownWinConditions } from './TurnFlow';
+import { diceFor, knownVariants } from './Variants';
 
 // ─── Snapshot ─────────────────────────────────────────────────────────────────
 // The whole game as plain data, and back again. This is the half that save/load
@@ -159,7 +160,9 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
   // and a map may say something other than four. The counts below are the saved
   // stock; what a hotel is *worth* has to come back with the map.
   const bank  = new Bank(board.rules);
-  const dice  = new Dice();
+  // A variant may play with its own dice, and a restored game plays the same
+  // game — `new Dice()` here would quietly drop the speed die on reload.
+  const dice  = diceFor(board.rules);
 
   bank.houses = snapshot.bank.houses;
   bank.hotels = snapshot.bank.hotels;
@@ -240,6 +243,9 @@ export function validateSnapshot(snapshot: unknown): snapshot is GameSnapshot {
     }
     if (!knownWinConditions().includes(rules.winCondition)) {
       return reject(`unknown win condition "${rules.winCondition}"`);
+    }
+    for (const variant of rules.variants ?? []) {
+      if (!knownVariants().includes(variant)) return reject(`unknown variant "${variant}"`);
     }
   }
 

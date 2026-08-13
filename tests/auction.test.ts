@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { Auction, MIN_BID_INCREMENT } from '@/game/Auction';
+import { Auction, MIN_BID_INCREMENT, tileSubject } from '@/game/Auction';
 import { Player } from '@/game/Player';
 
 const BOARDWALK = 39;
+const BOARDWALK_SUBJECT = tileSubject(BOARDWALK, 'Boardwalk');
 
 describe('Auction — round robin', () => {
   let ann: Player;
@@ -14,7 +15,7 @@ describe('Auction — round robin', () => {
     ann = new Player('p1', 'Ann', 'car');
     bo  = new Player('p2', 'Bo', 'dog');
     cy  = new Player('p3', 'Cy', 'iron');
-    auction = new Auction(BOARDWALK, [ann, bo, cy]);
+    auction = new Auction(BOARDWALK_SUBJECT, [ann, bo, cy]);
   });
 
   it('opens with no bid and the first seat to act', () => {
@@ -83,7 +84,7 @@ describe('Auction — settlement', () => {
   let bo: Player;
   let cy: Player;
 
-  const auctionOf = () => new Auction(BOARDWALK, [ann, bo, cy]);
+  const auctionOf = () => new Auction(BOARDWALK_SUBJECT, [ann, bo, cy]);
 
   beforeEach(() => {
     ann = new Player('p1', 'Ann', 'car');
@@ -99,7 +100,7 @@ describe('Auction — settlement', () => {
     auction.pass('p1');
 
     expect(auction.complete).toBe(true);
-    expect(auction.result).toEqual({ tileId: BOARDWALK, winnerId: 'p2', amount: 100 });
+    expect(auction.result).toEqual({ subject: BOARDWALK_SUBJECT, winnerId: 'p2', amount: 100 });
   });
 
   it('does not make the leader outbid themselves', () => {
@@ -120,14 +121,14 @@ describe('Auction — settlement', () => {
     auction.pass('p3');
 
     expect(auction.complete).toBe(true);
-    expect(auction.result).toEqual({ tileId: BOARDWALK, winnerId: null, amount: 0 });
+    expect(auction.result).toEqual({ subject: BOARDWALK_SUBJECT, winnerId: null, amount: 0 });
   });
 
   it('lets a single remaining bidder take it at the minimum', () => {
-    const auction = new Auction(BOARDWALK, [ann]);
+    const auction = new Auction(BOARDWALK_SUBJECT, [ann]);
     expect(auction.currentBidder?.id).toBe('p1');
     auction.bid('p1', 10);
-    expect(auction.result).toEqual({ tileId: BOARDWALK, winnerId: 'p1', amount: 10 });
+    expect(auction.result).toEqual({ subject: BOARDWALK_SUBJECT, winnerId: 'p1', amount: 10 });
   });
 
   it('ignores bids once the hammer has fallen', () => {
@@ -146,7 +147,7 @@ describe('Auction — settlement', () => {
   });
 
   it('completes immediately when nobody is solvent enough to be asked', () => {
-    const auction = new Auction(BOARDWALK, []);
+    const auction = new Auction(BOARDWALK_SUBJECT, []);
     expect(auction.complete).toBe(true);
     expect(auction.currentBidder).toBeNull();
     expect(auction.result?.winnerId).toBeNull();

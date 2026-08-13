@@ -60,6 +60,17 @@ click zone — must be placed in that frame (`translateCanvas`/`rotateCanvas` fo
 graphics, `toWorld` for game objects) rather than as an axis-aligned rectangle,
 or it will be right on the classic board and wrong on every other one.
 
+**7e. A variant is a bundle, and the auction sells a subject.** A rule that is
+neither a number nor a strategy — different dice *and* an extra step in the turn —
+is a `registerVariant` in `game/Variants.ts`, named by string in `rules.variants`
+so it survives the save file. The speed die is the one that ships, and the test
+of any change to `TurnFlow` is whether `SpeedDie.ts` still needs nothing from
+`TurnManager`. `Auction` sells an `AuctionSubject` (`kind`, `id`, `label`), not a
+tile: `kind: 'tile'` is a deed, `kind: 'house'` is one the bank is short of, and a
+new kind needs a branch in exactly two places — `GameScene.awardAuction` and the
+bot's bid. Anything that runs an auction must give the bot a way to price the
+subject, or it will sit there being asked forever.
+
 **7. The bank does not know the rules.** `Bank` moves cash and inventory and asks
 no questions, because it has no view of the board — `bank.buyHouse` will happily
 put a house on a lot whose colour group you do not own. Legality lives in
@@ -94,7 +105,12 @@ set is saved with the game — a function does not survive `JSON.stringify`, and
 The six built-in phases are marked `driven`: something outside the model enters
 them (the roll button, the move tween, the buy prompt), so `endTurn`'s walk skips
 them. A phase a rule set adds is *not* driven, so the walk runs it — and may
-`hold()` it, to be picked up by `resume()`.
+`hold()` it, to be picked up by `resume()`. **`GameScene.safeEndTurn` resumes a
+held turn rather than ending it** — the landing that finishes a variant's extra
+move is asking for the rest of the turn, not a second `endTurn` the re-entry guard
+would swallow. A phase that holds must also *consume* whatever made it hold: the
+walk it starts comes back through it, and the speed die's bonus move would
+otherwise send the player round the board for ever.
 
 **8. A tile does not price itself.** `PropertyTile.currentRent` is the tier table
 and nothing more. What is actually charged — doubled for an unimproved colour
@@ -334,6 +350,12 @@ of the board geometry. Keep it that way — the table is for scene buttons only.
 The same applies to the turn: `__forge.phases()` reports what *this* game's turn
 is made of, so the harness checks the phase it ended in without a hardcoded list
 that a rule set adding a phase would falsify.
+
+`__forge.forceHouseShortage()` is the one hook on that handle that *writes*. The
+contested-house rule needs two complete colour groups and a bank down to its last
+house, which a played game reaches only at the very end; the bot run arranges it a
+third of the way in and then asserts a house went under the hammer. Keep new hooks
+read-only unless the alternative is a rule with no end-to-end check at all.
 
 `TradePanel`'s hotspots are the fragile ones: its rows and buttons hang off
 `LIST_TOP` / `BUTTON_Y` / `H`, so changing any of those means recomputing

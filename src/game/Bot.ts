@@ -99,6 +99,29 @@ export function nextBid(
   return Math.min(step, ceiling);
 }
 
+/**
+ * The most this bot will pay for a house the bank is short of, and the bid to
+ * make now. Scarcity is worth paying over the odds for — half as much again as
+ * the printed cost — but never out of the reserve: a house is not worth being
+ * unable to pay rent for.
+ */
+export function houseCeiling(ctx: BotContext, houseCost: number): number {
+  const profile = profileOf(ctx);
+  return Math.max(0, Math.min(
+    Math.floor(houseCost * 1.5),
+    ctx.player.cash - profile.reserve,
+  ));
+}
+
+export function nextHouseBid(
+  ctx: BotContext, houseCost: number, currentBid: number, minimumBid: number,
+): number | null {
+  const ceiling = houseCeiling(ctx, houseCost);
+  if (minimumBid > ceiling) return null;
+  const step = Math.max(minimumBid, currentBid + Math.ceil(houseCost / 10));
+  return Math.min(step, ceiling);
+}
+
 // ─── Jail ─────────────────────────────────────────────────────────────────────
 
 export type JailChoice = 'card' | 'pay' | 'roll';

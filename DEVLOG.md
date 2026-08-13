@@ -299,8 +299,9 @@ src/
 | M5 — Multiplayer UI (trade dialog, auction system) | ✅ Complete — see [M5 below](#m5--multiplayer-interaction--2026-08-12) |
 | M6 — Polish (animations, sound, save/load, house rules) | ✅ Complete — see [M6 below](#m6--polish--2026-08-12) |
 | M7 — Opponents (bots you can play against) | ✅ Complete — see [M7 below](#m7--opponents-you-can-play-against--2026-08-12) |
-| **M8 — Engine** (configurable maps, rules, presentation, simulation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). **8a complete**: a map is a file, and three ship (square, circle, three rings). **8b: registries, the rule set and the turn pipeline done**; the speed die,
-an auction over an arbitrary subject and scarce-house contention outstanding. 8c: `BoardRenderer` extracted and shape-agnostic. 8d: not started |
+| **M8 — Engine** (configurable maps, rules, presentation, simulation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). **8a complete**: a map is a file, and three ship (square, circle, three rings). **8b complete**: registries for tile types, card effects, turn orders, win
+conditions and variants; a rule set a map overrides; a turn that is a list of
+phases; the speed die; and the last houses sold at auction. 8c: `BoardRenderer` extracted and shape-agnostic. 8d: not started |
 
 ---
 
@@ -1223,3 +1224,95 @@ the game when everybody has had one turn rather than one turn later.
 - The human path and the bot path on all three boards. The harness no longer
   keeps its own list of phases — it asks `__forge.phases()` — and it now checks
   the round counter and that the round survives save/reload/resume.
+
+---
+
+## M8b (3) — the three items that were waiting
+
+With the pipeline in place the rest of 8b went in together, and each took a few
+hours. That is the whole argument for having reordered them: as written, the list
+had the trunk last and three branches ahead of it.
+
+### A variant is a bundle, which is why it was never a boolean
+
+M6 tried to ship the speed die as `speedDie: boolean` and deleted it instead,
+correctly. It is two things at once — a third die changes what a *roll* is, and
+two of its faces add a *step* to the turn — and neither seam alone expresses it.
+So `game/Variants.ts` registers the pair: a `dice(rules)` and an `apply(flow)`.
+Named by string in `rules.variants`, for the third time in this milestone and for
+the same reason: the rule set is saved with the game, and `['speedDie']` survives
+`JSON.stringify` where a pair of functions does not.
+
+`game/SpeedDie.ts` then needed nothing at all from `TurnManager`, which was the
+acceptance test the roadmap set for the pipeline. The menu grew no case for it
+either — it lists `knownVariants()` beside the house-rule switches, so a variant
+that registers itself appears there without the scene being edited.
+
+Two face effects, and both are one rule where the printed text is two:
+
+- **Mr. Monopoly** advances you to the next deed that is not already yours.
+  Unowned, and the ordinary landing gives you the buy prompt; owned, and it
+  charges you rent. The official rule says both of those separately.
+- **The bus** takes you to the next Chance or Community Chest tile.
+
+### The bit that needed care: a phase that moves the token
+
+The bonus move cannot finish inside the phase — the token has to walk, which is
+the scene's business. So the phase emits `player:move` and calls `hold()`, and the
+landing resumes the turn. Two things had to be true for that to terminate:
+
+- **`safeEndTurn` resumes a held turn instead of ending it.** The landing is
+  asking for the rest of the turn; a second `endTurn` would be swallowed by the
+  re-entry guard and the turn would hang for ever.
+- **The phase consumes the face.** The walk comes back *through* the phase when
+  the turn resumes, and an unconsumed face would move the player again, and again.
+  There is a test named after exactly that.
+
+### Contention: the rule was blocked on a definition, not on machinery
+
+"If two or more players wish to buy more houses than the Bank has, the houses must
+be sold at auction." Open since M5, and deferred three times with the same
+reason — a turn-based click UI never produces simultaneous demand.
+
+What actually unblocked it was deciding what *wishes to buy* means without asking
+anybody: **a player who owns a lot the build rules would allow a house on, and can
+afford it, is bidding.** That is a pure function of the board, so it needs no
+prompt, no answer `Bot.ts` cannot give, and the simulator will get the rule for
+free. It is generous — someone who was not going to build still counts — which
+only matters when the bank is down to its last houses, which is when the rule is
+meant to bite.
+
+The rest followed: `Auction` sells an `AuctionSubject` rather than a tile id (item
+3, built for this and for the bankrupt-estate auction that is still open), gained
+a **reserve** so scarcity cannot make a house *cheaper* than its printed price,
+and `Bank.buyHouse` takes an optional price the same way `sellPropertyToPlayer`
+always has. The winner does not choose the lot — whoever asked gets what they
+asked for, anyone else gets their cheapest legal one — because choosing needs a
+prompt. Both decisions are in KNOWNISSUES, not buried in a scene.
+
+`houseAuctions` defaults to **on**, because it is not a house rule. It is the
+rule; the game has simply been playing without it.
+
+### Verifying a rule no game reaches
+
+The bots never complete a colour group, so a `--bots` run ends with all 32 houses
+still in the bank — the shortage the rule exists for never happens. Rather than
+ship the scene wiring with unit tests alone, the debug handle grew its one
+*writing* hook, `forceHouseShortage()`: two complete groups, one house left. The
+bot run calls it a third of the way in and then asserts that a house went under
+the hammer with at least two bidders. It fires on all three boards:
+
+```
+· arranged a house shortage around tile 1
+  house auction  held, 2 bidders, opened at $50
+```
+
+### Verification
+
+- 359 unit tests (up from 331). New files for the variants and the speed die
+  (13) and for contention (15) — who is claiming, when the rule bites, what the
+  reserve is, where the house ends up, and what a bot will pay for one.
+- Bot runs on all three boards, all now exercising a contested house; the human
+  path with `--variants speedDie`, which reports a seven-phase turn and still
+  saves, reloads and resumes identically — a restored game rebuilds the speed
+  dice, because `restoreGame` asks `diceFor(board.rules)` rather than `new Dice()`.

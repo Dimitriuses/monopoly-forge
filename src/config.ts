@@ -77,9 +77,10 @@ export const GROUP_COLORS: Record<ColorGroup, number> = {
 
 // ─── House rules ───────────────────────────────────────────────────────────────
 // Every flag here is read by something. A fourth, `speedDie`, was declared from
-// M1 and removed in M6: it is not a flag but a variant — a third die, two new
-// face effects and a changed turn structure — and belongs with the registrable
-// rule sets in ROADMAP M8b rather than as a boolean nothing consults.
+// M1 and removed in M6, because it is not a flag but a variant — a third die,
+// two new face effects and an extra step in the turn. It exists now, as
+// `registerVariant('speedDie')` in `game/Variants.ts`, and the menu offers it
+// beside these switches by asking the registry rather than by listing it here.
 export interface HouseRules {
   freeParkingJackpot: boolean; // taxes and fines pool on Free Parking
   doubleGoSalary: boolean;     // $400 for landing exactly on Go

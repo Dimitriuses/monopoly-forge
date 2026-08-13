@@ -15,14 +15,14 @@ watches them play it out.
 
 What is left is the engine itself (M8). **8a is done**: the board is a file, and
 the game ships three of them — the classic square, a 24-tile circle and 30 tiles
-across three concentric rings. **8b is most of the way there**: tile types and
-card effects are registries rather than switches, decks travel with a map, the
-numbers the classic game hardcoded are a rule set a map can override, and **a
-turn is a list of phases** whose order and win condition the rule set names. What
-is left of it is the three items that were waiting on that pipeline: the speed
-die, an auction over an arbitrary subject, and contention for scarce houses. Then
-8c (presentation as a theme) and 8d (the simulation platform that runs M7's bots
-a thousand games at a time).
+across three concentric rings. **8b is done too**: tile types, card effects,
+turn orders, win conditions and whole variants are registries rather than
+switches; decks travel with a map; the numbers the classic game hardcoded are a
+rule set a map can override; a turn is a list of phases a rule set can add to;
+and the speed die is the proof, added without the engine learning what one is.
+The last rule the game was missing — auctioning the houses the bank is short of —
+went in with it. Next are 8c (presentation as a theme) and 8d (the simulation
+platform that runs M7's bots a thousand games at a time).
 
 **The destination is M8: an engine for Monopoly-style games** — configurable maps,
 rules and presentation. M1–M7 build the classic game that the engine has to be able
@@ -226,7 +226,7 @@ currently prevents it, so none of this is an estimate.
       overlap. It caught four real mistakes in the two test boards on their first
       run.
 
-### 8b — Rules become registrable instead of switch statements
+### 8b — Rules become registrable instead of switch statements · done
 
 - [x] **Tile-type registry.** `tiles/registry.ts`: `registerTileType(name, factory)`
       and `createTile`. `Board`'s constructor no longer knows what a tile is — it
@@ -248,8 +248,8 @@ currently prevents it, so none of this is an estimate.
       and reached through `board.rules`. Roundabout pays a smaller salary for a
       shorter lap; Orbits runs on 24 houses and 8 hotels. The rule set is saved
       with the game, so a resumed save plays by the rules it was played under.
-The four were one piece of work and three things waiting on it, so they are
-listed in the order they can actually be built. The first is done.
+The last four were one piece of work and three things waiting on it, and they are
+listed in the order they were actually built.
 
 - [x] **1 · Generalise the turn structure.** `game/TurnFlow.ts`. A turn is a
       **list of named phases** now, not an enum walked by hand: `insertAfter` puts
@@ -263,32 +263,51 @@ listed in the order they can actually be built. The first is done.
       function does not survive `JSON.stringify`. Rounds are counted and saved,
       because a round limit cannot be re-derived.
       *Was last on this list; moved first because the three below all wait on it.*
-- [ ] **2 · The `speedDie` variant** dropped in M6 — a third die and two new face
-      effects. Not a boolean but a rule set plus an extra phase, which makes it the
-      **acceptance test for item 1**: if it cannot be written without opening
-      `TurnManager`, the pipeline is not finished. Three of the four seams it needs
-      are now there — a substituted `Dice`, a `ROLLING` handler that runs *after*
-      the throw so it can speak for the dice, and a phase inserted before
-      `END_TURN` for the Mr. Monopoly move. The fourth is not: what a repeated face
-      *means* (three doubles → jail) is still an `if` inside `rollDice`, and
-      opening it is this item's first job.
-- [ ] **3 · `Auction` bids on a subject, not a tile id.** Small and independent of
-      the pipeline; extracted from the contention item below because it is the only
-      part of it that can be built today, and because a *second* rule already wants
-      it — a bankrupt estate returned to the bank should be auctioned deed by deed
-      (KNOWNISSUES), which `Auction` cannot express either. One generalisation,
-      two rules unblocked.
-- [ ] **4 · Contention, and auctioning scarce houses** (moved from M6). The
-      standard rule auctions houses when "two or more players wish to buy more than
-      the Bank has", and a turn-based click UI never produces simultaneous demand —
-      players ask one at a time and turn order settles it. It needs a phase that
-      *polls* every player for what they want to build — `TurnFlow.insertAfter`
-      plus `hold()`/`resume()` is now the shape that phase takes — an auction over
-      an arbitrary subject (item 3), and a step where the winner nominates the lot.
-      Last, because it is the only item that needs two of the others first.
-      Verifying it is 8d's job: no game this build can play reaches a house
-      shortage — the bots never complete a colour group, so a long `--bots` run
-      ends with all 32 houses still in the bank.
+- [x] **2 · The `speedDie` variant** dropped in M6 — and the acceptance test for
+      item 1, because if it could not be written without opening `TurnManager` the
+      pipeline was not finished. It was: `game/SpeedDie.ts` supplies its own
+      `Dice` and inserts a `SPEED_BONUS` phase, and `TurnManager` never learned
+      what a speed die is. Mr. Monopoly moves you on to the next deed that is not
+      already yours — unowned and you get the buy prompt, owned and you pay,
+      which is one rule where the official text is two. The bus takes you to the
+      next card tile. The picture faces add nothing to the total, doubles still
+      come from the two white dice, and the extra step `hold()`s the turn while
+      the token walks exactly as a card's move does.
+      Not implemented, and recorded in KNOWNISSUES rather than half-built: the
+      official *triples* rule (move anywhere — needs a pick-a-tile prompt that a
+      bot then also owes an answer to) and "not until you have been round once".
+- [x] **3 · `Auction` bids on a subject, not a tile id.** `AuctionSubject` is a
+      `kind`, an `id` and a label; `tileSubject()` is the ordinary case. It also
+      gained a **reserve**, because a contested house must not sell for less than
+      the printed price — scarcity making houses *cheaper* would be a strange
+      rule. The second consumer this unblocks, auctioning a bankrupt estate deed
+      by deed, is still open in KNOWNISSUES, but it no longer needs a second
+      implementation of round-robin bidding.
+- [x] **4 · Contention, and auctioning scarce houses** (moved from M6, open since
+      M5). `game/Contention.ts`. What made it writable was deciding what "wishes
+      to buy" means without a prompt: **a player who owns a lot the build rules
+      would allow a house on, and can afford it, is bidding.** That is a pure
+      function of the board — so it needs no new prompt, no answer `Bot.ts` cannot
+      give, and the simulator gets the rule for free. When two or more such
+      players exist and the bank holds fewer houses than they do, the next house
+      goes under the hammer at a reserve of what it is worth to the cheapest
+      claimant, and the winner pays their bid instead of the printed price.
+      The winner does not *choose* the lot: whoever asked for the house gets the
+      one they asked for, anybody else gets the cheapest they could legally build
+      on. Choosing needs a prompt, and the deviation is in KNOWNISSUES.
+      `houseAuctions` is on in the classic rules, because it *is* the classic rule.
+
+### 8b's leftovers, and what closed them
+
+Everything above is done. The last three items had all been waiting on the phase
+pipeline, and each took a few hours once it existed — which is the argument for
+having reordered them rather than working down the list as written.
+
+One thing they shared: the hard part of every one was **not** the mechanism. It
+was deciding what a rule means when there is nobody to ask. "Wishes to buy a
+house", "which lot the winner builds on", "what a bus face does on a board with
+no Chance tiles" — each is a decision, each is written down in the file that makes
+it, and each is a line in KNOWNISSUES where it departs from the printed rules.
 
 ### 8c — Presentation becomes a theme
 

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Board } from '@/game/Board';
 import { Player } from '@/game/Player';
 import { Dice } from '@/game/Dice';
+import { diceFor } from '@/game/Variants';
 import { Bank } from '@/game/Bank';
 import { TurnManager } from '@/game/TurnManager';
 import { CardDeck, CardEffects, type Card } from '@/cards/CardDeck';
@@ -36,7 +37,7 @@ import {
 } from '@/game/BuildRules';
 import { quoteRent, countOwnedOfType, type ArrivalRent } from '@/game/Rent';
 import {
-  shouldBuy, nextBid, jailChoice, buildPlan, redeemPlan, acceptTrade,
+  shouldBuy, nextBid, nextHouseBid, jailChoice, buildPlan, redeemPlan, acceptTrade,
   type BotContext,
 } from '@/game/Bot';
 
@@ -50,7 +51,12 @@ const BOT_CARD_LINGER = 1600;
 const CLUSTER_SHUFFLE = 140;
 import { settleDebt, announceSettlement } from '@/game/Estate';
 import { mapById, decksFor } from '@/maps';
-import { Auction } from '@/game/Auction';
+import {
+  Auction, tileSubject, MIN_BID_INCREMENT, type AuctionSubject,
+} from '@/game/Auction';
+import {
+  houseClaims, housesContested, houseReserve, nominateLot, type HouseClaim,
+} from '@/game/Contention';
 import { AuctionPanel, type AuctionView } from '@/ui/AuctionPanel';
 import {
   emptyOffer, reverseOffer, validateTrade, executeTrade, describeOffer,
@@ -114,6 +120,10 @@ export class GameScene extends Phaser.Scene {
   private tradePanel!:  TradePanel;
   /** The auction in progress, if any. Blocks the roll and the tile inspector. */
   private auction: Auction | null = null;
+  /** Who was contending for the bank's last houses, while that auction runs. */
+  private houseContention: {
+    claims: HouseClaim[]; requestedBy: string; lot: PropertyTile;
+  } | null = null;
   /** The offer being built or reviewed, if the trade panel is open. */
   private offer: TradeOffer | null = null;
   private tradeMode: 'edit' | 'review' = 'edit';
@@ -148,7 +158,8 @@ export class GameScene extends Phaser.Scene {
     // house-rule switches over it. Everything else takes its numbers from there.
     const board   = new Board(mapById(data.mapId), data.houseRules);
     const bank    = new Bank(board.rules);
-    const dice    = new Dice();
+    // A variant may play with dice of its own — the speed die does.
+    const dice    = diceFor(board.rules);
     const players = data.players.map(
       (p, i) => new Player(`p${i + 1}`, p.name, p.token, p.isBot ?? false, board.rules.startingCash),
     );
@@ -231,6 +242,7 @@ export class GameScene extends Phaser.Scene {
       auctionOpen: () => this.auctionPanel.isOpen,
       auctionBidder: () => this.auction?.currentBidder?.id ?? null,
       auctionState: () => (this.auction ? {
+        subject:       this.auction.subject,
         tileId:        this.auction.tileId,
         bidders:       this.auction.bidders.map((p) => p.id),
         currentBidder: this.auction.currentBidder?.id ?? null,
@@ -241,6 +253,12 @@ export class GameScene extends Phaser.Scene {
       } : null),
       rules:       () => ({ ...this.rules }),
       gameOver:    () => this.gameOver,
+      // The one hook here that *writes*. The contested-house rule needs a board
+      // a played game reaches only at the very end — two complete colour groups
+      // and a bank down to its last house — and arranging it is far cheaper, and
+      // more honest, than a three-hundred-turn run that might still not get
+      // there. Gated on `?debug=1` like everything else on this handle.
+      forceHouseShortage: () => this.forceHouseShortage(),
       // Frame counter and clock state: if the game ever looks frozen, this says
       // whether the loop is still turning or whether it stopped underneath you.
       loop:        () => {
@@ -614,8 +632,19 @@ export class GameScene extends Phaser.Scene {
       } else {
         this.botDevelop(player);
       }
-      this.botAct(() => this.turnManager.rollDice(), BOT_THINK);
+      // Building can put the last houses under the hammer, and a bot that rolled
+      // through its own auction would be taking two actions at once.
+      this.botAct(() => this.botRollWhenClear(), BOT_THINK);
     });
+  }
+
+  /** Roll, once nothing else is waiting on the table. */
+  private botRollWhenClear(): void {
+    if (this.auction) {
+      this.botAct(() => this.botRollWhenClear(), BOT_THINK);
+      return;
+    }
+    this.turnManager.rollDice();
   }
 
   /** Redeem what it can afford, then build what the plan asks for. */
@@ -636,6 +665,10 @@ export class GameScene extends Phaser.Scene {
       if (!next) break;
       const lot = this.board.getTile(next.tileId);
       if (!(lot instanceof PropertyTile)) break;
+
+      // The last houses are contested, so this one is bought at auction rather
+      // than over the counter — and the rest of the plan waits for the result.
+      if (next.kind === 'house' && this.startHouseContention(player, lot)) break;
 
       const built = next.kind === 'hotel'
         ? canBuildHotel(this.board, this.bank, player, lot).ok && this.bank.buyHotel(player, lot)
@@ -678,8 +711,13 @@ export class GameScene extends Phaser.Scene {
     const bidder  = auction?.currentBidder;
     if (!auction || !bidder || !bidder.isBot) return;
 
-    const tile = this.board.getTile(auction.tileId);
-    if (!isOwnable(tile)) return;
+    // A deed and a house are valued differently, so the bot is asked a different
+    // question for each. A subject nothing knows how to price is passed on
+    // rather than guessed at — a bot must have an answer for every prompt, and
+    // "pass" is an answer.
+    const tile = auction.tileId === null ? null : this.board.getTile(auction.tileId);
+    const deed = tile && isOwnable(tile) ? tile : null;
+    if (auction.subject.kind === 'tile' && !deed) return;
 
     this.time.delayedCall(BOT_THINK, () => {
       if (this.auction !== auction) return;   // the auction ended under it
@@ -690,22 +728,31 @@ export class GameScene extends Phaser.Scene {
         this.botDecideBid();
         return;
       }
-      const bid = nextBid(this.botContext(bidder), tile, auction.highBid, auction.minimumBid);
+      const ctx = this.botContext(bidder);
+      const bid = auction.subject.kind === 'house'
+        ? nextHouseBid(ctx, this.contestedHouseCost(bidder), auction.highBid, auction.minimumBid)
+        : deed && nextBid(ctx, deed, auction.highBid, auction.minimumBid);
       dlog(
-        `[Bot] ${bidder.name} on ${tile.name}: high=${auction.highBid} ` +
-        `min=${auction.minimumBid} cash=${bidder.cash} → ${bid === null ? 'pass' : `bid ${bid}`}`,
+        `[Bot] ${bidder.name} on ${auction.subject.label}: high=${auction.highBid} ` +
+        `min=${auction.minimumBid} cash=${bidder.cash} → ${bid == null ? 'pass' : `bid ${bid}`}`,
       );
       this.handleAuctionAction((a, id) => {
         // A refused bid would leave the auction exactly as it was, and the next
         // redraw would ask this bot the same question forever. Passing is the
         // only safe fallback.
-        if (bid !== null && a.bid(id, bid)) return;
-        if (bid !== null) {
+        if (bid != null && a.bid(id, bid)) return;
+        if (bid != null) {
           dwarn(`[Bot] ${bidder.name}'s bid of ${bid} was refused — passing instead`);
         }
         a.pass(id);
       });
     });
+  }
+
+  /** What a house is worth to this bidder: the cheapest lot they could build on. */
+  private contestedHouseCost(bidder: Player): number {
+    const claim = this.houseContention?.claims.find((c) => c.player.id === bidder.id);
+    return claim?.cheapest ?? this.houseContention?.lot.houseCost ?? 0;
   }
 
   /** Answer an offer a human has just proposed to a bot. */
@@ -916,28 +963,37 @@ export class GameScene extends Phaser.Scene {
   // ── Auction ───────────────────────────────────────────────────────────────────
 
   private startAuction(tileId: number): void {
-    this.auction = new Auction(tileId, this.players);
+    this.startAuctionOf(tileSubject(tileId, this.board.getTile(tileId).name));
+  }
+
+  /** Put anything under the hammer. A deed is one subject; a house is another. */
+  private startAuctionOf(
+    subject: AuctionSubject, bidders: Player[] = this.players, reserve?: number,
+  ): void {
+    this.auction = new Auction(subject, bidders, MIN_BID_INCREMENT, reserve);
     if (this.auction.complete) {   // nobody solvent to bid
       this.finishAuction();
       return;
     }
     this.panel.hide();
-    this.boardView.setSelected(tileId);
+    this.boardView.setSelected(this.auction.tileId);
     this.auctionPanel.show(this.auctionView(this.auction));
     this.botDecideBid();
   }
 
   private auctionView(auction: Auction): AuctionView {
     const bidder   = auction.currentBidder!;
-    const tile     = this.board.getTile(auction.tileId);
+    // Only a tile has a colour group and a face value; everything else under the
+    // hammer describes itself through the subject's label.
+    const tile     = auction.tileId === null ? null : this.board.getTile(auction.tileId);
     const property = tile instanceof PropertyTile ? tile : null;
     const leader   = this.players.find((p) => p.id === auction.highBidderId) ?? null;
 
     return {
-      tileName:   tile.name,
-      subtitle:   this.subtitleFor(tile),
+      tileName:   auction.subject.label,
+      subtitle:   tile ? this.subtitleFor(tile) : this.subjectSubtitle(auction.subject),
       groupColor: property ? GROUP_COLORS[property.group] : null,
-      price:      isOwnable(tile) ? tile.price : 0,
+      price:      tile && isOwnable(tile) ? tile.price : 0,
       bidderName: bidder.name,
       bidderColor: this.ownerStyle(bidder.id)?.color ?? 0xffffff,
       bidderCash: bidder.cash,
@@ -976,18 +1032,128 @@ export class GameScene extends Phaser.Scene {
       : null;
 
     if (result && winner) {
-      const tile = this.board.getTile(result.tileId);
-      if (isOwnable(tile)) this.bank.sellPropertyToPlayer(winner, tile, result.amount);
+      this.awardAuction(result.subject, winner, result.amount);
       sfx.play('hammer');
-      this.notif.show(`${winner.name} won ${tile.name} at auction for $${result.amount}!`, 'success');
+      this.notif.show(
+        `${winner.name} won ${result.subject.label} at auction for $${result.amount}!`, 'success',
+      );
       this.boardView.refresh();
       this.pushUIUpdate();
       this.refreshPanel();
     } else if (result) {
-      this.notif.show(`No bids — ${this.board.getTile(result.tileId).name} stays unowned.`, 'info');
+      this.notif.show(`No bids — ${result.subject.label} goes unsold.`, 'info');
     }
 
-    this.safeEndTurn(400);
+    // A house auction is a step inside somebody's turn, not the end of one: it
+    // can be triggered from the property panel on anybody's turn, and ending the
+    // turn here would end somebody else's.
+    if (result?.subject.kind === 'house') {
+      this.houseContention = null;
+      this.boardView.refresh();
+      this.pushUIUpdate();
+      this.refreshPanel();
+    } else {
+      this.safeEndTurn(400);
+    }
+  }
+
+  /** Hand over what was won. One branch per kind of subject, and no more. */
+  private awardAuction(subject: AuctionSubject, winner: Player, amount: number): void {
+    if (subject.kind === 'tile') {
+      const tile = this.board.getTile(subject.id);
+      if (isOwnable(tile)) this.bank.sellPropertyToPlayer(winner, tile, amount);
+      return;
+    }
+    if (subject.kind === 'house') {
+      this.awardContestedHouse(winner, amount);
+      return;
+    }
+    dwarn(`[GameScene] nothing knows how to award an auction of "${subject.kind}"`);
+  }
+
+  private subjectSubtitle(subject: AuctionSubject): string {
+    return subject.kind === 'house' ? 'The bank is short of houses' : '';
+  }
+
+  // ── Contention: the last houses ───────────────────────────────────────────────
+
+  /**
+   * Sell the next house at auction instead of over the counter, when more
+   * players could buy one than the bank has left. Returns whether it did — the
+   * caller must not then build, because nothing has been bought yet.
+   */
+  private startHouseContention(builder: Player, lot: PropertyTile): boolean {
+    if (!this.rules.houseAuctions || this.auction) return false;
+    if (!housesContested(this.board, this.bank, this.players)) return false;
+
+    const claims = houseClaims(this.board, this.bank, this.players);
+    this.houseContention = { claims, requestedBy: builder.id, lot };
+
+    this.notif.show(
+      `${claims.length} players want a house and the bank has ${this.bank.houses} — auction!`,
+      'warning',
+    );
+    this.startAuctionOf(
+      { kind: 'house', id: lot.id, label: 'A house from the bank' },
+      claims.map((claim) => claim.player),
+      houseReserve(claims),
+    );
+    return true;
+  }
+
+  /** The winner pays their bid — not the printed price — and builds. */
+  private awardContestedHouse(winner: Player, amount: number): void {
+    const contention = this.houseContention;
+    if (!contention) return;
+
+    // Whoever asked for it gets the lot they asked for; anyone else gets the
+    // cheapest they could legally build on. See `game/Contention.ts`.
+    const requested = contention.requestedBy === winner.id ? contention.lot : null;
+    const lot = nominateLot(contention.claims, winner, requested);
+    if (!lot || !canBuildHouse(this.board, this.bank, winner, lot).ok) {
+      dwarn(`[GameScene] ${winner.name} won a house with nowhere left to put it`);
+      return;
+    }
+    this.bank.buyHouse(winner, lot, amount);
+    this.notif.show(`${winner.name} put the house on ${lot.name}.`, 'success');
+  }
+
+  /**
+   * DEV TOOL — hand the two cheapest colour groups to the first two solvent
+   * players and leave the bank one house, which is the board state the
+   * contested-house rule exists for. Returns a lot somebody can now build on,
+   * or null if this board cannot produce the situation. Reachable only through
+   * the debug handle.
+   */
+  private forceHouseShortage(): number | null {
+    const byGroup = new Map<string, PropertyTile[]>();
+    for (const tile of this.board.tiles) {
+      if (tile instanceof PropertyTile) {
+        byGroup.set(tile.group, [...(byGroup.get(tile.group) ?? []), tile]);
+      }
+    }
+    const groups = [...byGroup.values()].sort((a, b) => a[0].houseCost - b[0].houseCost);
+    const takers = this.players.filter((p) => !p.isBankrupt).slice(0, 2);
+    if (takers.length < 2 || groups.length < 2) return null;
+
+    takers.forEach((player, i) => {
+      for (const lot of groups[i]) {
+        this.players.find((p) => p.id === lot.ownerId)?.ownedTileIds.delete(lot.id);
+        lot.ownerId     = player.id;
+        lot.isMortgaged = false;
+        lot.houses      = 0;
+        lot.hasHotel    = false;
+        player.ownedTileIds.add(lot.id);
+      }
+      player.cash = Math.max(player.cash, 1000);
+    });
+
+    this.bank.houses = 1;
+    this.boardView.refresh();
+    this.pushUIUpdate();
+    this.refreshPanel();
+    dlog(`[GameScene] forceHouseShortage: 1 house left, ${takers.length} claimants`);
+    return groups[0][0].id;
   }
 
   // ── Property panel ────────────────────────────────────────────────────────────
@@ -1042,6 +1208,10 @@ export class GameScene extends Phaser.Scene {
     switch (key) {
       case 'buildHouse':
         if (!property) return;
+        // With the bank down to its last houses and more than one player able to
+        // buy, the house goes under the hammer instead of over the counter.
+        if (canBuildHouse(this.board, this.bank, player, property).ok
+            && this.startHouseContention(player, property)) return;
         attempt(
           canBuildHouse(this.board, this.bank, player, property),
           () => this.bank.buyHouse(player, property),
@@ -1243,7 +1413,13 @@ export class GameScene extends Phaser.Scene {
   private safeEndTurn(delay = 0): void {
     const gen = this.turnGen;
     const doEnd = () => {
-      if (this.turnGen === gen) this.turnManager.endTurn();
+      if (this.turnGen !== gen) return;
+      // A turn parked in a phase is *resumed*, not ended: a variant's extra step
+      // (the speed die's bonus move) holds the turn while the token walks, and
+      // the landing that ends it is asking for the rest of the turn, not a
+      // second `endTurn` the re-entry guard would swallow.
+      if (this.turnManager.isHeld) this.turnManager.resume();
+      else                         this.turnManager.endTurn();
     };
     if (delay > 0) this.time.delayedCall(delay, doEnd);
     else            doEnd();
