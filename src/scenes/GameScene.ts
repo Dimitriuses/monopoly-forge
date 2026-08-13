@@ -37,7 +37,8 @@ import {
 } from '@/game/BuildRules';
 import { quoteRent, countOwnedOfType, type ArrivalRent } from '@/game/Rent';
 import {
-  shouldBuy, nextBid, nextHouseBid, jailChoice, buildPlan, redeemPlan, acceptTrade,
+  shouldBuy, nextBid, nextHouseBid, jailChoice, buildPlan, redeemPlan,
+  acceptTrade, proposeTrade,
   type BotContext,
 } from '@/game/Bot';
 
@@ -51,9 +52,7 @@ const BOT_CARD_LINGER = 1600;
 const CLUSTER_SHUFFLE = 140;
 import { settleDebt, announceSettlement } from '@/game/Estate';
 import { mapById, decksFor } from '@/maps';
-import {
-  Auction, tileSubject, MIN_BID_INCREMENT, type AuctionSubject,
-} from '@/game/Auction';
+import { Auction, tileSubject, type AuctionSubject } from '@/game/Auction';
 import {
   houseClaims, housesContested, houseReserve, nominateLot, type HouseClaim,
 } from '@/game/Contention';
@@ -67,8 +66,6 @@ import {
   type TradeAction, type TradeRow, type TradeSideView, type TradeView,
 } from '@/ui/TradePanel';
 
-/** How long each bidder has before the clock passes for them. */
-const AUCTION_SECONDS = 15;
 
 const TOKEN_HEX: Record<string, string> = {
   topHat: '#222222', car: '#e74c3c', dog: '#e67e22', battleship: '#3498db',
@@ -91,6 +88,7 @@ interface RentPayload    { debtorId: string; creditorId: string; amount?: number
 interface TaxPayload     { playerId: string; amount: number; tileId: number }
 interface AuctionPayload { tileId: number; playerId: string; price?: number }
 interface JailPayload    { playerId: string; reason: string }
+interface BankruptPayload { playerId: string; creditorId: string | null; returned?: number[] }
 interface NotifPayload   { message: string; type: 'info' | 'success' | 'warning' | 'danger' }
 
 export class GameScene extends Phaser.Scene {
@@ -124,6 +122,8 @@ export class GameScene extends Phaser.Scene {
   private houseContention: {
     claims: HouseClaim[]; requestedBy: string; lot: PropertyTile;
   } | null = null;
+  /** Subjects waiting their turn under the hammer — a returned estate is a queue. */
+  private auctionQueue: AuctionSubject[] = [];
   /** The offer being built or reviewed, if the trade panel is open. */
   private offer: TradeOffer | null = null;
   private tradeMode: 'edit' | 'review' = 'edit';
@@ -253,12 +253,15 @@ export class GameScene extends Phaser.Scene {
       } : null),
       rules:       () => ({ ...this.rules }),
       gameOver:    () => this.gameOver,
+      /** Everything the turn log has recorded, newest first. */
+      log:         () => this.notif.log.map((e) => `${e.type}: ${e.message}`),
       // The one hook here that *writes*. The contested-house rule needs a board
       // a played game reaches only at the very end — two complete colour groups
       // and a bank down to its last house — and arranging it is far cheaper, and
       // more honest, than a three-hundred-turn run that might still not get
       // there. Gated on `?debug=1` like everything else on this handle.
       forceHouseShortage: () => this.forceHouseShortage(),
+      forceBankruptcy:    () => this.forceBankruptcy(),
       // Frame counter and clock state: if the game ever looks frozen, this says
       // whether the loop is still turning or whether it stopped underneath you.
       loop:        () => {
@@ -630,6 +633,9 @@ export class GameScene extends Phaser.Scene {
         if (choice === 'pay')  this.turnManager.payJailFine(player);
         this.pushUIUpdate();
       } else {
+        // Trade first: a deed that arrives completes a group, and what can be
+        // built is decided after that rather than before it.
+        this.botTrade(player);
         this.botDevelop(player);
       }
       // Building can put the last houses under the hammer, and a bot that rolled
@@ -645,6 +651,30 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.turnManager.rollDice();
+  }
+
+  /**
+   * Make an offer, if there is one worth making. Only to another bot: an
+   * unsolicited modal on a person's turn is a different question from whether
+   * the trade is a good one, and this answers only the second. Both sides being
+   * model decisions, the offer is settled here and now.
+   */
+  private botTrade(player: Player): void {
+    const offer = proposeTrade(this.botContext(player));
+    if (!offer) return;
+
+    const partner = this.players.find((p) => p.id === offer.toId);
+    if (!partner?.isBot) return;
+    // Asked again rather than assumed: `proposeTrade` searched with the same
+    // policy, and if the two ever disagree the trade should simply not happen.
+    if (!acceptTrade(this.botContext(partner), offer)) return;
+    if (!executeTrade(this.board, this.players, offer)) return;
+
+    this.notif.show(`🤝 ${describeOffer(this.board, this.players, offer)}.`, 'success');
+    dlog(`[Bot] ${describeOffer(this.board, this.players, offer)}`);
+    this.boardView.refresh();
+    this.pushUIUpdate();
+    this.refreshPanel();
   }
 
   /** Redeem what it can afford, then build what the plan asks for. */
@@ -970,7 +1000,7 @@ export class GameScene extends Phaser.Scene {
   private startAuctionOf(
     subject: AuctionSubject, bidders: Player[] = this.players, reserve?: number,
   ): void {
-    this.auction = new Auction(subject, bidders, MIN_BID_INCREMENT, reserve);
+    this.auction = new Auction(subject, bidders, this.rules.bidIncrement, reserve);
     if (this.auction.complete) {   // nobody solvent to bid
       this.finishAuction();
       return;
@@ -999,10 +1029,11 @@ export class GameScene extends Phaser.Scene {
       bidderCash: bidder.cash,
       highBid:    auction.highBid,
       highBidderName: leader?.name ?? null,
-      // Minimum, then two bigger jumps so bidding does not take twenty clicks.
-      options: [auction.minimumBid, auction.minimumBid + 40, auction.minimumBid + 90],
+      // The minimum plus whatever jumps the rule set offers, so bidding does not
+      // take twenty clicks — and so a map or a variant can offer different ones.
+      options: this.rules.bidSteps.map((step) => auction.minimumBid + step),
       remaining: auction.bidders.map((p) => p.name),
-      secondsPerBid: AUCTION_SECONDS,
+      secondsPerBid: this.rules.auctionSeconds,
     };
   }
 
@@ -1044,6 +1075,14 @@ export class GameScene extends Phaser.Scene {
       this.notif.show(`No bids — ${result.subject.label} goes unsold.`, 'info');
     }
 
+    // A bankrupt estate is several deeds, sold one after another. The turn does
+    // not end between them, and the next one opens after a beat so the result of
+    // the last is readable.
+    if (this.auctionQueue.length && !this.gameOver) {
+      this.time.delayedCall(700, () => this.startNextQueued());
+      return;
+    }
+
     // A house auction is a step inside somebody's turn, not the end of one: it
     // can be triggered from the property panel on anybody's turn, and ending the
     // turn here would end somebody else's.
@@ -1073,6 +1112,41 @@ export class GameScene extends Phaser.Scene {
 
   private subjectSubtitle(subject: AuctionSubject): string {
     return subject.kind === 'house' ? 'The bank is short of houses' : '';
+  }
+
+  /**
+   * Put a returned estate up for sale, deed by deed. Nothing starts here — the
+   * auction that is running (the one the bankruptcy happened during, if any)
+   * finishes first, and `finishAuction` pulls the next off the queue.
+   *
+   * Skipped when the game is already decided, and when `noAuction` is on: that
+   * rule says a property nobody bought stays unowned, and this is the same case.
+   */
+  private queueEstateAuction(tileIds: number[]): void {
+    if (this.rules.noAuction || !tileIds.length) return;
+    if (this.players.filter((p) => !p.isBankrupt).length < 2) return;
+
+    this.auctionQueue.push(...tileIds
+      .filter((id) => { const t = this.board.getTile(id); return isOwnable(t) && t.ownerId === null; })
+      .map((id) => tileSubject(id, this.board.getTile(id).name)));
+
+    if (!this.auctionQueue.length) return;
+    this.notif.show(
+      `The bank puts ${this.auctionQueue.length} returned deed(s) up for auction.`, 'info',
+    );
+    // If nothing is under the hammer right now, start the queue moving.
+    if (!this.auction) this.time.delayedCall(700, () => this.startNextQueued());
+  }
+
+  /**
+   * Open the next queued auction. A subject stays *in* the queue until this runs,
+   * which is what `safeEndTurn` watches: shifting it out early would leave a
+   * moment where the queue looked empty and the turn could end underneath it.
+   */
+  private startNextQueued(): void {
+    if (this.auction || this.gameOver) return;
+    const next = this.auctionQueue.shift();
+    if (next) this.startAuctionOf(next);
   }
 
   // ── Contention: the last houses ───────────────────────────────────────────────
@@ -1154,6 +1228,29 @@ export class GameScene extends Phaser.Scene {
     this.refreshPanel();
     dlog(`[GameScene] forceHouseShortage: 1 house left, ${takers.length} claimants`);
     return groups[0][0].id;
+  }
+
+  /**
+   * DEV TOOL — bankrupt somebody who owes the *bank*, which is what puts a whole
+   * estate back under the hammer. It goes through `settleDebt` and
+   * `announceSettlement` exactly as a tax or a rent debt would, so what it
+   * verifies is the real path: fire sale, transfer, and the queue of auctions
+   * that follows. Returns whose estate it was, or null.
+   *
+   * Reachable only through the debug handle, and only worth calling from the bot
+   * run — with nobody clicking, the auctions can play out on their own.
+   */
+  private forceBankruptcy(): string | null {
+    const victim = this.players.find((p) => (
+      !p.isBankrupt && p.ownedTileIds.size > 0 && p.id !== this.turnManager.currentPlayer.id
+    ));
+    if (!victim) return null;
+    if (this.players.filter((p) => !p.isBankrupt).length < 3) return null;
+
+    const settlement = settleDebt(this.board, this.bank, victim, null, victim.cash + 10_000);
+    announceSettlement(victim, null, settlement);
+    dlog(`[GameScene] forceBankruptcy: ${victim.name}, ${settlement.returned.length} deed(s) returned`);
+    return victim.id;
   }
 
   // ── Property panel ────────────────────────────────────────────────────────────
@@ -1414,6 +1511,14 @@ export class GameScene extends Phaser.Scene {
     const gen = this.turnGen;
     const doEnd = () => {
       if (this.turnGen !== gen) return;
+      // Something is still under the hammer. A bankruptcy during this turn puts
+      // the estate up for sale deed by deed, and all of it happens before the
+      // turn that caused it ends — otherwise the next player starts rolling into
+      // an auction. Come back when the table is clear.
+      if (this.auction || this.auctionQueue.length) {
+        this.time.delayedCall(400, doEnd);
+        return;
+      }
       // A turn parked in a phase is *resumed*, not ended: a variant's extra step
       // (the speed die's bonus move) holds the turn while the token walks, and
       // the landing that ends it is asking for the rest of the turn, not a
@@ -1731,16 +1836,23 @@ export class GameScene extends Phaser.Scene {
     });
 
     // ── Bankruptcy — an estate changed hands, so the board is out of date ─────
-    bus.on('player:bankrupt', () => {
+    bus.on('player:bankrupt', ({ creditorId, returned }: BankruptPayload) => {
       this.boardView.refresh();
       this.pushUIUpdate();
       this.refreshPanel();
+      // Owing the bank rather than a player: the deeds are unowned now, and the
+      // standard rules have the bank sell each of them straight away. Mortgaged
+      // ones go under the hammer mortgaged, the same way they pass to a creditor.
+      if (creditorId === null) this.queueEstateAuction(returned ?? []);
     });
 
     // ── Game over ─────────────────────────────────────────────────────────────
     bus.on('game:end', ({ winnerId }: { winnerId: string | null }) => {
       const winner = this.players.find((p) => p.id === winnerId);
       this.gameOver = true;   // stops any bot that was mid-think
+      // Nothing left to sell, and a queue nobody drains would leave `safeEndTurn`
+      // waiting for a table that never clears.
+      this.auctionQueue.length = 0;
       this.setRollEnabled(false);
       this.hideBuyPrompt();
       this.panel.hide();

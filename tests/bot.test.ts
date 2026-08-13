@@ -3,7 +3,8 @@ import { Board } from '@/game/Board';
 import { Bank } from '@/game/Bank';
 import { Player } from '@/game/Player';
 import {
-  shouldBuy, auctionCeiling, nextBid, jailChoice, buildPlan, redeemPlan, acceptTrade,
+  shouldBuy, auctionCeiling, nextBid, jailChoice, buildPlan, redeemPlan,
+  acceptTrade, proposeTrade,
   DEFAULT_PROFILE, type BotContext,
 } from '@/game/Bot';
 import { emptyOffer } from '@/game/Trade';
@@ -14,6 +15,8 @@ import { CHANCE_CARDS } from '@/cards/CardDeck';
 const MEDITERRANEAN = 1;   // brown, $60
 const BALTIC = 3;          // brown, $60
 const ORIENTAL = 6;        // light blue, $100
+const VERMONT = 8;         // light blue, $100
+const CONNECTICUT = 9;     // light blue, $120
 const READING = 5;         // railroad, $200
 const PENNSYLVANIA_RR = 15;
 const BOARDWALK = 39;      // $400
@@ -219,6 +222,79 @@ describe('Bot', () => {
       give(rival, BALTIC);
       // $60 deed, offered for $80 cash: a straight loss on price, a gain on value.
       expect(acceptTrade(ctx, offerTo({ fromTileIds: [BALTIC], toCash: 80 }))).toBe(true);
+    });
+
+    // ...but it *will* part with one for the key to a group of its own. Without
+    // that exception the only deed worth asking for is the only deed nobody
+    // would ever hand over, and two bots sit across the table for a whole game.
+    it('will hand over a key in exchange for the key to its own group', () => {
+      give(bot, BALTIC, ORIENTAL, VERMONT);     // one lot short of light blue
+      give(rival, MEDITERRANEAN, CONNECTICUT);  // one lot short of brown
+      expect(acceptTrade(ctx, offerTo({
+        fromTileIds: [CONNECTICUT], toTileIds: [BALTIC], fromCash: 200,
+      }))).toBe(true);
+    });
+  });
+
+  // ── Making an offer ───────────────────────────────────────────────────────
+
+  describe('proposing a trade', () => {
+    it('offers nothing when there is nothing worth swapping', () => {
+      give(bot, ORIENTAL);
+      give(rival, BOARDWALK);
+      expect(proposeTrade(ctx)).toBeNull();
+    });
+
+    it('offers its key for the one it needs, and tops it up with cash', () => {
+      give(bot, BALTIC, ORIENTAL, VERMONT);
+      give(rival, MEDITERRANEAN, CONNECTICUT);
+      bot.cash = 2000;
+
+      const offer = proposeTrade(ctx)!;
+      expect(offer).not.toBeNull();
+      expect(offer.fromId).toBe('p1');
+      expect(offer.toId).toBe('p2');
+      expect(offer.toTileIds).toEqual([CONNECTICUT]);
+      expect(offer.fromTileIds).toEqual([BALTIC]);
+      // And the other side would actually take it — which is the whole point.
+      expect(acceptTrade({ ...ctx, player: rival }, offer)).toBe(true);
+    });
+
+    it('offers the least cash that gets a yes, not the most it has', () => {
+      give(bot, BALTIC, ORIENTAL, VERMONT);
+      give(rival, MEDITERRANEAN, CONNECTICUT);
+      bot.cash = 2000;
+
+      const offer = proposeTrade(ctx)!;
+      const rivalCtx = { ...ctx, player: rival };
+      expect(acceptTrade(rivalCtx, offer)).toBe(true);
+      // A single step less is refused, so this really is the threshold.
+      expect(acceptTrade(rivalCtx, { ...offer, fromCash: offer.fromCash - 10 })).toBe(false);
+    });
+
+    it('will not spend into its reserve to do it', () => {
+      give(bot, BALTIC, ORIENTAL, VERMONT);
+      give(rival, MEDITERRANEAN, CONNECTICUT);
+      bot.cash = DEFAULT_PROFILE.reserve;
+      expect(proposeTrade(ctx)).toBeNull();
+    });
+
+    it('buys a second railroad for cash — nobody is handing over a key', () => {
+      give(bot, READING);
+      give(rival, PENNSYLVANIA_RR);
+      bot.cash = 2000;
+
+      const offer = proposeTrade(ctx)!;
+      expect(offer.toTileIds).toEqual([PENNSYLVANIA_RR]);
+      expect(offer.fromTileIds).toEqual([]);
+      expect(offer.fromCash).toBeGreaterThan(0);
+    });
+
+    it('decides the same way twice', () => {
+      give(bot, BALTIC, ORIENTAL, VERMONT);
+      give(rival, MEDITERRANEAN, CONNECTICUT);
+      bot.cash = 900;
+      expect(proposeTrade(ctx)).toEqual(proposeTrade(ctx));
     });
   });
 

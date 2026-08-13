@@ -274,10 +274,31 @@ describe('Estate — transferring without a debt', () => {
       ann.ownedTileIds.add(id);
     });
 
-    const actions = transferEstate(board, new Bank(), ann, bo);
+    const { actions, returned } = transferEstate(board, new Bank(), ann, bo);
 
     expect(ann.ownedTileIds.size).toBe(0);
     expect(bo.ownedTileIds.size).toBe(2);
     expect(actions.join()).toMatch(/2 deed\(s\) passed to Bo/);
+    // Nothing for the bank to sell — the deeds have an owner.
+    expect(returned).toEqual([]);
+  });
+
+  it('reports what went back to the bank when there is no creditor', () => {
+    const board = new Board();
+    const ann = new Player('p1', 'Ann', 'car');
+    const ids = [MEDITERRANEAN, READING];
+    ids.forEach((id) => {
+      const tile = board.getTile(id);
+      if (isOwnable(tile)) tile.ownerId = ann.id;
+      ann.ownedTileIds.add(id);
+    });
+
+    const { returned } = transferEstate(board, new Bank(), ann, null);
+
+    expect([...returned].sort((a, b) => a - b)).toEqual([...ids].sort((a, b) => a - b));
+    expect(ids.every((id) => {
+      const tile = board.getTile(id);
+      return isOwnable(tile) && tile.ownerId === null;
+    })).toBe(true);
   });
 });

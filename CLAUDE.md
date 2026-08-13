@@ -18,8 +18,11 @@ npm run screenshots  # playtest + writes screenshots/*.png
 npm run verify:install  # would CI's npm accept package-lock.json?
 ```
 
-`npm run playtest` accepts `--turns N`, `--seed N`, `--headed` (watch it play) and
-`--url <url>` (drive a deployed site instead of `dist/`).
+`npm run playtest` accepts `--turns N`, `--seed N`, `--headed` (watch it play),
+`--url <url>` (drive a deployed site instead of `dist/`), `--map <id>`,
+`--variants <a,b>` and `--house-rules`. The last three go through the URL
+(`?map=`, `?variants=`, `?houseRules=`) because the switches are canvas text with
+no DOM for a harness to click.
 
 ## Invariants
 
@@ -351,11 +354,20 @@ The same applies to the turn: `__forge.phases()` reports what *this* game's turn
 is made of, so the harness checks the phase it ended in without a hardcoded list
 that a rule set adding a phase would falsify.
 
-`__forge.forceHouseShortage()` is the one hook on that handle that *writes*. The
-contested-house rule needs two complete colour groups and a bank down to its last
-house, which a played game reaches only at the very end; the bot run arranges it a
-third of the way in and then asserts a house went under the hammer. Keep new hooks
-read-only unless the alternative is a rule with no end-to-end check at all.
+`__forge.forceHouseShortage()` and `__forge.forceBankruptcy()` are the two hooks
+on that handle that *write*. Both exist for the same reason: the rule they set up
+needs a board a played game reaches only at the very end, or not at all. The bot
+run calls them part-way in and then asserts that a house, and a returned estate,
+went under the hammer. `forceBankruptcy` settles the debt through `settleDebt` and
+`announceSettlement` rather than setting flags, so what it exercises is the real
+chain. Keep new hooks read-only unless the alternative is a rule with no
+end-to-end check at all.
+
+**A turn does not end while anything is under the hammer.** `safeEndTurn` waits
+on `this.auction` *and* `this.auctionQueue` — a bankruptcy mid-turn puts a whole
+estate up for sale, and the next player must not start rolling into it. A queued
+subject stays in the queue until it actually opens, so there is never a frame
+where the queue looks empty and the turn slips out underneath it.
 
 `TradePanel`'s hotspots are the fragile ones: its rows and buttons hang off
 `LIST_TOP` / `BUTTON_Y` / `H`, so changing any of those means recomputing

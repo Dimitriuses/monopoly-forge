@@ -34,6 +34,15 @@ export interface GameRules {
    */
   houseAuctions: boolean;
 
+  // ── The auction ─────────────────────────────────────────────────────────────
+  /** How long each bidder has before the clock passes for them. */
+  auctionSeconds: number;
+  /** The smallest raise the auction will take. */
+  bidIncrement: number;
+  /** Raises the panel offers, over the minimum. `[0, 40, 90]` is three buttons:
+   *  the minimum bid and two bigger jumps, so bidding is not twenty clicks. */
+  bidSteps: number[];
+
   // ── The turn itself ─────────────────────────────────────────────────────────
   // Named strategies, not functions: a rule set is saved with the game, and a
   // function does not survive `JSON.stringify`. Both are looked up in the
@@ -70,6 +79,9 @@ export const CLASSIC_RULES: GameRules = {
   hotelLimit: 12,
   housesBeforeHotel: 4,
   houseAuctions: true,
+  auctionSeconds: 15,
+  bidIncrement: 10,
+  bidSteps: [0, 40, 90],
 
   turnOrder: 'seat',
   winCondition: 'lastSolvent',

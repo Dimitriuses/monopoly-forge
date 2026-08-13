@@ -43,6 +43,13 @@ const EXTERNAL_URL = value('url', null);
 const MAP = value('map', null);
 /** Comma-separated variants to switch on, e.g. `--variants speedDie`. */
 const VARIANTS = value('variants', null);
+/**
+ * Play with the house rules on. The two that can be *observed* from outside —
+ * the Free Parking jackpot pools fines and taxes, and GO pays twice for landing
+ * on it. `noAuction` is left out on purpose: it would turn off the auction step
+ * this run depends on.
+ */
+const HOUSE_RULES = flag('house-rules') ? 'freeParkingJackpot,doubleGoSalary' : null;
 
 // The Phaser canvas is a fixed 1280×800 with no scale manager, so game
 // coordinates map 1:1 onto canvas pixels.
@@ -175,7 +182,8 @@ async function main() {
 
   const url = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}debug=1&seed=${SEED}`
             + (MAP ? `&map=${MAP}` : '')
-            + (VARIANTS ? `&variants=${VARIANTS}` : '');
+            + (VARIANTS ? `&variants=${VARIANTS}` : '')
+            + (HOUSE_RULES ? `&houseRules=${HOUSE_RULES}` : '');
   console.log(`▶ playtest: ${url}`);
   console.log(`  ${TURNS} turns, seed ${SEED}${TAKE_SHOTS ? ', capturing screenshots' : ''}`);
 
@@ -252,6 +260,15 @@ async function main() {
       console.log(`  ✓ speed die in play — the turn is ${turn.length} phases`);
     }
 
+    if (HOUSE_RULES) {
+      const rules = await page.evaluate(() => window.__forge.rules());
+      const missing = HOUSE_RULES.split(',').filter((key) => rules[key] !== true);
+      if (missing.length) {
+        throw new Error(`house rules were switched on but the game is not playing them: ${missing}`);
+      }
+      console.log(`  ✓ house rules in force: ${HOUSE_RULES.split(',').join(', ')}`);
+    }
+
     // ── Bot mode: no clicking, just check they play a real game ───────────────
     if (BOTS) {
       const bots = start.players.filter((p) => p.isBot).length;
@@ -265,7 +282,12 @@ async function main() {
       // board at the very end. Arrange it a third of the way in and watch what
       // the bots do — bidding for a house is a prompt they owe an answer to.
       const shortageAt = Math.max(3, Math.floor(TURNS / 3));
+      // And a bankruptcy owing the bank, which puts a whole estate under the
+      // hammer, deed by deed. Nobody is clicking here, so it can play out.
+      const bankruptcyAt = Math.max(5, Math.floor(TURNS / 5));
       let houseAuction = null;
+      let estateAuctions = 0;
+      let bankrupted = null;
 
       for (let tick = 0; tick < TURNS; tick++) {
         await sleep(1200);
@@ -275,10 +297,15 @@ async function main() {
           if (lot === null) console.log('  · this board cannot make a house shortage — skipped');
           else console.log(`  · arranged a house shortage around tile ${lot}`);
         }
-        if (!houseAuction) {
-          const state = await page.evaluate(() => window.__forge.auctionState());
-          if (state?.subject?.kind === 'house') houseAuction = state;
+        if (tick === bankruptcyAt) {
+          bankrupted = await page.evaluate(() => window.__forge.forceBankruptcy());
+          console.log(bankrupted
+            ? `  · bankrupted ${bankrupted} owing the bank — the estate goes to auction`
+            : '  · nobody could be bankrupted yet — skipped');
         }
+        const auction = await page.evaluate(() => window.__forge.auctionState());
+        if (!houseAuction && auction?.subject?.kind === 'house') houseAuction = auction;
+        if (bankrupted && auction?.subject?.kind === 'tile') estateAuctions++;
         if (await page.evaluate(() => window.__forge.gameOver())) {
           console.log(`  ✓ a bot won the game outright after ${tick} ticks`);
           finished = true;
@@ -326,7 +353,16 @@ async function main() {
       console.log(`  tiles owned    ${owned}`);
       console.log(`  bank h/h       ${end.bank.houses}/${end.bank.hotels}`);
       const built = end.board.tiles.reduce((n, t) => n + (t.houses ?? 0), 0);
+      // Straight from the turn log, which now keeps everything rather than the
+      // dozen lines that happened to fit on screen.
+      const log = await page.evaluate(() => window.__forge.log());
+      const trades = log.filter((line) => line.includes('🤝')).length;
       console.log(`  houses built   ${built}`);
+      console.log(`  log lines      ${log.length}`);
+      console.log(`  bot trades     ${trades}`);
+      console.log(`  estate deeds   ${bankrupted
+        ? `${estateAuctions} tick(s) with a returned deed under the hammer`
+        : 'nobody went bankrupt'}`);
       console.log(`  house auction  ${houseAuction
         ? `held, ${houseAuction.bidders.length} bidders, opened at $${houseAuction.minimumBid}`
         : 'never happened'}`);
@@ -339,6 +375,14 @@ async function main() {
       }
       if (houseAuction.bidders.length < 2) {
         throw new Error(`a contested house drew ${houseAuction.bidders.length} bidder(s)`);
+      }
+      if (bankrupted && estateAuctions === 0) {
+        throw new Error('an estate went back to the bank and none of it was auctioned');
+      }
+      // The log used to keep only what fitted on screen. A run this long says
+      // more than a dozen things.
+      if (TURNS >= 40 && log.length <= 12) {
+        throw new Error(`the turn log kept only ${log.length} entries — no scrollback`);
       }
 
       if (errors.length) {
@@ -362,6 +406,8 @@ async function main() {
     let capturedCard = false;
     let capturedJail = false;
     let capturedAuction = false;
+    /** The most the Free Parking pot ever held — 0 means the rule did nothing. */
+    let biggestPot = 0;
 
     for (let turn = 0; turn < TURNS; turn++) {
       await waitFor(page, idle, { timeout: 10000 });
@@ -385,6 +431,7 @@ async function main() {
         card: window.__forge.cardOpen(),
         state: window.__forge.state(),
       }));
+      biggestPot = Math.max(biggestPot, view.state.bank.pot ?? 0);
 
       if (view.card) {
         cards++;
@@ -595,6 +642,14 @@ async function main() {
     if (!Number.isInteger(end.turn.round) || end.turn.round < 1) {
       problems.push(`the round counter is not a round: ${end.turn.round}`);
     }
+    // The switch being on is one thing; the rule doing something is another. A
+    // fine or a tax on any turn pools on Free Parking, and this seed has both.
+    if (HOUSE_RULES?.includes('freeParkingJackpot') && biggestPot === 0) {
+      problems.push('the Free Parking jackpot was on and the pot never took a penny');
+    }
+    if (!HOUSE_RULES && biggestPot > 0) {
+      problems.push(`the pot filled with the jackpot rule off: $${biggestPot}`);
+    }
 
     await shot(page, box, '6-late-game');
 
@@ -608,6 +663,7 @@ async function main() {
     console.log(`  tiles owned       ${owned}`);
     console.log(`  final phase       ${end.turn.phase} (of ${phases.length})`);
     console.log(`  rounds played     ${end.turn.round}`);
+    console.log(`  biggest pot       $${biggestPot}${HOUSE_RULES ? '' : ' (jackpot rule off)'}`);
     console.log(`  panel opened on   ${panelTileId === null ? 'nothing' : `tile ${panelTileId}`}`);
     console.log(`  bank houses/hotels ${end.bank.houses}/${end.bank.hotels}`);
     console.log('');

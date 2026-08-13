@@ -329,6 +329,13 @@ it, and each is a line in KNOWNISSUES where it departs from the printed rules.
       same problem as rendering a theme — hold references to the drawn elements and
       write to them — so it is worth solving once, here, rather than three times in
       three hand-written panels.
+- [ ] **Measure a panel's list instead of reserving it** (moved from KNOWNISSUES).
+      `TradePanel` lays out 11 deed rows per side whatever the players hold, so a
+      two-deed trade is mostly empty space and everything below the list hangs off
+      constants derived from that count. It belongs with the item above rather
+      than on its own: both rewrite the same three panels, and both move the
+      layout constants the playtest's `HOTSPOTS` are computed from — doing them
+      separately means recalculating those by hand twice.
 
 ### 8d — A simulation platform
 
@@ -340,6 +347,14 @@ is the fastest way to find the rule bugs a hand-played game never reaches.
       a finished game out. The model already runs in plain Node, and M7's decision
       layer is deliberately separate from the scene that currently drives it, so
       the runner supplies the driving instead.
+- [ ] **Sequence a landing from completion, not from a delay** (moved from
+      KNOWNISSUES). `GameScene` ends a turn with `safeEndTurn(300)` / `(400)` /
+      `(700)` / `(800)`, tuned by feel against animation lengths. It has been
+      stable for four milestones, and it is the *first* thing a headless runner
+      breaks: there is no tween to be slower than and no clock to wait on. So the
+      landing has to report when it is finished rather than be waited out — and
+      that has to be true before the runner can play a single game, which is why
+      it is here rather than filed as debt.
 - [ ] **A batch CLI** — `npm run simulate -- --games 1000 --seed 1` — reporting
       what a balance pass needs: bankruptcy rates, game length, how often the bank
       runs out of houses, how often a game fails to terminate.

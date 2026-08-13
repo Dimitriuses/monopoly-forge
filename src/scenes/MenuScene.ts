@@ -17,7 +17,8 @@ export class MenuScene extends Phaser.Scene {
   private players: PlayerSetup[] = [];
   private setupContainer!: Phaser.GameObjects.Container;
   private countButtons: Map<number, Phaser.GameObjects.Text> = new Map();
-  private houseRules: HouseRules = { ...DEFAULT_HOUSE_RULES };
+  /** `?houseRules=freeParkingJackpot,noAuction` switches them on; the chips override. */
+  private houseRules: HouseRules = MenuScene.houseRulesFromUrl();
   /** Variants switched on. `?variants=speedDie` preselects, the chips override. */
   private variants: string[] = new URLSearchParams(window.location.search)
     .get('variants')?.split(',').filter((name) => knownVariants().includes(name)) ?? [];
@@ -221,6 +222,41 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
   }
 
+  /**
+   * House rules named in the URL. It is the same affordance `?map=` and
+   * `?variants=` give, and it is what lets the playtest exercise a rule set
+   * other than the default one — the switches are canvas text with no DOM to
+   * click from a harness.
+   */
+  private static houseRulesFromUrl(): HouseRules {
+    const rules = { ...DEFAULT_HOUSE_RULES };
+    const named = new URLSearchParams(window.location.search).get('houseRules');
+    for (const key of named?.split(',') ?? []) {
+      if (key in rules) rules[key as keyof HouseRules] = true;
+    }
+    return rules;
+  }
+
+  /**
+   * The next piece nobody else has taken. Cycling each row independently used to
+   * let two seats both end up as "Car", and a shared token is a shared colour on
+   * the board — the owner bands, the tokens and the HUD all read the same, and
+   * there is nothing left to tell the two players apart by.
+   *
+   * There are eight pieces and at most six seats, so a free one always exists;
+   * the loop bound is there so a shorter list could never spin.
+   */
+  private nextFreeToken(seat: number, tokens: TokenType[]): TokenType {
+    const taken = new Set(this.players.filter((_, i) => i !== seat).map((p) => p.token));
+    const from  = tokens.indexOf(this.players[seat].token);
+
+    for (let step = 1; step <= tokens.length; step++) {
+      const candidate = tokens[(from + step) % tokens.length];
+      if (!taken.has(candidate)) return candidate;
+    }
+    return this.players[seat].token;
+  }
+
   /** Repaint the player-count buttons so exactly one reads as selected. */
   private refreshCountButtons(): void {
     this.countButtons.forEach((btn, count) => {
@@ -261,8 +297,7 @@ export class MenuScene extends Phaser.Scene {
       }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
 
       tokenLabel.on('pointerdown', () => {
-        const cur = tokens.indexOf(this.players[i].token);
-        this.players[i].token = tokens[(cur + 1) % tokens.length];
+        this.players[i].token = this.nextFreeToken(i, tokens);
         tokenLabel.setText(TOKEN_LABELS[this.players[i].token]);
       });
 

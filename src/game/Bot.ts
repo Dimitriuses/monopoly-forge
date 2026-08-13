@@ -7,7 +7,7 @@ import { countOwnedOfType } from './Rent';
 import type { Board } from './Board';
 import type { Bank } from './Bank';
 import type { Player } from './Player';
-import type { TradeOffer } from './Trade';
+import { emptyOffer, validateTrade, type TradeOffer } from './Trade';
 
 // ─── Bot ──────────────────────────────────────────────────────────────────────
 // The decision layer. It answers questions — buy this? bid how much? build
@@ -196,9 +196,16 @@ export function redeemPlan(ctx: BotContext): number[] {
 // ─── Trading ──────────────────────────────────────────────────────────────────
 
 /**
- * Accept an offer? Only on a straight valuation: what the bot receives has to beat
- * what it gives up, and it will not hand over a deed that completes somebody
- * else's colour group at any price.
+ * Accept an offer? Only on a straight valuation: what the bot receives has to
+ * beat what it gives up.
+ *
+ * The one deed it holds back is the one that would complete somebody else's
+ * colour group — **unless they are handing over the one that completes ours**.
+ * That exception is what makes a bot able to trade with a bot at all: an
+ * absolute veto meant the only deed worth asking for was the only deed nobody
+ * would ever part with, so two bots one lot short of two different groups sat
+ * across the table from each other for the whole game. Two monopolies made at
+ * once is the trade real players make, and cash alone still will not buy it.
  */
 export function acceptTrade(ctx: BotContext, offer: TradeOffer): boolean {
   const { board, player } = ctx;
@@ -211,11 +218,132 @@ export function acceptTrade(ctx: BotContext, offer: TradeOffer): boolean {
   if (!player.canAfford(givingCash)) return false;
 
   const other = ctx.players.find((p) => p.id === (iAmProposer ? offer.toId : offer.fromId));
-  if (other && giving.some((id) => completesGroupFor(board, other, id))) return false;
+  const givingTheirKey = !!other && giving.some((id) => completesGroupFor(board, other, id));
+  const gettingOurKey  = getting.some((id) => completesGroupFor(board, player, id));
+  if (givingTheirKey && !gettingOurKey) return false;
 
   const given = giving.reduce((sum, id) => sum + valueOf(ctx, id), givingCash);
   const gained = getting.reduce((sum, id) => sum + valueOf(ctx, id), gettingCash);
   return gained > given;
+}
+
+/**
+ * An offer this bot would make, or null. Two shapes, in order of preference:
+ *
+ *   1. **A monopoly for a monopoly.** We hold the lot that completes a group for
+ *      somebody who holds the lot that completes one for us. Cash tops it up
+ *      until their own valuation says yes.
+ *   2. **Cash for a deed that is worth more to us than to its owner** — a second
+ *      railroad, a second utility. No colour group is involved, so nobody is
+ *      being asked to hand over a key.
+ *
+ * The cash is the *smallest* amount that gets a yes, found by asking
+ * `acceptTrade` — the partner's real policy, not a guess at it. Deterministic
+ * and drawing no randomness, like every other decision in this file.
+ */
+export function proposeTrade(ctx: BotContext): TradeOffer | null {
+  const budget = Math.max(0, ctx.player.cash - profileOf(ctx).reserve);
+  return swapForMonopoly(ctx, budget) ?? buyOutright(ctx, budget);
+}
+
+/** Cash steps to search over. Finer than this buys nothing but iterations. */
+const CASH_STEP = 10;
+
+function swapForMonopoly(ctx: BotContext, budget: number): TradeOffer | null {
+  const { player, players } = ctx;
+
+  for (const wanted of keysHeldByOthers(ctx)) {
+    const owner = players.find((p) => p.id === wanted.ownerId);
+    if (!owner || owner.isBankrupt) continue;
+
+    for (const key of ourKeysFor(ctx, owner)) {
+      // Not out of the same group: swapping one brown lot for the other leaves
+      // the group split exactly as it was, and both sides' valuations happily
+      // say yes to it. Ask that the two keys belong to different groups and the
+      // trade is what it claims to be — a monopoly each.
+      if (key.group === wanted.group) continue;
+
+      const base: TradeOffer = {
+        ...emptyOffer(player.id, owner.id),
+        fromTileIds: [key.id],
+        toTileIds:   [wanted.id],
+      };
+      const offer = cheapestYes(ctx, owner, base, budget);
+      if (offer) return offer;
+    }
+  }
+  return null;
+}
+
+function buyOutright(ctx: BotContext, budget: number): TradeOffer | null {
+  const { board, player, players } = ctx;
+
+  for (const tile of board.tiles) {
+    if (!isOwnable(tile) || tile.ownerId === null || tile.ownerId === player.id) continue;
+    // A lone lot is somebody's key by definition, and `acceptTrade` holds those
+    // back for a swap. What is buyable is a railroad or a utility we already
+    // have one of.
+    if (tile instanceof PropertyTile || !isStrategic(ctx, tile)) continue;
+
+    const owner = players.find((p) => p.id === tile.ownerId);
+    if (!owner || owner.isBankrupt) continue;
+
+    const base: TradeOffer = { ...emptyOffer(player.id, owner.id), toTileIds: [tile.id] };
+    const offer = cheapestYes(ctx, owner, base, budget);
+    if (offer) return offer;
+  }
+  return null;
+}
+
+/**
+ * The least cash that turns `base` into an offer `partner` accepts, or null if
+ * even the whole budget will not. More cash is only ever more attractive to the
+ * other side, so the predicate is monotonic and a binary search is exact.
+ */
+function cheapestYes(
+  ctx: BotContext, partner: Player, base: TradeOffer, budget: number,
+): TradeOffer | null {
+  const partnerCtx: BotContext = { ...ctx, player: partner };
+  const withCash = (cash: number): TradeOffer => ({ ...base, fromCash: cash });
+  const yes = (cash: number): boolean => {
+    const offer = withCash(cash);
+    return validateTrade(ctx.board, ctx.players, offer).ok && acceptTrade(partnerCtx, offer);
+  };
+
+  const top = Math.floor(budget / CASH_STEP);
+  if (!yes(top * CASH_STEP)) return null;
+
+  let low = 0;
+  let high = top;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (yes(mid * CASH_STEP)) high = mid;
+    else                      low = mid + 1;
+  }
+  return withCash(low * CASH_STEP);
+}
+
+/** Lots somebody else holds that would complete a colour group for us. */
+function keysHeldByOthers(ctx: BotContext): PropertyTile[] {
+  return ctx.board.tiles.filter((t): t is PropertyTile => (
+    t instanceof PropertyTile
+    && t.ownerId !== null && t.ownerId !== ctx.player.id
+    && completesGroupFor(ctx.board, ctx.player, t.id)
+  ));
+}
+
+/**
+ * Lots we hold that would complete a colour group for `them` — which is also to
+ * say lots we can never complete ourselves, since they hold all the others.
+ * Giving one away costs nothing but the rent it would have paid.
+ */
+function ourKeysFor(ctx: BotContext, them: Player): PropertyTile[] {
+  return [...ctx.player.ownedTileIds]
+    .map((id) => ctx.board.getTile(id))
+    .filter((t): t is PropertyTile => (
+      t instanceof PropertyTile && completesGroupFor(ctx.board, them, t.id)
+    ))
+    .sort((a, b) => a.price - b.price);   // give away the cheapest that will do
 }
 
 // ─── Valuation ────────────────────────────────────────────────────────────────

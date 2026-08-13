@@ -8,16 +8,17 @@ reproducible; anything merely *planned* lives in [ROADMAP.md](ROADMAP.md) instea
 
 ## Gameplay
 
-### A bankrupt player's estate is not auctioned when it returns to the bank
+### A returned estate is sold as it stands, mortgages and all
 
-When a player goes under owing the *bank* rather than another player, their deeds
-are returned unowned (`Estate.transferEstate` with no creditor). The standard
-rules have the bank auction each of them immediately. Owing another player works
-correctly — the whole estate passes to them.
+*Fixed:* a player who goes under owing the **bank** now has their deeds auctioned
+one after another, as the standard rules require. `transferEstate` reports what
+went back unowned, and `GameScene` queues a `tileSubject` for each; the turn that
+caused the bankruptcy does not end until the queue is empty.
 
-The machinery is no longer the obstacle: `Auction` sells a *subject* rather than a
-tile id, so a queue of deeds is expressible. What is missing is the sequencing —
-several auctions one after another, in the middle of somebody else's turn.
+What is still a simplification: a mortgaged deed goes under the hammer mortgaged,
+and the winner inherits the debt rather than being made to lift it or pay the
+interest there and then. That matches what already happens when an estate passes
+to a *creditor*, so both routes agree — but neither charges the 10%.
 
 ### The winner of a contested house does not choose the lot
 
@@ -52,17 +53,17 @@ face. Two parts of the official variant are missing on purpose:
 Doubles are unaffected: `SpeedDice` reports them from the two white dice, so
 three doubles still means jail.
 
-### The auction clock is fixed at 15 seconds
+### A bid has to be one of the three offered amounts
 
-`AUCTION_SECONDS` in `GameScene` is a constant, not a setting, and the bid
-increments offered (minimum, +$40, +$90) are fixed too. A player who wants to
-raise by some other amount cannot.
+*Fixed in part:* the clock and the raises are rule-set values now
+(`auctionSeconds`, `bidIncrement`, `bidSteps`), so a map or a variant sets them
+and nothing in `GameScene` is a constant any more.
 
-### Duplicate tokens are allowed
-
-The menu assigns distinct tokens by default, but the selector cycles each row
-independently, so two players can both end up as "Car" and share a token colour
-on the board. Nothing prevents or warns about it.
+What remains is the panel: it offers three buttons — the minimum and two bigger
+jumps — and a player who wants to raise by some other amount still cannot. That
+needs a stepper of the kind the trade panel has for cash, which moves the panel's
+buttons and so means recomputing the harness's `auctionBid` / `auctionPass`
+hotspots by hand.
 
 ### A save cannot be taken mid-turn, and there is only one slot
 
@@ -71,13 +72,25 @@ open, because a restore resumes at the *start* of the saved player's turn and
 none of that state is captured. `SaveLoad` also keeps exactly one localStorage
 key, so a new save overwrites the old one with no warning.
 
-### The bots never propose a trade
+### A bot will not make an offer to a person
 
-`game/Bot.ts` answers an offer (`acceptTrade`) but has nothing that *makes* one,
-so bots only ever trade when a human proposes. In a bot-only game that means
-colour groups are completed by chance alone, and often not at all — which is why
-a long `--bots` run ends with the bank's houses untouched unless the harness
-arranges a shortage itself.
+*Fixed in part:* `Bot.proposeTrade` makes two shapes of offer — a monopoly for a
+monopoly (we hold the lot that completes their group, they hold ours, cash tops
+it up) and cash for a second railroad or utility. The cash is the smallest amount
+that gets a yes, found by asking the partner's own `acceptTrade` rather than
+guessing at it. A `--bots` run now shows several trades a game and colour groups
+that were completed on purpose.
+
+Making that possible needed one policy change, worth knowing about: a bot used to
+refuse to hand over the deed completing somebody else's group **at any price**,
+which meant the only deed worth asking for was the only deed nobody would ever
+part with. It will now part with one — but only in exchange for the deed that
+completes a group of its own. Cash alone still will not buy it.
+
+What is left: **a bot only proposes to another bot.** Whether an opponent should
+interrupt your turn with an unsolicited offer is a question about the game's
+manners rather than about the trade, and answering it means a modal that arrives
+uninvited, plus a harness that knows to answer it.
 
 ### The bots are a baseline, not a challenge
 
@@ -95,9 +108,17 @@ variant can supply its own dice — but one turn rule is still an `if` inside
 a rule value and `Dice` is substitutable, which between them cover the speed die
 (it reports doubles from the two white dice and the classic rule applies
 unchanged). What no rule set can say is that a *triple* means something, which is
-why the speed die's triples rule is missing above. Opening it means the roll
-becoming a phase handler's business rather than `rollDice`'s, and there is no
-consumer for it yet beyond that one rule.
+why the speed die's triples rule is missing above.
+
+**The open question, for whoever picks this up:** is a roll's *meaning* a fourth
+registered strategy beside `turnOrder`, `winCondition` and `variants` — something
+like `rollOutcome(result, player) → { jail?, rollAgain? }` — or does the roll
+belong inside the `ROLLING` phase handler, which a rule set can already replace?
+The second needs no new registry and no new field in the save file, but it means
+`rollDice` handing over control rather than consulting a strategy, which is a
+larger change to a method three bugs have already been fixed in. Both are worth
+doing only alongside the variant that needs them; the speed die's triples rule is
+the only candidate today, and it also needs a pick-a-tile prompt.
 
 ### The alternative boards are test boards
 
@@ -107,14 +128,17 @@ derived from price by formula, and neither has been balanced. Orbits in
 particular is odd on purpose — the circuit spirals inward across three rings and
 then jumps back out to GO.
 
-### The playtest plays with the house rules off
+### The no-auction house rule is still untested
 
-`tools/playtest.mjs` never touches the menu's house-rule switches, so the seeded
-run only ever exercises the default rule set. The Free Parking jackpot and the
-double GO salary were verified by hand against the real canvas; nothing stops
-them regressing silently. Variants are better off — `--variants speedDie` selects
-one through the URL and the run asserts the turn actually grew a phase — but the
-three booleans beside them are still untested.
+*Fixed in part:* `npm run playtest -- --house-rules` plays with the Free Parking
+jackpot and the double GO salary on (`?houseRules=` selects them, the same way
+`?map=` and `?variants=` work), asserts the game is really playing them, and
+fails if the jackpot never takes a penny — or if the pot fills with the rule
+*off*, which would be the more interesting bug.
+
+`noAuction` is left out of that run on purpose: it would switch off the auction
+step the same run depends on. Testing it needs a second pass with a different set
+of assertions.
 
 ---
 
@@ -148,6 +172,12 @@ has been stable across long playtests, but it is timing-coupled by construction.
 effects — it moved to `game/Rent.ts` and is unit-tested. What remains in the
 scene handlers is the sequencing: who pays whom, when, and how long to wait.
 
+**Scheduled into ROADMAP 8d**, not because it is small but because that is where
+it stops being optional: a headless runner has no tweens to wait for and no clock
+to wait on, so the sequencing has to come from completion rather than from a
+delay before the simulator can run a game at all. Fixing it earlier would be the
+same work done twice.
+
 ### A turn's phases are a list; the path between them is not
 
 `TurnFlow` made the phases of a turn data — named, ordered, insertable — and
@@ -172,11 +202,17 @@ changed still calls `removeAll(true)` and re-creates every child: roughly 120
 objects for the trade panel's two deed lists. Not measurable at this size, and
 updating in place is the same problem as drawing a theme, so it waits for M8c.
 
-### The turn log keeps no history beyond the panel
+### The turn log cannot be exported
 
-`Notification` holds only the entries that fit between y=496 and y=786 — about a
-dozen — and destroys anything pushed past the bottom. There is no scrollback, and
-nothing is written anywhere a player could review after the fact.
+*Fixed:* `Notification` keeps every entry (up to 500) and the drawn strip is a
+*window* onto them — the wheel scrolls back over the log, and a marker says how
+far. Nothing is destroyed on the way past the bottom any more, and the history is
+readable through `__forge.log()`, which the playtest now uses to count what the
+bots did.
+
+What is missing is a way to get it *out*: no copy button, no download, and
+nothing is written to disk. A player who wants the record of a game after closing
+the tab still has nothing.
 
 ### The trade panel's layout is fixed, not measured
 
@@ -184,6 +220,11 @@ nothing is written anywhere a player could review after the fact.
 so a two-deed trade shows a lot of empty space, and everything below the list
 hangs off constants derived from that. It also means the harness's `HOTSPOTS`
 entries have to be recalculated by hand whenever the layout constants change.
+
+**Scheduled into ROADMAP 8c**, with the panel rework above it: measuring the list
+and updating a drawn panel in place are the same job on the same three files, and
+both change the constants the harness's hotspots hang off. Doing them separately
+means recomputing those hotspots by hand twice.
 
 ---
 

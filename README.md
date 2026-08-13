@@ -80,12 +80,12 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 - **Auctions** — a declined property goes under the hammer: round-robin bidding, a pass forfeits, and a per-bidder clock passes for anyone who lets it run out. What is being sold is a *subject*, not necessarily a deed, which is how the last houses get auctioned too
 - **The bank's last houses are contested** — when more players could buy a house than the bank has left, the next one is auctioned at a reserve rather than going to whoever asked first. "Wanting one" is decided from the board, not from a prompt, so a bot answers it the same way a person does
 - **Variants** — a rule that is neither a number nor a strategy is a registered bundle: its own dice, an extra step in the turn, or both. **The speed die** ships as one — a third die whose numbers add to your roll, whose Mr. Monopoly face sends you to the next deed that is not yours, and whose bus takes you to the next card tile. Switch it on from the menu or with `?variants=speedDie`
-- **Trading** — deeds, cash and jail cards in one offer, with propose / accept / decline / counter, netted cash, and buildings blocking the lots they stand on
-- **Bankruptcy that settles** — a debt is met from cash, then by selling buildings and mortgaging deeds, and only then does the player go under, handing their whole estate to the creditor. The last solvent player wins
+- **Trading** — deeds, cash and jail cards in one offer, with propose / accept / decline / counter, netted cash, and buildings blocking the lots they stand on. Bots make offers of their own: a monopoly for a monopoly, topped up with the smallest amount of cash the other side will say yes to
+- **Bankruptcy that settles** — a debt is met from cash, then by selling buildings and mortgaging deeds, and only then does the player go under, handing their whole estate to the creditor. Owing the bank instead, the estate is auctioned deed by deed. The last solvent player wins
 - **Bot opponents** — hand any seat to a bot and play on your own. They buy, bid, build, mortgage, answer trades and work out how to leave jail. The policy is a plain deterministic function of the game state, with no Phaser and no randomness of its own, so the same bots will drive the headless simulator
 - **Save and resume** — the whole game to localStorage and back, including both deck piles in order and the random stream's position, so a resumed game rolls exactly what the saved one would have
 - **House rules** — Free Parking jackpot, double salary for landing on GO, and no-auction, switchable on the menu and all actually read
-- **HUD** — animated dice, per-player cash, active-player highlight, jail markers, and a turn log beside the board that keeps the last dozen events readable
+- **HUD** — animated dice, per-player cash, active-player highlight, jail markers, and a turn log beside the board. The log keeps the whole game, not just what fits: scroll the wheel over it to read back
 - **Tokens that share a square** cluster instead of stacking — a line for two, a triangle for three, a ring beyond that — reshaping as pieces arrive and leave, including ones just passing through
 - **Sound** — seven effects synthesised at runtime with Web Audio, no audio files, with a mute button
 - **Determinism** — `?seed=12345` replays an identical game
@@ -146,7 +146,7 @@ Three axes of customisation, none of which should require editing engine code:
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 359 unit tests pin down.
+it is what the 367 unit tests pin down.
 
 ### What already supports it
 
@@ -222,7 +222,7 @@ Three consequences worth the trouble:
 **The model runs in Node.** `src/config.ts` deliberately contains no Phaser
 import — the `Phaser.Game` options live in `main.ts` instead — so everything under
 `game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 359 unit tests run in ~8 s with no jsdom, and it is the seam a
+That is what lets 367 unit tests run in ~8 s with no jsdom, and it is the seam a
 headless AI opponent would plug into.
 
 **Games are reproducible.** Every dice roll and both deck shuffles draw from one
@@ -305,10 +305,12 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test                # 359 unit tests, plain Node, ~8 s
+npm test                # 367 unit tests, plain Node, ~8 s
 npm run typecheck       # tsc --noEmit
 npm run playtest        # build first: plays 30 seeded turns in a headless browser
 npm run playtest -- --bots   # hand every seat to a bot and watch them play it out
+npm run playtest -- --house-rules      # ...with the Free Parking jackpot on
+npm run playtest -- --variants speedDie
 npm run screenshots
 npm run verify:install  # would CI's npm accept this lockfile?
 ```

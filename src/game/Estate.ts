@@ -33,6 +33,13 @@ export interface Settlement {
   /** Counts for the toast, which has room for a summary but not a list. */
   sold: number;
   mortgaged: number;
+  /**
+   * Deeds that went back to the bank unowned, because there was no creditor.
+   * The standard rules have the bank auction each of them, and it cannot do
+   * that without being told which — the tiles are already unowned by the time
+   * anybody hears about the bankruptcy.
+   */
+  returned: number[];
 }
 
 export interface Liquidation {
@@ -118,7 +125,7 @@ export function settleDebt(
   if (debtor.cash >= amount) {
     debtor.pay(amount);
     creditor?.receive(amount);
-    return { paid: amount, shortfall: 0, bankrupt: false, actions, sold, mortgaged };
+    return { paid: amount, shortfall: 0, bankrupt: false, actions, sold, mortgaged, returned: [] };
   }
 
   // Everything they have left, and then they are out of the game.
@@ -127,10 +134,14 @@ export function settleDebt(
   creditor?.receive(paid);
   const shortfall = amount - paid;
 
-  actions.push(...transferEstate(board, bank, debtor, creditor));
+  const transfer = transferEstate(board, bank, debtor, creditor);
+  actions.push(...transfer.actions);
   debtor.isBankrupt = true;
 
-  return { paid, shortfall, bankrupt: true, actions, sold, mortgaged };
+  return {
+    paid, shortfall, bankrupt: true, actions, sold, mortgaged,
+    returned: transfer.returned,
+  };
 }
 
 /**
@@ -140,7 +151,7 @@ export function settleDebt(
  */
 export function transferEstate(
   board: Board, bank: Bank, debtor: Player, creditor: Player | null,
-): string[] {
+): { actions: string[]; returned: number[] } {
   const actions: string[] = [];
   const tiles = ownedTiles(board, debtor);
 
@@ -176,7 +187,9 @@ export function transferEstate(
       : `${count} Get Out of Jail Free card(s) lost`);
   }
 
-  return actions;
+  // Only when there is no creditor: with one, the deeds have an owner already
+  // and there is nothing for the bank to sell.
+  return { actions, returned: creditor ? [] : tiles.map((t) => t.id) };
 }
 
 /**
@@ -204,7 +217,12 @@ export function announceSettlement(
                (creditor ? `Their estate passes to ${creditor.name}.` : 'Their estate returns to the bank.'),
       type: 'danger',
     });
-    bus.emit('player:bankrupt', { playerId: debtor.id, creditorId: creditor?.id ?? null });
+    bus.emit('player:bankrupt', {
+      playerId:   debtor.id,
+      creditorId: creditor?.id ?? null,
+      // What the bank now holds unowned, so it can put each one under the hammer.
+      returned:   settlement.returned,
+    });
   }
 }
 

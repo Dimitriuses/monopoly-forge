@@ -1316,3 +1316,107 @@ the hammer with at least two bidders. It fires on all three boards:
   path with `--variants speedDie`, which reports a seven-phase turn and still
   saves, reloads and resumes identically — a restored game rebuilds the speed
   dice, because `restoreGame` asks `diceFor(board.rules)` rather than `new Dice()`.
+
+---
+
+## A pass over KNOWNISSUES
+
+Not a milestone — a sweep of the defects that were not waiting on anything. The
+triage mattered more than any single fix: of eighteen entries, four were already
+scheduled elsewhere, three were explanations rather than defects, one waited on an
+open question, two belonged in a milestone and were moved there, and six were
+simply undone.
+
+### The two that were moved rather than fixed
+
+Both were unscheduled and both were self-contained, so by the rule they should
+have been fixed. They were not, because each has a milestone that makes it *not
+optional*, and doing it early means doing it twice:
+
+- **Landing side effects, sequenced by `safeEndTurn(700)` and friends** → 8d. A
+  headless runner has no tween to be slower than and no clock to wait on, so the
+  landing has to report completion before the simulator can play one game.
+- **`TradePanel` reserving 11 rows whatever players hold** → 8c, beside the
+  panel-diffing item. Same three files, same layout constants, and the same
+  hotspots to recompute by hand afterwards.
+
+### Six fixed
+
+- **Duplicate tokens.** The selector cycled each row independently, so two seats
+  could both be "Car" — one colour, one owner band, nothing to tell them apart.
+  It skips what is taken now. Eight pieces, at most six seats.
+- **The auction clock was a constant.** `auctionSeconds`, `bidIncrement` and
+  `bidSteps` are rule-set values. What is left is the panel offering three fixed
+  buttons, which needs a stepper and a hotspot recalculation.
+- **A bankrupt estate returning to the bank vanished unowned.** It is auctioned
+  deed by deed now. The interesting part was not the auction — `Auction` already
+  sold a *subject* — but the sequencing: `transferEstate` had to report what went
+  back (the tiles are unowned by the time anyone hears about the bankruptcy), and
+  `safeEndTurn` had to learn to wait for a queue, or the next player would start
+  rolling into an auction. A subject stays *in* the queue until it opens, so
+  there is never a moment where the queue looks empty and the turn slips out.
+- **The turn log destroyed anything that scrolled past the bottom.** It keeps
+  everything now and the drawn strip is a window onto it — the wheel scrolls back,
+  and a scrolled-back view holds its place instead of jumping every time the game
+  says something. `__forge.log()` exposes the history, which the playtest uses to
+  count what the bots did.
+- **The playtest never touched the house rules.** `--house-rules` plays with the
+  jackpot and the double salary on, asserts the game is really playing them, and
+  fails if the pot never takes a penny — *or* if it fills with the rule off.
+- **Bots never proposed a trade.** Below.
+
+### The bots' trade, and the policy that made it impossible
+
+`proposeTrade` was meant to be the easy half. It was not, and the reason is worth
+recording: `acceptTrade` refused to hand over a deed completing somebody else's
+colour group **at any price**, and the only deed a bot ever wants is exactly that
+one. Two bots each one lot short of a different group sat across the table from
+each other for a whole game. A proposer built on top of that veto would have made
+offers that could never be accepted — a fix that demos and does nothing.
+
+So the veto became conditional: a bot will part with your key **in exchange for
+its own**. Cash alone still will not buy it, and the test that pins "not for
+$5,000" still passes, because $5,000 comes with no key attached. Two monopolies
+made at once is the trade real players make.
+
+The proposer then writes itself. It looks for a lot somebody else holds that
+completes a group for it, offers back one of theirs that it can never complete
+anyway, and tops the offer up with the *smallest* cash that gets a yes — found by
+asking `acceptTrade`, the partner's real policy, by binary search over the budget.
+No randomness, deterministic, and it declines to spend into its reserve.
+
+One bug found by writing the test rather than the code: the first version happily
+proposed swapping Mediterranean for Baltic. Both sides' valuations said yes — each
+was getting a "key" — and the brown group stayed exactly as split as before. The
+two keys have to belong to *different* groups for the trade to be what it claims.
+
+Bots trade only with bots. Whether an opponent should interrupt a person's turn
+with an unsolicited offer is a question about the game's manners, not about the
+trade, and it is written down as such.
+
+### Verifying two rules a played game does not reach
+
+The house-shortage hook from 8b got a sibling, `forceBankruptcy()` — it settles a
+debt the victim cannot cover through `settleDebt` and `announceSettlement`, the
+same path a tax bill takes, so what it exercises is the real chain. The bot run
+calls it a fifth of the way in and then asserts that the estate went under the
+hammer. It matters more than it sounds: had the queue been wrong, the symptom
+would have been a turn that never ends.
+
+```
+· bankrupted p1 owing the bank — the estate goes to auction
+  estate deeds   14 tick(s) with a returned deed under the hammer
+  bot trades     3
+  log lines      35
+```
+
+### Verification
+
+- 367 unit tests (up from 359): what `transferEstate` reports as returned, and
+  six for the bot's proposals — the threshold cash, the reserve it will not spend
+  into, the same-group swap it must not make, and that it decides the same way
+  twice.
+- Human runs on the classic and round boards, with the speed die, and with
+  `--house-rules` (biggest pot $500 with the rule on, $0 with it off — both
+  asserted). Bot runs on all three boards, each exercising a contested house, a
+  returned estate, and a turn log longer than the screen.
