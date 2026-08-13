@@ -69,7 +69,8 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 ### Implemented
 
 - **Turn engine** — phase FSM (`WAITING_FOR_ROLL → ROLLING → MOVING → LANDING → END_TURN`), doubles grant another roll, three in a row send you to jail
-- **Three boards, and a board is a file** — the classic 40-tile square, a 24-tile circle and 30 tiles across three concentric rings. A map declares its tiles and the shape it wants; the rules and the renderer take their geometry from that, and a map that cannot be drawn is refused with a reason rather than half-drawn
+- **Three boards, and a board is a file** — the classic 40-tile square, a 24-tile circle and 30 tiles across three concentric rings. A map declares its tiles, the shape it wants, the rule set it is balanced for and the decks it deals from; the rules and the renderer take everything from that, and a map that does not add up is refused with a reason rather than half-loaded
+- **Rules are data, and kinds are registries** — starting cash, the GO salary, the jail fine and term, the doubles-to-jail count and the house supply are a rule set a map overrides and a player switches on top of. New tile types and card effects are registered by name, so a variant adds one without editing the engine
 - **Movement** — tile-by-tile animated walk, GO salary paid on passing (and on landing exactly)
 - **Property** — buy prompt for streets, railroads and utilities; rent from the tier table, doubled on an unimproved complete colour group; railroad rent by how many the owner holds; utility rent at 4× or 10× the dice
 - **Cards** — 16 Chance and 17 Community Chest, with advance / go-back / jail / collect / pay / pay-per-house effects, drawn from a shuffled deck with a discard pile that reshuffles. "Nearest railroad" and "nearest utility" search the board rather than naming a tile, and charge the double / ten-times-dice rate for arriving by card; a spent Get Out of Jail Free card goes back under its own deck
@@ -137,13 +138,13 @@ Three axes of customisation, none of which should require editing engine code:
 | Axis | What you should be able to supply |
 |---|---|
 | **Maps** | A board of any length and shape — not 40 tiles in a square — with your own tiles, groups, prices and named anchors (where "jail" is, where "start" is). *Done: see the round and multi-ring boards that ship* |
-| **Rules** | New tile types and card effects registered from outside, and a rule set that decides turn order, jail terms, building rules and win conditions |
+| **Rules** | New tile types and card effects registered from outside, and a rule set that decides jail terms, building rules and the economy. *Done, except turn order and the win condition* |
 | **Presentation** | How each element draws — tiles, tokens, cards, HUD — swapped per theme, without touching the rules |
 
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 287 unit tests pin down.
+it is what the 301 unit tests pin down.
 
 ### What already supports it
 
@@ -219,7 +220,7 @@ Three consequences worth the trouble:
 **The model runs in Node.** `src/config.ts` deliberately contains no Phaser
 import — the `Phaser.Game` options live in `main.ts` instead — so everything under
 `game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 287 unit tests run in ~8 s with no jsdom, and it is the seam a
+That is what lets 301 unit tests run in ~8 s with no jsdom, and it is the seam a
 headless AI opponent would plug into.
 
 **Games are reproducible.** Every dice roll and both deck shuffles draw from one
@@ -240,6 +241,7 @@ src/
 ├── config.ts             Tile sizes, economy constants, house rules  [no Phaser]
 ├── maps/                 GameMap + validateMap; classic, round and orbit boards
 ├── game/
+│   ├── Rules.ts          The rule set: classic → the map's → the player's
 │   ├── Board.ts          Tile registry, anchors by role, validated getTile/move
 │   ├── BoardLayout.ts    Turns a map's shape into tile coordinates
 │   ├── Player.ts         Position, cash, holdings, jail state
@@ -253,8 +255,10 @@ src/
 │   ├── Snapshot.ts       Capture/restore the whole game, and validate a save
 │   ├── Bot.ts            Opponent decisions — no Phaser, no randomness
 │   └── TurnManager.ts    Phase FSM, doubles, jail, turn order
-├── tiles/                Tile base class ▸ PropertyTile, SpecialTiles, Ownable
-├── cards/CardDeck.ts     Deck, discard/reshuffle, CardEffects, both decks
+├── tiles/                Tile base class ▸ PropertyTile, SpecialTiles, Ownable,
+│                         registry (registerTileType)
+├── cards/                Deck, discard/reshuffle, CardEffects, the classic decks,
+│                         effects registry (registerCardEffect)
 ├── scenes/               Boot, Menu, Game (tokens + wiring), UI (HUD), Card
 ├── ui/                   BoardRenderer, PropertyPanel, AuctionPanel, TradePanel,
 │                         DiceView, PlayerPanel, Notification (turn log), Sfx
@@ -294,7 +298,7 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test                # 287 unit tests, plain Node, ~8 s
+npm test                # 301 unit tests, plain Node, ~8 s
 npm run typecheck       # tsc --noEmit
 npm run playtest        # build first: plays 30 seeded turns in a headless browser
 npm run playtest -- --bots   # hand every seat to a bot and watch them play it out

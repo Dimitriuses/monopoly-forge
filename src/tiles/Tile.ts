@@ -3,7 +3,8 @@ import type { ColorGroup } from '@/config';
 // ─── TileDefinition ──────────────────────────────────────────────────────────
 // Plain data shape used in config.ts BOARD_TILES array.
 
-export type TileType =
+/** The types the engine ships with. A game may register more — see tiles/registry.ts. */
+export type BuiltInTileType =
   | 'go'
   | 'property'
   | 'railroad'
@@ -14,6 +15,13 @@ export type TileType =
   | 'jail'
   | 'freeParking'
   | 'goToJail';
+
+/**
+ * A tile's kind. The built-ins are named so they autocomplete and so a typo in
+ * `'railroad'` is still caught, but the type is open: `registerTileType` can add
+ * one the engine has never heard of, and `createTile` resolves it by name.
+ */
+export type TileType = BuiltInTileType | (string & {});
 
 export interface TileDefinition {
   id: number;

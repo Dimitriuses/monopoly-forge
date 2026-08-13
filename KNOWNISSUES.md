@@ -63,13 +63,13 @@ it can afford. It does not count what rent it is likely to face, weigh position 
 the board, or plan more than one purchase ahead. It is something to play against
 and something for M8d to measure a better policy against.
 
-### The card decks are written for the classic board
+### Turn order and the win condition are still hardcoded
 
-M8a made the board a file, but both decks are still global and name classic
-tiles: "Advance to Boardwalk" is tile 39, which does not exist on the 24-tile
-round board. Such a card now does nothing and warns rather than wrapping onto an
-unrelated square, so an alternative board plays with a slightly thinner deck.
-Decks belonging to a map is ROADMAP 8b.
+M8b made the rule *values* configurable, but two rules are still decisions
+`TurnManager.advancePlayer` makes on its own: play proceeds in seat order, and
+the game ends when one solvent player is left. A variant wanting teams, or a
+target net worth, or a fixed number of rounds, cannot express it. That is the
+phase-pipeline work in ROADMAP 8b, deliberately left until last.
 
 ### The alternative boards are test boards
 

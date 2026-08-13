@@ -247,7 +247,8 @@ executing multiple card effects and calling `safeEndTurn` multiple times.
 
 *As of M2. The current layout — which adds `game/BuildRules.ts`, `game/Rent.ts`,
 `game/Auction.ts`, `game/Trade.ts`, `game/Estate.ts`, `game/Snapshot.ts`,
-`game/Bot.ts`, `game/BoardLayout.ts`, `maps/`, `ui/BoardRenderer.ts`, `ui/PropertyPanel.ts`, `ui/AuctionPanel.ts`,
+`game/Bot.ts`, `game/BoardLayout.ts`, `game/Rules.ts`, `maps/`,
+`tiles/registry.ts`, `cards/effects.ts`, `ui/BoardRenderer.ts`, `ui/PropertyPanel.ts`, `ui/AuctionPanel.ts`,
 `ui/TradePanel.ts` and `ui/Sfx.ts`, and no longer has switcher buttons in
 `PlayerPanel` — is in [README.md](README.md#layout).*
 
@@ -298,7 +299,7 @@ src/
 | M5 — Multiplayer UI (trade dialog, auction system) | ✅ Complete — see [M5 below](#m5--multiplayer-interaction--2026-08-12) |
 | M6 — Polish (animations, sound, save/load, house rules) | ✅ Complete — see [M6 below](#m6--polish--2026-08-12) |
 | M7 — Opponents (bots you can play against) | ✅ Complete — see [M7 below](#m7--opponents-you-can-play-against--2026-08-12) |
-| **M8 — Engine** (configurable maps, rules, presentation, simulation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). **8a complete**: a map is a file, and three ship (square, circle, three rings). 8c: `BoardRenderer` extracted and shape-agnostic. 8b and 8d: not started |
+| **M8 — Engine** (configurable maps, rules, presentation, simulation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). **8a complete**: a map is a file, and three ship (square, circle, three rings). **8b: registries and the rule set done**, turn structure outstanding. 8c: `BoardRenderer` extracted and shape-agnostic. 8d: not started |
 
 ---
 
@@ -1043,3 +1044,82 @@ card now does nothing and says so; decks belonging to a map is 8b's work.
   round board. `npm run playtest -- --map orbits --bots` is repeatable.
 - The classic board renders as it did before, which is the point: it is now one
   map among three rather than the shape the code is made of.
+
+---
+
+## M8b — rules become registrable — 2026-08-13
+
+Three closed sets opened, and one that stays shut on purpose.
+
+### The two switches
+
+`Board`'s constructor held a `switch` over ten tile types; `CardEffects.execute()`
+held a second over eleven card actions. Both are registries now —
+`registerTileType(name, factory)` and `registerCardEffect(name, handler)` — with
+the built-ins registering themselves, so nothing changed for the classic board.
+
+Two details worth keeping:
+
+- **The type unions stay named.** `TileType` is `BuiltInTileType | (string & {})`:
+  `'railroad'` still autocompletes and a typo in a built-in is still caught, but a
+  name the engine has never heard of typechecks fine. Closing the union was doing
+  more work than the switch was.
+- **A card effect gets a context, not the instance.** Handlers receive the board,
+  the bank, the players and the three moves an effect actually needs (`advanceTo`,
+  `nearest`, `charge`). Passing `this` would have made every private method of
+  `CardEffects` part of the extension API by accident.
+
+An unregistered tile type is refused by name — a board is better not built than
+built wrong — while an unregistered *card* effect warns and does nothing, because
+a deck with one odd card in it is still a playable game.
+
+### The numbers that were constants
+
+`game/Rules.ts` gathers what the classic game hardcoded: starting cash, the GO
+salary, the jail fine and term, the doubles-to-jail count, the house and hotel
+supply, and how many houses a hotel is worth. They resolve in three layers —
+**classic → the map's → the player's switches** — and are reached through
+`board.rules`.
+
+The literals were in more places than the grep suggested: `TurnManager` had
+`doublesStreak >= 3` and `jailTurns >= 3` inline, `Bank` had four `4`s for
+breaking a hotel into houses, and `BuildRules` had two more. The Bank now takes
+its supply from the rule set and exposes `housesPerHotel`, which let
+`canSellHotel` stay a three-argument function instead of growing a board.
+
+Both alternative boards now carry an economy: Roundabout pays $150 a lap rather
+than $200, because its lap is shorter, and Orbits runs on 24 houses and 8 hotels,
+which makes a monopoly worth more. That is the payoff — a rule set is part of a
+board's design, not a global constant.
+
+### Decks travel with the map
+
+M8a left a hole: the decks were global and named classic tiles, so "Advance to
+Boardwalk" pointed off the end of a 24-tile board. `GameMap.cards` closes it.
+`validateMap` now refuses a deck whose cards name a tile the board does not have,
+or that look for a tile type it lacks, and both alternative maps ship a
+map-agnostic deck — every card either moves you relative to where you are or moves
+money.
+
+A save carries the map id and the rule set, so a resumed game plays by the rules
+it was played under, on the board it was played on. `SNAPSHOT_VERSION` is 5.
+
+### What is deliberately still shut
+
+Turn order and the win condition are still decisions `TurnManager.advancePlayer`
+makes on its own. They could have been two more fields on `GameRules`, but that
+would be a bad trade: "seat order, last solvent player wins" is not a number, it
+is a shape, and the honest home for it is the phase pipeline that the roadmap has
+always said should come last. It is written down in KNOWNISSUES rather than
+half-configured.
+
+### Verification
+
+- 301 unit tests (up from 287). The new ones register a tile type the engine has
+  never heard of and play a board made of it, register a card effect and run it,
+  replace a built-in effect, and check the rule set layers classic → map → player
+  in the right order.
+- Bot games on all three boards; the human path — buy, auction, trade, save,
+  reload, resume — on the round board, which now exercises a map with its own
+  rules *and* its own decks. `--map orbits --bots` reports `bank h/h 24/8`, which
+  is that map's supply rather than the classic one.

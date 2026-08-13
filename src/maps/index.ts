@@ -1,6 +1,7 @@
 import { CLASSIC_MAP } from './classic';
 import { ROUND_MAP, ORBIT_MAP } from './alternates';
 import { validateMap, type GameMap } from './GameMap';
+import { CHANCE_CARDS, COMMUNITY_CHEST_CARDS, type Card } from '@/cards/CardDeck';
 
 export type { GameMap, MapProblem } from './GameMap';
 export { validateMap } from './GameMap';
@@ -15,6 +16,15 @@ export const MAPS: Record<string, GameMap> = {
 };
 
 export const DEFAULT_MAP = CLASSIC_MAP;
+
+/**
+ * The decks a map deals from. A card that names a tile only makes sense on the
+ * board it was written for, so a map may bring its own; the classic decks are
+ * the fallback for a map that does not care.
+ */
+export function decksFor(map: GameMap): { chance: Card[]; community: Card[] } {
+  return map.cards ?? { chance: CHANCE_CARDS, community: COMMUNITY_CHEST_CARDS };
+}
 
 /**
  * Look a map up by id, falling back to the classic board. A map that fails

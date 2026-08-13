@@ -15,9 +15,12 @@ watches them play it out.
 
 What is left is the engine itself (M8). **8a is done**: the board is a file, and
 the game ships three of them — the classic square, a 24-tile circle and 30 tiles
-across three concentric rings, all playable with the same rules and the same
-bots. Next is 8b (registrable rules), 8c (presentation as a theme) and 8d (the
-simulation platform that runs M7's bots a thousand games at a time).
+across three concentric rings. **8b is most of the way there**: tile types and
+card effects are registries rather than switches, decks travel with a map, and
+the numbers the classic game hardcoded are a rule set a map can override. What is
+left of it is the turn structure — and with it turn order and the win condition.
+Then 8c (presentation as a theme) and 8d (the simulation platform that runs M7's
+bots a thousand games at a time).
 
 **The destination is M8: an engine for Monopoly-style games** — configurable maps,
 rules and presentation. M1–M7 build the classic game that the engine has to be able
@@ -223,24 +226,31 @@ currently prevents it, so none of this is an estimate.
 
 ### 8b — Rules become registrable instead of switch statements
 
-- [ ] **Tile-type registry.** `Board`'s constructor `switch` closes the set of tile
-      types; a `registerTileType(name, factory)` opens it. `Tile.onLand()` is
-      already the right extension point.
-- [ ] **Card-effect registry.** `CardEffects.execute()` is a second closed switch
-      over the `CardAction` union. Same treatment, so a game can add an effect
-      without touching the engine.
-- [ ] **Decks belong to a map.** M8a made the board a file but left the two decks
-      global, and they name classic tiles — "Advance to Boardwalk" is tile 39,
-      which does not exist on a 24-tile board. Such a card now does nothing and
-      warns, rather than wrapping onto an unrelated square, but the real answer is
-      for a map to bring its own deck (and for `validateMap` to check that every
-      tile a card names exists).
-- [ ] **A real rule set.** The three `HouseRules` flags are now read (M6), which is
-      the shape of the idea but not the thing: widen it to what the classic rules
-      still hardcode — starting cash, GO salary, jail term and fine,
-      doubles-to-jail count, build rules, win condition — and let a game supply its
-      own. The `speedDie` variant dropped in M6 belongs here too: a third die and
-      two new face effects are a rule set, not a boolean.
+- [x] **Tile-type registry.** `tiles/registry.ts`: `registerTileType(name, factory)`
+      and `createTile`. `Board`'s constructor no longer knows what a tile is — it
+      asks. The ten built-ins register themselves, `TileType` stays a named union
+      *and* accepts a string so a new type still typechecks, and an unregistered
+      type is refused by name rather than silently skipped.
+- [x] **Card-effect registry.** `cards/effects.ts`: `registerCardEffect(name, handler)`,
+      with the eleven built-ins moved into it. `CardEffects.execute()` looks the
+      handler up and hands it a small context (board, bank, players, and the three
+      moves an effect needs) rather than the whole instance. A game can add an
+      effect, or replace a built-in, without touching the engine.
+- [x] **Decks belong to a map.** `GameMap.cards` carries them, `validateMap`
+      refuses a deck whose cards name tiles the board does not have or look for a
+      tile type it lacks, and both alternative boards ship a map-agnostic deck of
+      their own. The classic decks are the fallback.
+- [x] **A real rule set.** `game/Rules.ts`: starting cash, GO salary, jail fine and
+      term, doubles-to-jail, the house and hotel supply, and how many houses a
+      hotel is worth — resolved as *classic → the map's → the player's switches*
+      and reached through `board.rules`. Roundabout pays a smaller salary for a
+      shorter lap; Orbits runs on 24 houses and 8 hotels. The rule set is saved
+      with the game, so a resumed save plays by the rules it was played under.
+- [ ] **Turn order and the win condition** are still hardcoded — they live inside
+      `TurnManager.advancePlayer`, and opening them is the phase-pipeline work
+      below rather than another field on `GameRules`.
+- [ ] **The `speedDie` variant** dropped in M6 belongs here: a third die and two
+      new face effects are a rule set plus a turn structure, not a boolean.
 - [ ] **Contention, and auctioning scarce houses** (moved from M6). The standard
       rule auctions houses when "two or more players wish to buy more than the Bank
       has", and a turn-based click UI never produces simultaneous demand — players
@@ -251,7 +261,8 @@ currently prevents it, so none of this is an estimate.
       subject rather than a tile id.
 - [ ] **Generalise the turn structure.** `TurnManager`'s phase FSM is the hardest
       piece to open up and should come last — a phase pipeline a rule set can
-      extend, rather than a fixed enum.
+      extend, rather than a fixed enum. Turn order and the win condition come with
+      it: both are decisions `advancePlayer` makes on its own today.
 
 ### 8c — Presentation becomes a theme
 

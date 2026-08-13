@@ -1,5 +1,5 @@
 import type { TokenType } from '@/config';
-import { STARTING_CASH } from '@/config';
+import { CLASSIC_RULES } from './Rules';
 import type { Card } from '@/cards/CardDeck';
 
 export class Player {
@@ -20,11 +20,14 @@ export class Player {
   /** Whether a bot takes this seat's turns. Part of the game, so it is saved. */
   isBot: boolean;
 
-  constructor(id: string, name: string, token: TokenType, isBot = false) {
+  constructor(
+    id: string, name: string, token: TokenType,
+    isBot = false, startingCash: number = CLASSIC_RULES.startingCash,
+  ) {
     this.id = id;
     this.name = name;
     this.token = token;
-    this.cash = STARTING_CASH;
+    this.cash = startingCash;
     this.position = 0;
     this.inJail = false;
     this.jailTurns = 0;

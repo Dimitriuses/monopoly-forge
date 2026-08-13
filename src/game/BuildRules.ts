@@ -51,7 +51,8 @@ export function canBuildHouse(board: Board, bank: Bank, player: Player, tile: Pr
   if (!base.ok) return base;
 
   if (tile.hasHotel)   return denied(`${tile.name} already has a hotel.`);
-  if (tile.houses >= 4) return denied(`${tile.name} is ready for a hotel, not a fifth house.`);
+  const max = board.rules.housesBeforeHotel;
+  if (tile.houses >= max) return denied(`${tile.name} is ready for a hotel, not another house.`);
 
   const lowest = Math.min(...board.groupTiles(tile.group).map(buildingLevel));
   if (buildingLevel(tile) > lowest) {
@@ -67,11 +68,13 @@ export function canBuildHotel(board: Board, bank: Bank, player: Player, tile: Pr
   if (!base.ok) return base;
 
   if (tile.hasHotel)     return denied(`${tile.name} already has a hotel.`);
-  if (tile.houses !== 4) return denied('A hotel needs four houses on the lot first.');
+  const needed = board.rules.housesBeforeHotel;
+  if (tile.houses !== needed) return denied(`A hotel needs ${needed} houses on the lot first.`);
 
   // Even building applies to the hotel too: no lot may be left behind.
-  const behind = board.groupTiles(tile.group).some((t) => t.id !== tile.id && buildingLevel(t) < 4);
-  if (behind) return denied('Every lot in the group needs four houses first.');
+  const behind = board.groupTiles(tile.group)
+    .some((t) => t.id !== tile.id && buildingLevel(t) < needed);
+  if (behind) return denied(`Every lot in the group needs ${needed} houses first.`);
 
   if (bank.hotels <= 0)                  return denied('The bank has run out of hotels.');
   if (!player.canAfford(tile.houseCost)) return denied(`A hotel here costs $${tile.houseCost}.`);
@@ -95,7 +98,9 @@ export function canSellHotel(bank: Bank, player: Player, tile: PropertyTile): Ru
   if (!tile.hasHotel) return denied(`${tile.name} has no hotel on it.`);
   // A hotel comes down into four houses; without the stock to hand back, the
   // sale would silently destroy them (Bank.sellHotel leaves the lot bare).
-  if (bank.houses < 4) return denied('The bank has too few houses to break the hotel into.');
+  if (bank.houses < bank.housesPerHotel) {
+    return denied('The bank has too few houses to break the hotel into.');
+  }
   return ALLOWED;
 }
 

@@ -1,5 +1,4 @@
 import { bus } from '@/utils/EventBus';
-import { JAIL_FINE } from '@/config';
 import { dlog, dwarn } from '@/utils/log';
 import type { Player } from './Player';
 import type { Board } from './Board';
@@ -81,7 +80,7 @@ export class TurnManager {
 
     if (result.isDoubles) {
       player.doublesStreak++;
-      if (player.doublesStreak >= 3) {
+      if (player.doublesStreak >= this.board.rules.doublesToJail) {
         player.doublesStreak = 0;
         this.sendToJail(player);
         return;
@@ -129,7 +128,7 @@ export class TurnManager {
   payJailFine(player: Player): void {
     if (!player.inJail) return;
     // The amount actually handed over — the Free Parking house rule pots it.
-    const paid = Math.min(JAIL_FINE, player.cash);
+    const paid = Math.min(this.board.rules.jailFine, player.cash);
     player.pay(paid);
     player.inJail   = false;
     player.jailTurns = 0;
@@ -237,8 +236,8 @@ export class TurnManager {
       this.movePlayer(player, this.dice.lastResult!.total, false);
     } else {
       player.jailTurns++;
-      if (player.jailTurns >= 3) {
-        const paid = Math.min(JAIL_FINE, player.cash);
+      if (player.jailTurns >= this.board.rules.jailTerm) {
+        const paid = Math.min(this.board.rules.jailFine, player.cash);
         player.pay(paid);
         player.inJail    = false;
         player.jailTurns = 0;

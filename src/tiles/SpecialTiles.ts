@@ -1,6 +1,6 @@
 import { Tile, type TileDefinition } from './Tile';
 import { bus } from '@/utils/EventBus';
-import { GO_SALARY } from '@/config';
+import { CLASSIC_RULES } from '@/game/Rules';
 
 // ─── Railroad ─────────────────────────────────────────────────────────────────
 /** Rent by number of railroads the owner holds — also read by the property panel. */
@@ -107,6 +107,14 @@ export class GoToJailTile extends Tile {
 
 // ─── Go ───────────────────────────────────────────────────────────────────────
 export class GoTile extends Tile {
+  /** What passing this tile pays — a rule, so the map's rule set supplies it. */
+  readonly salary: number;
+
+  constructor(def: TileDefinition, salary: number = CLASSIC_RULES.goSalary) {
+    super(def);
+    this.salary = salary;
+  }
+
   onLand(playerId: string): void {
     bus.emit('player:landed', { playerId, tileId: this.id });
   }
@@ -114,7 +122,7 @@ export class GoTile extends Tile {
   override onPass(playerId: string): void {
     bus.emit('rent:pay', {
       debtorId: 'bank', creditorId: playerId,
-      amount: GO_SALARY, tileId: this.id, reason: 'go',
+      amount: this.salary, tileId: this.id, reason: 'go',
     });
   }
 }

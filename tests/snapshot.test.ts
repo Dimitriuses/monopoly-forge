@@ -11,7 +11,8 @@ import { TurnManager } from '@/game/TurnManager';
 import { CardDeck, CardEffects, CHANCE_CARDS, COMMUNITY_CHEST_CARDS } from '@/cards/CardDeck';
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable } from '@/tiles/Tile';
-import { DEFAULT_HOUSE_RULES } from '@/config';
+import { CLASSIC_RULES, resolveRules } from '@/game/Rules';
+import { ROUND_MAP } from '@/maps';
 import { bus } from '@/utils/EventBus';
 import { rng } from '@/utils/PRNG';
 
@@ -67,7 +68,7 @@ function playedGame(): GameParts {
   return {
     board, bank, dice, players, turnManager, chanceDeck, commDeck,
     cardEffects: new CardEffects(board, bank, players),
-    houseRules: { ...DEFAULT_HOUSE_RULES, freeParkingJackpot: true },
+    rules: resolveRules({ freeParkingJackpot: true }),
   };
 }
 
@@ -114,9 +115,22 @@ describe('Snapshot — round trip', () => {
     expect(restored.turnManager.currentPlayer.name).toBe('Bo');
   });
 
-  it('brings back the house rules', () => {
-    expect(restored.houseRules.freeParkingJackpot).toBe(true);
-    expect(restored.houseRules.noAuction).toBe(false);
+  it('brings back the rule set, switches and all', () => {
+    expect(restored.rules.freeParkingJackpot).toBe(true);
+    expect(restored.rules.noAuction).toBe(false);
+    expect(restored.rules.startingCash).toBe(CLASSIC_RULES.startingCash);
+  });
+
+  // A map may bring its own economy, and a save is of a game on *that* map.
+  it('brings back a map rule set that is not the classic one', () => {
+    const parts = playedGame();
+    const board = new Board(ROUND_MAP);
+    const onRound: GameParts = { ...parts, board, rules: board.rules };
+    const restored = restoreGame(captureGame(onRound));
+
+    expect(restored.board.map.id).toBe('round');
+    expect(restored.rules.goSalary).toBe(ROUND_MAP.rules?.goSalary);
+    expect(restored.rules.startingCash).toBe(ROUND_MAP.rules?.startingCash);
   });
 
   // A cloned card would break `deck.owns()`, and a spent Get Out of Jail Free

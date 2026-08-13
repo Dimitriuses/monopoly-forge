@@ -1,14 +1,27 @@
-import { HOUSE_LIMIT, HOTEL_LIMIT } from '@/config';
+import { CLASSIC_RULES, type GameRules } from './Rules';
+
+/** The slice of the rule set the bank actually needs. */
+type BankRules = Pick<GameRules, 'houseLimit' | 'hotelLimit' | 'housesBeforeHotel'>;
 import type { Player } from './Player';
 import type { PropertyTile } from '@/tiles/PropertyTile';
 import type { Ownable } from '@/tiles/Tile';
 
 export class Bank {
   cash: number = Infinity; // Bank has unlimited cash per standard rules
-  houses: number = HOUSE_LIMIT;
-  hotels: number = HOTEL_LIMIT;
+  houses: number;
+  hotels: number;
   /** Fines and taxes waiting on Free Parking — zero unless that house rule is on. */
   pot: number = 0;
+
+  /** How many houses a hotel is worth, both going up and coming down. */
+  readonly housesPerHotel: number;
+
+  /** The building supply is finite, and how finite is a rule. */
+  constructor(rules: BankRules = CLASSIC_RULES) {
+    this.houses = rules.houseLimit;
+    this.hotels = rules.hotelLimit;
+    this.housesPerHotel = rules.housesBeforeHotel;
+  }
 
   // ─── Cash transfers ──────────────────────────────────────────────────────────
 
@@ -66,7 +79,7 @@ export class Bank {
 
   buyHouse(player: Player, tile: PropertyTile): boolean {
     if (this.houses <= 0 || !player.canAfford(tile.houseCost)) return false;
-    if (tile.houses >= 4 || tile.hasHotel) return false;
+    if (tile.houses >= this.housesPerHotel || tile.hasHotel) return false;
     player.pay(tile.houseCost);
     tile.houses++;
     this.houses--;
@@ -74,13 +87,13 @@ export class Bank {
   }
 
   buyHotel(player: Player, tile: PropertyTile): boolean {
-    if (this.hotels <= 0 || tile.houses !== 4 || tile.hasHotel) return false;
+    if (this.hotels <= 0 || tile.houses !== this.housesPerHotel || tile.hasHotel) return false;
     if (!player.canAfford(tile.houseCost)) return false;
     player.pay(tile.houseCost); // one more house-cost payment
     tile.hasHotel = true;
     tile.houses = 0;
     this.hotels--;
-    this.houses += 4; // return the 4 houses to the bank
+    this.houses += this.housesPerHotel;   // the houses go back to the bank
     return true;
   }
 
@@ -97,9 +110,9 @@ export class Bank {
     player.receive(Math.floor(tile.houseCost / 2));
     tile.hasHotel = false;
     this.hotels++;
-    if (this.houses >= 4) {
-      tile.houses = 4;
-      this.houses -= 4;
+    if (this.houses >= this.housesPerHotel) {
+      tile.houses = this.housesPerHotel;
+      this.houses -= this.housesPerHotel;
     }
     return true;
   }

@@ -1,5 +1,8 @@
 import type { TileDefinition, TileType } from '@/tiles/Tile';
 import type { LayoutSpec } from '@/game/BoardLayout';
+import type { GameRules } from '@/game/Rules';
+import type { Card } from '@/cards/CardDeck';
+import { isKnownTileType } from '@/tiles/registry';
 
 // ─── GameMap ──────────────────────────────────────────────────────────────────
 // A board as data: the tiles in circuit order, and the shape they are laid out
@@ -17,6 +20,21 @@ export interface GameMap {
   blurb: string;
   tiles: TileDefinition[];
   layout: LayoutSpec;
+  /**
+   * The economy this board is balanced for — starting cash, the GO salary, the
+   * jail term, the house supply. Anything left out falls back to the classic
+   * rules; the player's house-rule switches go on top of both.
+   */
+  rules?: Partial<GameRules>;
+  /**
+   * The decks this board deals from. A card that names a tile only makes sense
+   * on the board it was written for, which is why these travel with the map
+   * rather than being global. Left out, the classic decks are used.
+   */
+  cards?: {
+    chance: Card[];
+    community: Card[];
+  };
 }
 
 export interface MapProblem {
@@ -36,13 +54,19 @@ export function validateMap(map: GameMap): MapProblem[] {
     return problems;
   }
 
-  // ── Ids line up with the circuit ────────────────────────────────────────────
+  // ── Ids line up with the circuit, and every type is one the engine knows ────
   map.tiles.forEach((tile, index) => {
     if (tile.id !== index) {
       complain(`tile ${index}`, `its id is ${tile.id}; ids must match position in the circuit`);
     }
     if (!tile.name?.trim()) complain(`tile ${index}`, 'has no name');
+    if (!isKnownTileType(tile.type)) {
+      complain(tile.name || `tile ${index}`, `has unregistered type "${tile.type}"`);
+    }
   });
+
+  // ── Cards may only send a player somewhere that exists ──────────────────────
+  problems.push(...validateCards(map));
 
   // ── Anchors the rules ask for by role ───────────────────────────────────────
   for (const type of REQUIRED_ANCHORS) {
@@ -92,6 +116,36 @@ export function validateMap(map: GameMap): MapProblem[] {
   // ── The shape has to fit the tiles ──────────────────────────────────────────
   problems.push(...validateLayout(map));
 
+  return problems;
+}
+
+/**
+ * A card that says "advance to tile 39" is nonsense on a 24-tile board. This is
+ * the check that stops a deck being paired with a map it was not written for.
+ */
+function validateCards(map: GameMap): MapProblem[] {
+  if (!map.cards) return [];
+  const problems: MapProblem[] = [];
+  const size = map.tiles.length;
+
+  for (const [pile, cards] of Object.entries(map.cards)) {
+    for (const card of cards) {
+      const action = card.action as { type: string; tile?: number; kind?: string };
+      if (action.type === 'advanceTo' && (action.tile === undefined || action.tile >= size)) {
+        problems.push({
+          where: `${pile} card "${card.id}"`,
+          problem: `sends the player to tile ${action.tile}, which this ${size}-tile board does not have`,
+        });
+      }
+      if (action.type === 'advanceToNearest'
+          && !map.tiles.some((t) => t.type === action.kind)) {
+        problems.push({
+          where: `${pile} card "${card.id}"`,
+          problem: `looks for the nearest "${action.kind}", and this board has none`,
+        });
+      }
+    }
+  }
   return problems;
 }
 

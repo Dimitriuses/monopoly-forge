@@ -1,10 +1,11 @@
 import { rng } from '@/utils/PRNG';
 import { dwarn } from '@/utils/log';
-import { CardDeck, CardEffects, CHANCE_CARDS, COMMUNITY_CHEST_CARDS } from '@/cards/CardDeck';
+import { CardDeck, CardEffects } from '@/cards/CardDeck';
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable } from '@/tiles/Tile';
-import { DEFAULT_HOUSE_RULES, type HouseRules, type TokenType } from '@/config';
-import { MAPS, mapById } from '@/maps';
+import { type TokenType } from '@/config';
+import { type GameRules } from './Rules';
+import { MAPS, mapById, decksFor } from '@/maps';
 import { Board } from './Board';
 import { Bank } from './Bank';
 import { Dice, type DiceResult } from './Dice';
@@ -30,7 +31,7 @@ import { TurnManager } from './TurnManager';
 // A restore resumes at the start of the saved player's turn. Mid-move state is
 // deliberately not captured: see `restoreGame`.
 
-export const SNAPSHOT_VERSION = 4;
+export const SNAPSHOT_VERSION = 5;
 
 export interface TileSnapshot {
   id: number;
@@ -72,7 +73,8 @@ export interface GameSnapshot {
   turn: { currentPlayerIndex: number };
   dice: DiceResult | null;
   decks: { chance: DeckSnapshot; community: DeckSnapshot };
-  houseRules: HouseRules;
+  /** The rule set the game is being played under, switches and all. */
+  rules: GameRules;
 }
 
 /** Everything a running game is made of — what a restore hands back. */
@@ -85,7 +87,7 @@ export interface GameParts {
   chanceDeck: CardDeck;
   commDeck: CardDeck;
   cardEffects: CardEffects;
-  houseRules: HouseRules;
+  rules: GameRules;
 }
 
 // ─── Capture ──────────────────────────────────────────────────────────────────
@@ -110,7 +112,7 @@ export function captureGame(parts: GameParts): GameSnapshot {
       chance:    parts.chanceDeck.snapshot(),
       community: parts.commDeck.snapshot(),
     },
-    houseRules: { ...parts.houseRules },
+    rules: { ...parts.rules },
   };
 }
 
@@ -147,7 +149,7 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
   // but any later draw has to continue the saved stream, not restart it.
   rng.seed(snapshot.rngState);
 
-  const board = new Board(mapById(snapshot.mapId));
+  const board = new Board(mapById(snapshot.mapId), snapshot.rules);
   const bank  = new Bank();
   const dice  = new Dice();
 
@@ -167,9 +169,11 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
     }
   }
 
-  const chanceDeck = CardDeck.restore(CHANCE_CARDS, snapshot.decks.chance);
-  const commDeck   = CardDeck.restore(COMMUNITY_CHEST_CARDS, snapshot.decks.community);
-  const allCards   = [...CHANCE_CARDS, ...COMMUNITY_CHEST_CARDS];
+  // A map may bring its own decks, so a restore must rebuild from *that* map's.
+  const decks      = decksFor(board.map);
+  const chanceDeck = CardDeck.restore(decks.chance, snapshot.decks.chance);
+  const commDeck   = CardDeck.restore(decks.community, snapshot.decks.community);
+  const allCards   = [...decks.chance, ...decks.community];
 
   const players = snapshot.players.map((saved) => {
     const player = new Player(saved.id, saved.name, saved.token, saved.isBot ?? false);
@@ -194,7 +198,7 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
     board, bank, dice, players, turnManager,
     chanceDeck, commDeck,
     cardEffects: new CardEffects(board, bank, players),
-    houseRules: { ...DEFAULT_HOUSE_RULES, ...snapshot.houseRules },
+    rules: board.rules,
   };
 }
 

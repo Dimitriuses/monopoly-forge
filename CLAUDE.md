@@ -67,6 +67,20 @@ put a house on a lot whose colour group you do not own. Legality lives in
 there first. The checks return a *reason*, which is what the property panel shows
 when a button is dead.
 
+**7b. Rule *values* come from `board.rules`, never from a constant.** Starting
+cash, the GO salary, the jail fine and term, the doubles-to-jail count, the house
+supply and how many houses a hotel is worth are all in `game/Rules.ts`, resolved
+as classic → the map's → the player's switches. Writing `50` for the jail fine or
+`>= 3` for doubles puts the classic board back into the engine. The rule set is
+saved with the game, so anything added to it belongs in the snapshot too.
+
+**7c. Tile types and card effects are registries, not switches.** A new tile kind
+is `registerTileType(name, factory)` in `tiles/registry.ts`; a new card effect is
+`registerCardEffect(name, handler)` in `cards/effects.ts`. Neither `Board` nor
+`CardEffects` should ever grow a `switch` over kinds again — that is what closed
+the set in the first place. A card effect gets a small context, not the
+`CardEffects` instance: keep what an effect may touch visible in one place.
+
 **8. A tile does not price itself.** `PropertyTile.currentRent` is the tier table
 and nothing more. What is actually charged — doubled for an unimproved colour
 group, scaled by how many railroads the owner holds, ten times the dice when a

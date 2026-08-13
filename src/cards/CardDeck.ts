@@ -2,12 +2,18 @@ import { rng } from '@/utils/PRNG';
 import { bus } from '@/utils/EventBus';
 import { dlog, dwarn } from '@/utils/log';
 import { settleDebt, announceSettlement } from '@/game/Estate';
+import { CARD_EFFECTS, type CardEffectContext } from './effects';
 import type { Player } from '@/game/Player';
 import type { Board } from '@/game/Board';
 import type { Bank } from '@/game/Bank';
 
 // ─── Card definition ──────────────────────────────────────────────────────────
 
+/**
+ * What a card does. The built-ins are spelled out so they typecheck and
+ * autocomplete; the trailing member keeps the set open, because a game can
+ * `registerCardEffect` an action this file has never heard of.
+ */
 export type CardAction =
   | { type: 'advanceTo';      tile: number }
   | { type: 'advanceToNearest'; kind: 'railroad' | 'utility' }
@@ -19,7 +25,8 @@ export type CardAction =
   | { type: 'collectFromAll'; amount: number }
   | { type: 'payAll';         amount: number }
   | { type: 'repairs';        houseCost: number; hotelCost: number }
-  | { type: 'getOutOfJail' };
+  | { type: 'getOutOfJail' }
+  | { type: string & {};      [field: string]: unknown };
 
 export interface Card {
   id: string;
@@ -105,104 +112,33 @@ export class CardEffects {
   ) {}
 
   execute(card: Card, player: Player): void {
-    const a = card.action;
+    const action = card.action;
     dlog(
-      `[CardEffects] execute: card="${card.description}", action=${a.type}, ` +
+      `[CardEffects] execute: card="${card.description}", action=${action.type}, ` +
       `player=${player.name}, position=${player.position}`,
     );
     bus.emit('card:execute', { cardId: card.id, playerId: player.id });
 
-    switch (a.type) {
-      case 'advanceTo':
-        this.advanceTo(player, a.tile);
-        break;
-      case 'advanceToNearest': {
-        const target = this.nearest(player.position, a.kind);
-        if (target === null) {
-          dwarn(`[CardEffects] advanceToNearest: this map has no ${a.kind} — card ignored`);
-          break;
-        }
-        // Arriving by card changes what the tile charges: a railroad costs twice
-        // its usual rate, a utility ten times the dice however many the owner
-        // holds. The tile cannot know how the player got there, so the rule
-        // travels with the move and is consumed by whoever resolves the rent.
-        bus.emit('rent:modifier', {
-          playerId: player.id,
-          tileId:   target,
-          rule:     a.kind === 'railroad' ? 'railroadDouble' : 'utilityTenTimes',
-        });
-        dlog(`[CardEffects] advanceToNearest ${a.kind}: ${player.name} pos ${player.position} → ${target}`);
-        this.advanceTo(player, target);
-        break;
-      }
-      case 'advanceToGo':
-        this.advanceTo(player, this.board.anchor('start'));
-        break;
-      case 'goToJail':
-        player.position = this.board.anchor('jail');
-        player.inJail = true;
-        player.jailTurns = 0;
-        dlog(`[CardEffects] goToJail: ${player.name} → position=${player.position}`);
-        bus.emit('jail:enter', { playerId: player.id, reason: 'card' });
-        break;
-      case 'goBack': {
-        const from = player.position;
-        const to   = this.board.move(from, -a.spaces).to;
-        const destTile = this.board.getTile(to);
-        dlog(
-          `[CardEffects] goBack ${a.spaces} spaces: ${player.name} pos ${from} → ${to} ` +
-          `(tile: "${destTile.name}" [${destTile.type}])`,
-        );
-        player.position = to;
-        // direction: -1 makes the animation walk the tiles backwards. Without it
-        // the token used to travel three tiles clockwise and then snap back.
-        // Going back past GO does NOT pay the salary, so no onPass here.
-        bus.emit('player:move', {
-          playerId: player.id, from, to, steps: a.spaces, isDoubles: false, direction: -1,
-        });
-        // resolveLanding() fires after animation completes — do NOT call onLand here
-        break;
-      }
-      case 'collectFromBank':
-        dlog(`[CardEffects] collectFromBank: ${player.name} collects $${a.amount}`);
-        this.bank.payPlayer(player, a.amount);
-        break;
-      case 'payBank':
-        dlog(`[CardEffects] payBank: ${player.name} pays $${a.amount}`);
-        this.charge(player, null, a.amount);
-        break;
-      case 'collectFromAll':
-        dlog(`[CardEffects] collectFromAll: ${player.name} collects $${a.amount} from each player`);
-        this.players.filter((p) => p.id !== player.id && !p.isBankrupt).forEach((p) => {
-          this.charge(p, player, a.amount);
-        });
-        break;
-      case 'payAll':
-        dlog(`[CardEffects] payAll: ${player.name} pays $${a.amount} to each player`);
-        this.players.filter((p) => p.id !== player.id && !p.isBankrupt).forEach((p) => {
-          this.charge(player, p, a.amount);
-        });
-        break;
-      case 'repairs': {
-        let total = 0;
-        player.ownedTileIds.forEach((id) => {
-          const tile = this.board.getTile(id);
-          if (tile.type === 'property') {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const pt = tile as any;
-            total += pt.houses * a.houseCost + (pt.hasHotel ? a.hotelCost : 0);
-          }
-        });
-        dlog(`[CardEffects] repairs: ${player.name} pays $${total} (houses×$${a.houseCost}, hotels×$${a.hotelCost})`);
-        this.charge(player, null, total);
-        break;
-      }
-      case 'getOutOfJail':
-        // Hold the card itself: spending it returns it to the deck it came from.
-        player.jailCards.push(card);
-        dlog(`[CardEffects] getOutOfJail: ${player.name} now holds ${player.getOutOfJailCards} GOOJ card(s)`);
-        break;
+    // What a card can do is a registry, not a switch: a game adds an effect by
+    // registering a handler, without this file knowing about it.
+    const effect = CARD_EFFECTS.get(action.type);
+    if (!effect) {
+      dwarn(`[CardEffects] no handler registered for "${action.type}" — card ignored`);
+      return;
     }
+    effect(this.context(), action as CardAction, player, card);
+  }
+
+  /** What a handler is allowed to reach. Deliberately small. */
+  private context(): CardEffectContext {
+    return {
+      board: this.board,
+      bank: this.bank,
+      players: this.players,
+      advanceTo: (p, tile) => this.advanceTo(p, tile),
+      nearest: (from, type) => this.nearest(from, type),
+      charge: (debtor, creditor, amount) => this.charge(debtor, creditor, amount),
+    };
   }
 
   /** A card debt is a debt like any other: raise cash, then go under if you
@@ -214,8 +150,9 @@ export class CardEffects {
   }
 
   /** The next tile of this type going forwards, or null if the map has none.
-   *  Starts one step ahead, so standing on a railroad sends you to the next. */
-  private nearest(from: number, type: 'railroad' | 'utility'): number | null {
+   *  Starts one step ahead, so standing on a railroad sends you to the next.
+   *  Takes any type name, since a game may have registered one. */
+  private nearest(from: number, type: string): number | null {
     for (let s = 1; s <= this.board.size; s++) {
       const index = this.board.move(from, s).to;
       if (this.board.getTile(index).type === type) return index;

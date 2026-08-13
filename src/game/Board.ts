@@ -1,14 +1,12 @@
 import { Tile, type TileDefinition } from '@/tiles/Tile';
+import { createTile } from '@/tiles/registry';
+import { resolveRules, type GameRules } from './Rules';
 import { CLASSIC_MAP } from '@/maps/classic';
 import type { GameMap } from '@/maps/GameMap';
 import {
   computeGeometry, type BoardGeometry, type Backdrop, type TileLayout,
 } from './BoardLayout';
 import { PropertyTile } from '@/tiles/PropertyTile';
-import {
-  RailroadTile, UtilityTile, TaxTile, CardTile,
-  JailTile, GoToJailTile, GoTile, FreeParkingTile,
-} from '@/tiles/SpecialTiles';
 
 export type { BoardSide, TileLayout, Backdrop, LayoutSpec } from './BoardLayout';
 
@@ -30,6 +28,8 @@ export class Board {
   readonly size: number;
   /** The map this board was built from, including the shape it is drawn in. */
   readonly map: GameMap;
+  /** The rule set in force: the map's, with the player's switches over it. */
+  readonly rules: GameRules;
   private geometry: BoardGeometry;
   private anchors: Map<BoardAnchor, number>;
 
@@ -37,29 +37,18 @@ export class Board {
    * Takes a map, or a bare tile list for the tests that only care about the
    * circuit. A bare list is laid out as a square, which is what it used to be.
    */
-  constructor(source: GameMap | TileDefinition[] = CLASSIC_MAP) {
+  constructor(
+    source: GameMap | TileDefinition[] = CLASSIC_MAP,
+    ruleOverrides?: Partial<GameRules>,
+  ) {
     this.map = Array.isArray(source)
       ? { ...CLASSIC_MAP, id: 'inline', name: 'Inline', tiles: source }
       : source;
 
-    this.tiles = this.map.tiles.map((def) => {
-      switch (def.type) {
-        case 'property':      return new PropertyTile(def);
-        case 'railroad':      return new RailroadTile(def);
-        case 'utility':       return new UtilityTile(def);
-        case 'tax':           return new TaxTile(def);
-        case 'chance':        return new CardTile(def);
-        case 'communityChest':return new CardTile(def);
-        case 'jail':          return new JailTile(def);
-        case 'goToJail':      return new GoToJailTile(def);
-        case 'go':            return new GoTile(def);
-        case 'freeParking':   return new FreeParkingTile(def);
-        default:
-          throw new Error(
-            `[Board] Unknown tile type "${(def as { type: string }).type}" for id ${def.id}`,
-          );
-      }
-    });
+    // The map's rule set, then whatever the player switched on top of it.
+    this.rules = resolveRules(this.map.rules, ruleOverrides);
+    // What kinds of tile exist is a registry, not a switch — see tiles/registry.ts.
+    this.tiles = this.map.tiles.map((def) => createTile(def, this.rules));
     this.size     = this.tiles.length;
     this.anchors  = this.resolveAnchors();
     this.geometry = computeGeometry(this.map.layout, this.size);

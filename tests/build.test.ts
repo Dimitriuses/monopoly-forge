@@ -113,7 +113,7 @@ describe('BuildRules — even building', () => {
     baltic.houses = 3;
     const check = canBuildHotel(board, bank, ann, med);
     expect(check.ok).toBe(false);
-    expect(check.reason).toMatch(/four houses/i);
+    expect(check.reason).toMatch(/needs 4 houses/i);
 
     baltic.houses = 4;
     expect(canBuildHotel(board, bank, ann, med).ok).toBe(true);
