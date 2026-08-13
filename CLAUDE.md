@@ -81,6 +81,21 @@ is `registerTileType(name, factory)` in `tiles/registry.ts`; a new card effect i
 the set in the first place. A card effect gets a small context, not the
 `CardEffects` instance: keep what an effect may touch visible in one place.
 
+**7d. A turn is a list of phases, and `TurnManager` does not decide who plays
+next.** `game/TurnFlow.ts` holds the phase list, the turn order and the win
+condition; `TurnManager.enterPhase` is the *only* place `phase` is written, which
+is what makes a phase a rule set added indistinguishable from a built-in one.
+Never assign `this.phase = '…'` again, never write the seat arithmetic inline, and
+never test for the end of the game by counting solvent players outside a
+registered win condition. The two strategies are named by string in `board.rules`
+(`turnOrder`, `winCondition`) rather than passed as functions, because the rule
+set is saved with the game — a function does not survive `JSON.stringify`, and
+`validateSnapshot` refuses a save naming one this build has not registered.
+The six built-in phases are marked `driven`: something outside the model enters
+them (the roll button, the move tween, the buy prompt), so `endTurn`'s walk skips
+them. A phase a rule set adds is *not* driven, so the walk runs it — and may
+`hold()` it, to be picked up by `resume()`.
+
 **8. A tile does not price itself.** `PropertyTile.currentRent` is the tier table
 and nothing more. What is actually charged — doubled for an unimproved colour
 group, scaled by how many railroads the owner holds, ten times the dice when a
@@ -184,6 +199,13 @@ paid for:
 - **Cards are shared objects.** A held Get Out of Jail Free card is stored by id
   and looked up in `CHANCE_CARDS` / `COMMUNITY_CHEST_CARDS` again. Clone it and
   `deck.owns()` stops recognising it, so it can never be returned.
+- **Rebuild every object from the *saved* rule set, not the classic one.**
+  `restoreGame` built `new Bank()` for a while, which silently reset
+  `housesPerHotel` to four on a map that said otherwise. Anything whose
+  constructor takes rules has to be handed `board.rules`.
+- **The round counter needs its companion.** `round` alone cannot be resumed:
+  which seats have already played in it is what says when the next one starts, so
+  `captureRound` / `restoreRound` carry both.
 
 Bump `SNAPSHOT_VERSION` when the shape changes; `validateSnapshot` refuses a save
 this build cannot read rather than half-restoring it.
@@ -309,6 +331,9 @@ debug logging, so a plain production load exposes nothing.
 Board *tiles* are the exception to the hotspot table: `__forge.tileCentre(id)`
 returns a tile's centre, so the harness clicks tiles without keeping its own copy
 of the board geometry. Keep it that way — the table is for scene buttons only.
+The same applies to the turn: `__forge.phases()` reports what *this* game's turn
+is made of, so the harness checks the phase it ended in without a hardcoded list
+that a rule set adding a phase would falsify.
 
 `TradePanel`'s hotspots are the fragile ones: its rows and buttons hang off
 `LIST_TOP` / `BUTTON_Y` / `H`, so changing any of those means recomputing

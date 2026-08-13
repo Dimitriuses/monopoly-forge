@@ -511,6 +511,7 @@ async function main() {
       board: state.board,
       bank: state.bank,
       currentPlayerIndex: state.turn.currentPlayerIndex,
+      round: state.turn.round,
     });
     if (strip(restored) !== strip(beforeSave)) {
       throw new Error(
@@ -524,6 +525,9 @@ async function main() {
 
     // ── Assertions ────────────────────────────────────────────────────────────
     const end = await page.evaluate(() => window.__forge.state());
+    // Asked of the game rather than listed here: a rule set may add a phase, and
+    // a hardcoded list would fail the run for using the feature.
+    const phases = await page.evaluate(() => window.__forge.phases());
     const positions = end.players.map((p) => p.position);
     const cash = end.players.map((p) => p.cash);
     const owned = end.players.reduce((n, p) => n + p.ownedTileIds.length, 0);
@@ -541,9 +545,14 @@ async function main() {
     if (owned === 0) problems.push('no property was bought in the whole run');
     if (panelTileId === null) problems.push('no owned tile to inspect — the panel was never exercised');
     if (auctions === 0) problems.push('no property was ever declined into an auction');
-    if (!['WAITING_FOR_ROLL', 'END_TURN', 'LANDING', 'AWAITING_BUY_DECISION', 'MOVING', 'ROLLING']
-      .includes(end.turn.phase)) {
-      problems.push(`turn manager left in an unknown phase: ${end.turn.phase}`);
+    if (!phases.includes(end.turn.phase)) {
+      problems.push(
+        `turn manager left in a phase this game's turn does not contain: ` +
+        `${end.turn.phase} (turn is ${phases.join(' → ')})`,
+      );
+    }
+    if (!Number.isInteger(end.turn.round) || end.turn.round < 1) {
+      problems.push(`the round counter is not a round: ${end.turn.round}`);
     }
 
     await shot(page, box, '6-late-game');
@@ -556,7 +565,8 @@ async function main() {
     console.log(`  positions         ${positions.join(', ')}`);
     console.log(`  cash              ${cash.map((c) => `$${c}`).join(', ')}`);
     console.log(`  tiles owned       ${owned}`);
-    console.log(`  final phase       ${end.turn.phase}`);
+    console.log(`  final phase       ${end.turn.phase} (of ${phases.length})`);
+    console.log(`  rounds played     ${end.turn.round}`);
     console.log(`  panel opened on   ${panelTileId === null ? 'nothing' : `tile ${panelTileId}`}`);
     console.log(`  bank houses/hotels ${end.bank.houses}/${end.bank.hotels}`);
     console.log('');

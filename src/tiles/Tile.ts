@@ -79,7 +79,17 @@ export abstract class Tile {
   /** Optional: called when a player passes this tile (only Go uses this) */
   onPass(_playerId: string): void {}
 
+  /**
+   * Ownership is reported here rather than by each subclass. It used to be
+   * `PropertyTile`'s alone, which meant a serialised board said nothing about
+   * who held a railroad or a utility — invisible on the classic board, where the
+   * playtest happens to trade a lot, and a silent hole on any board where a
+   * railroad is the deed that changes hands.
+   */
   toJSON(): object {
-    return { id: this.id, type: this.type, name: this.name };
+    const base = { id: this.id, type: this.type, name: this.name };
+    return isOwnable(this)
+      ? { ...base, ownerId: this.ownerId, isMortgaged: this.isMortgaged }
+      : base;
   }
 }

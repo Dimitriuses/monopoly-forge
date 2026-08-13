@@ -27,7 +27,8 @@ players want more houses than the bank holds, they should be auctioned.
 Here, turn order decides instead: whoever clicks Build first gets them. This is
 not a small omission dressed up, but it is not straightforward either — a
 turn-based click UI never produces the simultaneous demand the rule is written
-for. See ROADMAP M8b for what implementing it actually needs.
+for. See ROADMAP M8b item 4 for what implementing it actually needs; it is
+scheduled last there because it needs two of the other items first.
 
 ### The auction clock is fixed at 15 seconds
 
@@ -63,13 +64,13 @@ it can afford. It does not count what rent it is likely to face, weigh position 
 the board, or plan more than one purchase ahead. It is something to play against
 and something for M8d to measure a better policy against.
 
-### Turn order and the win condition are still hardcoded
+### What a repeated dice face means is still hardcoded
 
-M8b made the rule *values* configurable, but two rules are still decisions
-`TurnManager.advancePlayer` makes on its own: play proceeds in seat order, and
-the game ends when one solvent player is left. A variant wanting teams, or a
-target net worth, or a fixed number of rounds, cannot express it. That is the
-phase-pipeline work in ROADMAP 8b, deliberately left until last.
+The turn is a pipeline now, and a rule set names its order and win condition — but
+one turn rule is still an `if` inside `TurnManager.rollDice`: three doubles send
+you to jail. A variant that counts a third die, or wants triples to mean something
+else, cannot say so. It is the first job of ROADMAP 8b item 2 (the speed die),
+which is the variant that needs it.
 
 ### The alternative boards are test boards
 
@@ -117,6 +118,21 @@ has been stable across long playtests, but it is timing-coupled by construction.
 *Narrowed in M4:* how much rent a tile charges is no longer among those side
 effects — it moved to `game/Rent.ts` and is unit-tested. What remains in the
 scene handlers is the sequencing: who pays whom, when, and how long to wait.
+
+### A turn's phases are a list; the path between them is not
+
+`TurnFlow` made the phases of a turn data — named, ordered, insertable — and
+`TurnManager` enters them through one method. What is *not* data is the wiring
+between the six built-in ones: `WAITING_FOR_ROLL → ROLLING → MOVING` is still
+`rollDice` calling `movePlayer`, and `MOVING → LANDING` is still `GameScene`
+calling `resolveLanding()` when its tween finishes. Those six are marked `driven`
+for that reason, and a rule set can hang behaviour on them but cannot re-route
+between them.
+
+The consequence to know about: a phase a rule set adds runs on the way to
+`END_TURN` *wherever the turn happened to be*, including a turn that ended with no
+move at all (a jailed player staying put). A handler that only makes sense after a
+landing has to check for itself.
 
 ### A panel that *has* changed is still rebuilt from scratch
 

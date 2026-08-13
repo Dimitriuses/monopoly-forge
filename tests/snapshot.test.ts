@@ -115,6 +115,35 @@ describe('Snapshot — round trip', () => {
     expect(restored.turnManager.currentPlayer.name).toBe('Bo');
   });
 
+  // A round limit cannot be re-derived from anything else in the save, and
+  // neither can "who has already played in this one".
+  it('brings back the round, and keeps counting from where it was', () => {
+    const parts = playedGame();
+    parts.turnManager.currentPlayerIndex = 0;
+    parts.dice.lastResult = { die1: 1, die2: 2, isDoubles: false, total: 3 };
+    parts.turnManager.startTurn();
+    parts.turnManager.endTurn();          // → Bo (Cy is bankrupt)
+    parts.turnManager.endTurn();          // → Ann again: the round is over
+    expect(parts.turnManager.round).toBe(2);
+
+    const back = restoreGame(captureGame(parts));
+    expect(back.turnManager.round).toBe(2);
+
+    back.turnManager.startTurn();
+    back.turnManager.endTurn();
+    back.turnManager.endTurn();
+    expect(back.turnManager.round).toBe(3);
+  });
+
+  // The counts come from the save, but what a hotel is *worth* comes from the
+  // map — restoring built the bank from the classic rules and lost it.
+  it('gives the restored bank the rules the game was played under', () => {
+    const parts = playedGame();
+    const board = new Board(undefined, { housesBeforeHotel: 3 });
+    const back  = restoreGame(captureGame({ ...parts, board, rules: board.rules }));
+    expect(back.bank.housesPerHotel).toBe(3);
+  });
+
   it('brings back the rule set, switches and all', () => {
     expect(restored.rules.freeParkingJackpot).toBe(true);
     expect(restored.rules.noAuction).toBe(false);
@@ -209,6 +238,20 @@ describe('Snapshot — validation', () => {
   it('refuses a turn pointing at nobody', () => {
     const snapshot = goodSnapshot();
     snapshot.turn.currentPlayerIndex = 7;
+    expect(validateSnapshot(snapshot)).toBe(false);
+  });
+
+  // A save names its turn order and win condition. This build may not have them
+  // registered — better refused than thrown half-way through a restore.
+  it('refuses a save naming a turn order this build does not have', () => {
+    const snapshot = goodSnapshot();
+    snapshot.rules.turnOrder = 'widdershins';
+    expect(validateSnapshot(snapshot)).toBe(false);
+  });
+
+  it('refuses a save naming a win condition this build does not have', () => {
+    const snapshot = goodSnapshot();
+    snapshot.rules.winCondition = 'mostHotels';
     expect(validateSnapshot(snapshot)).toBe(false);
   });
 

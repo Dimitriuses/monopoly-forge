@@ -68,7 +68,7 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 
 ### Implemented
 
-- **Turn engine** — phase FSM (`WAITING_FOR_ROLL → ROLLING → MOVING → LANDING → END_TURN`), doubles grant another roll, three in a row send you to jail
+- **Turn engine** — a turn is a *list* of named phases (`WAITING_FOR_ROLL → ROLLING → MOVING → LANDING → AWAITING_BUY_DECISION → END_TURN`) that a rule set can add to, and who plays next and when the game ends are strategies it names rather than decisions the engine makes. Doubles grant another roll, three in a row send you to jail
 - **Three boards, and a board is a file** — the classic 40-tile square, a 24-tile circle and 30 tiles across three concentric rings. A map declares its tiles, the shape it wants, the rule set it is balanced for and the decks it deals from; the rules and the renderer take everything from that, and a map that does not add up is refused with a reason rather than half-loaded
 - **Rules are data, and kinds are registries** — starting cash, the GO salary, the jail fine and term, the doubles-to-jail count and the house supply are a rule set a map overrides and a player switches on top of. New tile types and card effects are registered by name, so a variant adds one without editing the engine
 - **Movement** — tile-by-tile animated walk, GO salary paid on passing (and on landing exactly)
@@ -138,13 +138,13 @@ Three axes of customisation, none of which should require editing engine code:
 | Axis | What you should be able to supply |
 |---|---|
 | **Maps** | A board of any length and shape — not 40 tiles in a square — with your own tiles, groups, prices and named anchors (where "jail" is, where "start" is). *Done: see the round and multi-ring boards that ship* |
-| **Rules** | New tile types and card effects registered from outside, and a rule set that decides jail terms, building rules and the economy. *Done, except turn order and the win condition* |
+| **Rules** | New tile types and card effects registered from outside, a rule set that decides jail terms, building rules and the economy, and a turn whose phases, order and win condition come from that rule set. *Done, except the speed-die variant and contention for scarce houses* |
 | **Presentation** | How each element draws — tiles, tokens, cards, HUD — swapped per theme, without touching the rules |
 
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 301 unit tests pin down.
+it is what the 331 unit tests pin down.
 
 ### What already supports it
 
@@ -220,7 +220,7 @@ Three consequences worth the trouble:
 **The model runs in Node.** `src/config.ts` deliberately contains no Phaser
 import — the `Phaser.Game` options live in `main.ts` instead — so everything under
 `game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 301 unit tests run in ~8 s with no jsdom, and it is the seam a
+That is what lets 331 unit tests run in ~8 s with no jsdom, and it is the seam a
 headless AI opponent would plug into.
 
 **Games are reproducible.** Every dice roll and both deck shuffles draw from one
@@ -254,7 +254,9 @@ src/
 │   ├── Estate.ts         Fire sales, debt settlement, bankruptcy transfer
 │   ├── Snapshot.ts       Capture/restore the whole game, and validate a save
 │   ├── Bot.ts            Opponent decisions — no Phaser, no randomness
-│   └── TurnManager.ts    Phase FSM, doubles, jail, turn order
+│   ├── TurnFlow.ts       A turn's phases, plus the turn-order and win-condition
+│   │                     registries a rule set picks from by name
+│   └── TurnManager.ts    Walks the flow: rolling, moving, jail, handing over
 ├── tiles/                Tile base class ▸ PropertyTile, SpecialTiles, Ownable,
 │                         registry (registerTileType)
 ├── cards/                Deck, discard/reshuffle, CardEffects, the classic decks,
@@ -298,7 +300,7 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test                # 301 unit tests, plain Node, ~8 s
+npm test                # 331 unit tests, plain Node, ~8 s
 npm run typecheck       # tsc --noEmit
 npm run playtest        # build first: plays 30 seeded turns in a headless browser
 npm run playtest -- --bots   # hand every seat to a bot and watch them play it out

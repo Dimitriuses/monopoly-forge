@@ -48,6 +48,8 @@ export type GameEvent =
   | 'game:end'
   | 'turn:start'
   | 'turn:end'
+  /** Every phase the turn enters, including any a rule set added. */
+  | 'turn:phase'
   | 'dice:roll'
   | 'dice:result'
   | 'player:move'

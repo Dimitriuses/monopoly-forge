@@ -11,6 +11,7 @@ import { Bank } from './Bank';
 import { Dice, type DiceResult } from './Dice';
 import { Player } from './Player';
 import { TurnManager } from './TurnManager';
+import { knownTurnOrders, knownWinConditions } from './TurnFlow';
 
 // ─── Snapshot ─────────────────────────────────────────────────────────────────
 // The whole game as plain data, and back again. This is the half that save/load
@@ -31,7 +32,7 @@ import { TurnManager } from './TurnManager';
 // A restore resumes at the start of the saved player's turn. Mid-move state is
 // deliberately not captured: see `restoreGame`.
 
-export const SNAPSHOT_VERSION = 5;
+export const SNAPSHOT_VERSION = 6;
 
 export interface TileSnapshot {
   id: number;
@@ -70,7 +71,8 @@ export interface GameSnapshot {
   players: PlayerSnapshot[];
   tiles: TileSnapshot[];
   bank: { houses: number; hotels: number; pot: number };
-  turn: { currentPlayerIndex: number };
+  /** `round` and who has played in it — a round limit cannot be re-derived. */
+  turn: { currentPlayerIndex: number; round: number; seatsThisRound: string[] };
   dice: DiceResult | null;
   decks: { chance: DeckSnapshot; community: DeckSnapshot };
   /** The rule set the game is being played under, switches and all. */
@@ -106,7 +108,10 @@ export function captureGame(parts: GameParts): GameSnapshot {
       isMortgaged: tile.isMortgaged,
     })),
     bank:  { houses: parts.bank.houses, hotels: parts.bank.hotels, pot: parts.bank.pot },
-    turn:  { currentPlayerIndex: parts.turnManager.currentPlayerIndex },
+    turn:  {
+      currentPlayerIndex: parts.turnManager.currentPlayerIndex,
+      ...parts.turnManager.captureRound(),
+    },
     dice:  parts.dice.lastResult,
     decks: {
       chance:    parts.chanceDeck.snapshot(),
@@ -150,7 +155,10 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
   rng.seed(snapshot.rngState);
 
   const board = new Board(mapById(snapshot.mapId), snapshot.rules);
-  const bank  = new Bank();
+  // The board's rules, not the classic ones: `housesPerHotel` is read from them
+  // and a map may say something other than four. The counts below are the saved
+  // stock; what a hotel is *worth* has to come back with the map.
+  const bank  = new Bank(board.rules);
   const dice  = new Dice();
 
   bank.houses = snapshot.bank.houses;
@@ -193,6 +201,10 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
 
   const turnManager = new TurnManager(players, board, dice);
   turnManager.currentPlayerIndex = snapshot.turn.currentPlayerIndex;
+  turnManager.restoreRound({
+    round:          snapshot.turn.round ?? 1,
+    seatsThisRound: snapshot.turn.seatsThisRound ?? [],
+  });
 
   return {
     board, bank, dice, players, turnManager,
@@ -218,6 +230,18 @@ export function validateSnapshot(snapshot: unknown): snapshot is GameSnapshot {
   if (!s.decks?.chance || !s.decks?.community) return reject('no deck state');
   if (!s.turn || !Number.isFinite(s.turn.currentPlayerIndex)) return reject('no turn state');
   if (s.turn.currentPlayerIndex >= s.players.length) return reject('turn points at nobody');
+
+  // A rule set names its turn order and win condition, and this build may not
+  // have them registered — refuse rather than let `TurnFlow` throw mid-restore.
+  const rules = s.rules;
+  if (rules) {
+    if (!knownTurnOrders().includes(rules.turnOrder)) {
+      return reject(`unknown turn order "${rules.turnOrder}"`);
+    }
+    if (!knownWinConditions().includes(rules.winCondition)) {
+      return reject(`unknown win condition "${rules.winCondition}"`);
+    }
+  }
 
   // The map may have changed under the save — or be missing from this build.
   if (typeof s.mapId !== 'string' || !MAPS[s.mapId]) {

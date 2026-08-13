@@ -16,11 +16,13 @@ watches them play it out.
 What is left is the engine itself (M8). **8a is done**: the board is a file, and
 the game ships three of them — the classic square, a 24-tile circle and 30 tiles
 across three concentric rings. **8b is most of the way there**: tile types and
-card effects are registries rather than switches, decks travel with a map, and
-the numbers the classic game hardcoded are a rule set a map can override. What is
-left of it is the turn structure — and with it turn order and the win condition.
-Then 8c (presentation as a theme) and 8d (the simulation platform that runs M7's
-bots a thousand games at a time).
+card effects are registries rather than switches, decks travel with a map, the
+numbers the classic game hardcoded are a rule set a map can override, and **a
+turn is a list of phases** whose order and win condition the rule set names. What
+is left of it is the three items that were waiting on that pipeline: the speed
+die, an auction over an arbitrary subject, and contention for scarce houses. Then
+8c (presentation as a theme) and 8d (the simulation platform that runs M7's bots
+a thousand games at a time).
 
 **The destination is M8: an engine for Monopoly-style games** — configurable maps,
 rules and presentation. M1–M7 build the classic game that the engine has to be able
@@ -246,23 +248,47 @@ currently prevents it, so none of this is an estimate.
       and reached through `board.rules`. Roundabout pays a smaller salary for a
       shorter lap; Orbits runs on 24 houses and 8 hotels. The rule set is saved
       with the game, so a resumed save plays by the rules it was played under.
-- [ ] **Turn order and the win condition** are still hardcoded — they live inside
-      `TurnManager.advancePlayer`, and opening them is the phase-pipeline work
-      below rather than another field on `GameRules`.
-- [ ] **The `speedDie` variant** dropped in M6 belongs here: a third die and two
-      new face effects are a rule set plus a turn structure, not a boolean.
-- [ ] **Contention, and auctioning scarce houses** (moved from M6). The standard
-      rule auctions houses when "two or more players wish to buy more than the Bank
-      has", and a turn-based click UI never produces simultaneous demand — players
-      ask one at a time and turn order settles it. Making the rule expressible
-      needs three things that land here: a notion of who *else* wants to build
-      right now (a rule set, or the M7 bot, can answer that), a step where the
-      auction winner nominates the lot, and `Auction` bidding on an arbitrary
-      subject rather than a tile id.
-- [ ] **Generalise the turn structure.** `TurnManager`'s phase FSM is the hardest
-      piece to open up and should come last — a phase pipeline a rule set can
-      extend, rather than a fixed enum. Turn order and the win condition come with
-      it: both are decisions `advancePlayer` makes on its own today.
+The four were one piece of work and three things waiting on it, so they are
+listed in the order they can actually be built. The first is done.
+
+- [x] **1 · Generalise the turn structure.** `game/TurnFlow.ts`. A turn is a
+      **list of named phases** now, not an enum walked by hand: `insertAfter` puts
+      a step into one, `replace` swaps a step's behaviour, and `TurnManager`
+      enters them through a single method that announces `turn:phase`. A phase may
+      `hold()` the turn and be picked up again with `resume()`, which is how a
+      step that waits for somebody is written without a scene. **Turn order and
+      the win condition came with it** — both are registered strategies named by
+      the rule set (`'seat'`, `'reverse'`; `'lastSolvent'`, `'roundLimit'`), for
+      the same reason tile types are: a rule set is saved with the game, and a
+      function does not survive `JSON.stringify`. Rounds are counted and saved,
+      because a round limit cannot be re-derived.
+      *Was last on this list; moved first because the three below all wait on it.*
+- [ ] **2 · The `speedDie` variant** dropped in M6 — a third die and two new face
+      effects. Not a boolean but a rule set plus an extra phase, which makes it the
+      **acceptance test for item 1**: if it cannot be written without opening
+      `TurnManager`, the pipeline is not finished. Three of the four seams it needs
+      are now there — a substituted `Dice`, a `ROLLING` handler that runs *after*
+      the throw so it can speak for the dice, and a phase inserted before
+      `END_TURN` for the Mr. Monopoly move. The fourth is not: what a repeated face
+      *means* (three doubles → jail) is still an `if` inside `rollDice`, and
+      opening it is this item's first job.
+- [ ] **3 · `Auction` bids on a subject, not a tile id.** Small and independent of
+      the pipeline; extracted from the contention item below because it is the only
+      part of it that can be built today, and because a *second* rule already wants
+      it — a bankrupt estate returned to the bank should be auctioned deed by deed
+      (KNOWNISSUES), which `Auction` cannot express either. One generalisation,
+      two rules unblocked.
+- [ ] **4 · Contention, and auctioning scarce houses** (moved from M6). The
+      standard rule auctions houses when "two or more players wish to buy more than
+      the Bank has", and a turn-based click UI never produces simultaneous demand —
+      players ask one at a time and turn order settles it. It needs a phase that
+      *polls* every player for what they want to build — `TurnFlow.insertAfter`
+      plus `hold()`/`resume()` is now the shape that phase takes — an auction over
+      an arbitrary subject (item 3), and a step where the winner nominates the lot.
+      Last, because it is the only item that needs two of the others first.
+      Verifying it is 8d's job: no game this build can play reaches a house
+      shortage — the bots never complete a colour group, so a long `--bots` run
+      ends with all 32 houses still in the bank.
 
 ### 8c — Presentation becomes a theme
 
@@ -324,6 +350,15 @@ existing tests stayed green throughout, which is exactly what they are for.
 
 8b's registries and the rule set still wait until the classic rules are complete
 enough to know what needs to vary.
+
+The same argument reordered 8b's remainder. The phase pipeline was listed last as
+"the hardest piece to open up", which was a statement about difficulty, not about
+sequence — and difficulty is the wrong axis to schedule on when three other items
+are blocked on it. The speed die needs an extra phase, scarce-house contention
+needs a phase that polls the table, and turn order and the win condition *are*
+pipeline parts. Building any of them first would mean building a private version
+of the pipeline inside `TurnManager` and then removing it. So it moved to the
+front, and the speed die immediately after it as the proof it works.
 
 ---
 

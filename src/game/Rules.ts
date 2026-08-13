@@ -8,6 +8,10 @@
 // `board.rules` now: a board is built from a map, and a map may bring its own
 // economy along with its tiles.
 
+// Type-only, and it has to stay that way: `TurnFlow` imports `Board`, which
+// imports this file. Erased at compile time, there is no cycle at runtime.
+import type { BuiltInTurnOrder, BuiltInWinCondition } from './TurnFlow';
+
 export interface GameRules {
   /** What each player starts with. */
   startingCash: number;
@@ -23,6 +27,17 @@ export interface GameRules {
   hotelLimit: number;
   /** Houses a lot needs before it can take a hotel. */
   housesBeforeHotel: number;
+
+  // ── The turn itself ─────────────────────────────────────────────────────────
+  // Named strategies, not functions: a rule set is saved with the game, and a
+  // function does not survive `JSON.stringify`. Both are looked up in the
+  // registries in `game/TurnFlow.ts`, the same way a tile type is.
+  /** Who plays next — `'seat'` is round the table, doubles rolling again. */
+  turnOrder: BuiltInTurnOrder | (string & {});
+  /** When the game is over — `'lastSolvent'` is the classic. */
+  winCondition: BuiltInWinCondition | (string & {});
+  /** Rounds the `roundLimit` win condition allows. 0 means no limit. */
+  roundLimit: number;
 
   // ── House rules: switchable from the menu ───────────────────────────────────
   /** Taxes and fines pool on Free Parking instead of going to the bank. */
@@ -42,6 +57,10 @@ export const CLASSIC_RULES: GameRules = {
   houseLimit: 32,
   hotelLimit: 12,
   housesBeforeHotel: 4,
+
+  turnOrder: 'seat',
+  winCondition: 'lastSolvent',
+  roundLimit: 0,
 
   freeParkingJackpot: false,
   doubleGoSalary: false,

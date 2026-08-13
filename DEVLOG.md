@@ -299,7 +299,8 @@ src/
 | M5 — Multiplayer UI (trade dialog, auction system) | ✅ Complete — see [M5 below](#m5--multiplayer-interaction--2026-08-12) |
 | M6 — Polish (animations, sound, save/load, house rules) | ✅ Complete — see [M6 below](#m6--polish--2026-08-12) |
 | M7 — Opponents (bots you can play against) | ✅ Complete — see [M7 below](#m7--opponents-you-can-play-against--2026-08-12) |
-| **M8 — Engine** (configurable maps, rules, presentation, simulation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). **8a complete**: a map is a file, and three ship (square, circle, three rings). **8b: registries and the rule set done**, turn structure outstanding. 8c: `BoardRenderer` extracted and shape-agnostic. 8d: not started |
+| **M8 — Engine** (configurable maps, rules, presentation, simulation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). **8a complete**: a map is a file, and three ship (square, circle, three rings). **8b: registries, the rule set and the turn pipeline done**; the speed die,
+an auction over an arbitrary subject and scarce-house contention outstanding. 8c: `BoardRenderer` extracted and shape-agnostic. 8d: not started |
 
 ---
 
@@ -1104,14 +1105,13 @@ money.
 A save carries the map id and the rule set, so a resumed game plays by the rules
 it was played under, on the board it was played on. `SNAPSHOT_VERSION` is 5.
 
-### What is deliberately still shut
+### What was deliberately still shut
 
-Turn order and the win condition are still decisions `TurnManager.advancePlayer`
-makes on its own. They could have been two more fields on `GameRules`, but that
-would be a bad trade: "seat order, last solvent player wins" is not a number, it
-is a shape, and the honest home for it is the phase pipeline that the roadmap has
-always said should come last. It is written down in KNOWNISSUES rather than
-half-configured.
+Turn order and the win condition were still decisions `TurnManager.advancePlayer`
+made on its own. They could have been two more fields on `GameRules`, but that
+would have been a bad trade: "seat order, last solvent player wins" is not a
+number, it is a shape, and the honest home for it was the phase pipeline. Written
+down in KNOWNISSUES rather than half-configured — and built next.
 
 ### Verification
 
@@ -1123,3 +1123,103 @@ half-configured.
   reload, resume — on the round board, which now exercises a map with its own
   rules *and* its own decks. `--map orbits --bots` reports `bank h/h 24/8`, which
   is that map's supply rather than the classic one.
+
+---
+
+## M8b (2) — the turn becomes a pipeline
+
+### Reordering what was left before building any of it
+
+Four items were open in 8b and two of them were the same work written twice:
+"turn order and the win condition are hardcoded" and "generalise the turn
+structure" both described `advancePlayer`. Merged. The remaining three were then
+listed in the order they could actually be built rather than by difficulty —
+which is what had put the pipeline *last*, described as "the hardest piece to open
+up". Difficulty is the wrong axis to schedule on when everything else is blocked
+on the thing you are deferring: the speed die needs an extra phase, scarce-house
+contention needs a phase that polls the table, and turn order and the win
+condition *are* pipeline parts. Building any of them first would have meant
+writing a private pipeline inside `TurnManager` and then deleting it.
+
+So the pipeline went first, and the rest of this entry is it.
+
+### Three seams, opened three different ways
+
+`game/TurnFlow.ts`. They are genuinely different problems and it would have been
+worse to force one mechanism onto all three:
+
+- **Phases are a list.** Named, ordered, `insertAfter`/`replace`. `TurnManager`
+  no longer assigns `this.phase` anywhere — `enterPhase` is the single writer,
+  and it runs whatever the rule set hung on that phase and emits `turn:phase`.
+  That is what makes an added phase indistinguishable from a built-in one.
+- **Turn order is a registered function**, named by `rules.turnOrder`.
+- **The win condition is another**, named by `rules.winCondition`.
+
+Named by *string*, not passed as functions, and that is the load-bearing
+decision: the rule set is saved with the game, and a function does not survive
+`JSON.stringify`. It is the same argument that made tile types and card effects
+registries, so it is the same shape — and `validateSnapshot` now refuses a save
+naming a strategy this build has not registered, rather than letting `TurnFlow`
+throw half-way through a restore.
+
+### The awkward part: a turn is mostly waiting
+
+The obvious pipeline — a loop that runs the phases to completion — cannot work
+here. `MOVING` waits for a tween, `AWAITING_BUY_DECISION` waits for a click; the
+model is not in charge of when they end and must not be. So the six built-ins are
+marked `driven`: something outside enters them, and `endTurn`'s walk skips them
+entirely. Without that flag, ending a jailed player's turn from `WAITING_FOR_ROLL`
+would have walked *forward* through `ROLLING` and `MOVING` on the way to
+`END_TURN`, which is nonsense; there is a test pinning it.
+
+A phase a rule set adds is not driven, so the walk runs it — and can `hold()`,
+parking the turn until `resume()`. The re-entry guard stays set across the hold,
+so a held turn still cannot be ended twice.
+
+### Two bugs the seams exposed
+
+- **A bankrupt player kept rolling.** `endTurn` handed out the doubles re-roll on
+  the dice alone: a player who rolled doubles and then went under settling what
+  they landed on took another turn from the grave. Moving the rule into the
+  `'seat'` order made it one condition in one place, and the missing
+  `!player.isBankrupt` was obvious as soon as it was written out.
+- **The game did not end until somebody failed to roll a pair.** The win check
+  ran only on the non-doubles branch, so bankrupting the last opponent on doubles
+  left the winner rolling against an empty table. `advancePlayer` now asks the
+  win condition before anything else.
+
+Both have tests, both were invisible in a hand-played game.
+
+### Rounds, and why the counter needs a companion
+
+`roundLimit` is the win condition people actually want when they do not have
+three hours, and it needs to know what round it is. Counting "the seat index
+wrapped" only works for seat order, so a round ends when play reaches somebody who
+has already had a turn in it — true for any order, including a reversed table.
+That means `round` alone cannot be restored: the set of seats already seen is what
+places the next boundary, so both go in the snapshot (`SNAPSHOT_VERSION` 6). The
+win condition is asked about the round *about to start*, so `roundLimit: 1` ends
+the game when everybody has had one turn rather than one turn later.
+
+### Found on the way
+
+- **`restoreGame` built `new Bank()`.** The saved counts were then written over
+  it, so it looked right — but `housesPerHotel` came from the classic rules, and a
+  map that said three would have restored saying four. One-word fix, and the kind
+  of thing only a map with different rules can reveal.
+- **Railroads and utilities never reported their owner.** `toJSON` carried
+  `ownerId` on `PropertyTile` alone, so a serialised board said nothing about who
+  held a railroad. Invisible on the classic board — the playtest's trade step
+  happens to pick a lot there — and it failed immediately on Roundabout, where
+  the deed it picks is South Halt. Ownership moved to the base `Tile.toJSON`,
+  behind `isOwnable`.
+
+### Verification
+
+- 331 unit tests (up from 301). The new file plays turns through a flow with a
+  phase the engine has never heard of, holds and resumes one, swaps `ROLLING` for
+  a handler that rewrites the dice, registers a team turn order and a bespoke win
+  condition, and pins the round arithmetic including the doubles case.
+- The human path and the bot path on all three boards. The harness no longer
+  keeps its own list of phases — it asks `__forge.phases()` — and it now checks
+  the round counter and that the round survives save/reload/resume.

@@ -217,6 +217,11 @@ export class GameScene extends Phaser.Scene {
     (window as unknown as Record<string, unknown>).__forge = {
       state:       () => this.serialize(),
       phase:       () => this.turnManager.phase,
+      // What a turn is made of *in this game*, so the harness can check the
+      // phase it ends in without keeping its own copy of the list — a rule set
+      // may have added one.
+      phases:      () => this.turnManager.flow.names,
+      round:       () => this.turnManager.round,
       isAnimating: () => this.isAnimating,
       activeId:    () => this.turnManager.currentPlayer.id,
       buyPromptOpen: () => this.buyPrompt.visible,
