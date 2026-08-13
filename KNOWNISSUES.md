@@ -120,13 +120,18 @@ larger change to a method three bugs have already been fixed in. Both are worth
 doing only alongside the variant that needs them; the speed die's triples rule is
 the only candidate today, and it also needs a pick-a-tile prompt.
 
-### The alternative boards are test boards
+### The games that are not Classic are unbalanced
 
 Roundabout and Orbits exist to prove the geometry is not hardcoded, and their
 tiles were written to fill a shape rather than to play well: rent ladders are
 derived from price by formula, and neither has been balanced. Orbits in
 particular is odd on purpose — the circuit spirals inward across three rings and
 then jumps back out to GO.
+
+Speed Die inherits the classic board and is unbalanced in a different way: a
+third die makes every lap shorter without anything else changing, so rent arrives
+faster than the salary does. All three want ROADMAP 8d's balance pass, and each
+is now one folder to edit rather than a map file plus an economy hidden in it.
 
 ### The no-auction house rule is still untested
 
@@ -193,24 +198,22 @@ The consequence to know about: a phase a rule set adds runs on the way to
 move at all (a jailed player staying put). A handler that only makes sense after a
 landing has to check for itself.
 
-### Every registry is global, and a map is carrying the economy
+### Only one game can be loaded at a time
 
-Two facts that cost nothing today and are the reason M9a is scheduled before 8d.
+*Fixed in M9a*, as far as it goes: five of the six registries are scoped to the
+loaded game, so two games cannot get each other's tile types, card effects, turn
+orders, win conditions or variants. `loadGame` resets to the built-ins and applies
+that game's own.
 
-**The registries are module-level.** `registerTileType`, `registerCardEffect`,
-`registerVariant`, `registerTurnOrder`, `registerWinCondition` and
-`registerTheme` each write to one `Map` for the whole process. A browser tab plays
-one game, so nothing has ever collided. A batch runner loads several — and two
-games that each register a `tollBooth`, or each replace `collectFromBank`, would
-quietly get each other's. The failure mode is a simulation result that is *wrong*
-rather than one that crashes, which is why this is worth fixing before there is a
-simulator rather than after.
+What that buys is **serial** isolation — one game live at a time. Nothing lets two
+be loaded at once, and a batch runner that wanted to interleave games rather than
+run them in blocks would need the registries to become instances rather than
+singletons. `games/scope.ts` is the seam where that change would go, and it says
+so.
 
-**`GameMap` owns `rules` and `cards`.** They went there in 8b because there was
-nowhere else; the consequence is that `ROUND_MAP` declares `goSalary: 150` — a
-board deciding an economy. Nothing is broken by it, but it means a game's
-definition is spread across a map file, a menu switch and a URL parameter, and
-there is no single thing you can hand somebody and call a game.
+`registerTheme` is deliberately outside the scoped set: a colour collision is not
+a correctness problem, `themeById` already falls back, and scoping it would make
+`games/` import `ui/` for no gain.
 
 ### A panel updates in place; the board does not
 

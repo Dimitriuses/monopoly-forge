@@ -5,6 +5,7 @@ import {
   JailTile, GoToJailTile, GoTile, FreeParkingTile,
 } from './SpecialTiles';
 import { CLASSIC_RULES, type GameRules } from '@/game/Rules';
+import { Registry } from '@/utils/Registry';
 
 // ─── Tile-type registry ───────────────────────────────────────────────────────
 // What kinds of tile can exist. `Board`'s constructor used to hold a `switch`
@@ -19,27 +20,28 @@ export interface TileFactory {
   (def: TileDefinition, rules: GameRules): Tile;
 }
 
-const FACTORIES = new Map<string, TileFactory>();
+/** Exported so a game's registrations can be scoped to it — see `games/scope.ts`. */
+export const TILE_TYPES = new Registry<TileFactory>('tiles');
 
 /**
  * Teach the engine a tile type. Registering over an existing name replaces it,
  * which is how a game re-skins a built-in — say, a `tax` that pays into a pot.
  */
 export function registerTileType(type: string, factory: TileFactory): void {
-  FACTORIES.set(type, factory);
+  TILE_TYPES.set(type, factory);
 }
 
 export function knownTileTypes(): string[] {
-  return [...FACTORIES.keys()];
+  return TILE_TYPES.names();
 }
 
 export function isKnownTileType(type: string): boolean {
-  return FACTORIES.has(type);
+  return TILE_TYPES.has(type);
 }
 
 /** Build the tile a definition asks for. Throws rather than guess. */
 export function createTile(def: TileDefinition, rules: GameRules = CLASSIC_RULES): Tile {
-  const factory = FACTORIES.get(def.type);
+  const factory = TILE_TYPES.get(def.type);
   if (!factory) {
     throw new Error(
       `[tiles] no tile type called "${def.type}" (tile ${def.id} "${def.name}"). ` +

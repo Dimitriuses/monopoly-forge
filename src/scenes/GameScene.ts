@@ -23,7 +23,7 @@ import {
 } from '@/ui/PropertyPanel';
 import { type TokenType } from '@/config';
 import { theme } from '@/ui/Theme';
-import { CLASSIC_RULES, type GameRules } from '@/game/Rules';
+import { CLASSIC_RULES, resolveRules, type GameRules } from '@/game/Rules';
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable, type Tile } from '@/tiles/Tile';
 import {
@@ -50,7 +50,7 @@ const BOT_CARD_LINGER = 1600;
 /** How quickly the tokens already on a tile shuffle over to make room. */
 const CLUSTER_SHUFFLE = 140;
 import { settleDebt, announceSettlement } from '@/game/Estate';
-import { mapById, decksFor } from '@/maps';
+import { gameById, decksFor } from '@/games';
 import { Auction, tileSubject, type AuctionSubject } from '@/game/Auction';
 import {
   houseClaims, housesContested, houseReserve, nominateLot, type HouseClaim,
@@ -70,8 +70,8 @@ import {
 interface SceneData {
   players: Array<{ name: string; token: TokenType; isBot?: boolean }>;
   seed?: number;
-  /** Which board to play on; defaults to the classic one. */
-  mapId?: string;
+  /** Which game to play; defaults to the classic one. */
+  gameId?: string;
   houseRules?: Partial<GameRules>;
   /** A saved game to resume instead of dealing a new one. */
   snapshot?: GameSnapshot;
@@ -137,6 +137,8 @@ export class GameScene extends Phaser.Scene {
    *  causes. Cleared at turn:start so it can never leak into another turn. */
   private arrivalRent: ArrivalRent | null = null;
   /** Once the game is won, no scheduled bot action should still fire. */
+  /** Which game is being played — carried into the save file. */
+  private gameId = 'classic';
   private gameOver = false;
   /** True while a tween chain is running — blocks roll and force-switch */
   isAnimating = false;
@@ -156,18 +158,23 @@ export class GameScene extends Phaser.Scene {
   private newGame(data: SceneData): GameParts {
     if (data.seed !== undefined) rng.seed(data.seed);
 
-    // The board resolves the rule set: the map's economy with the player's
-    // house-rule switches over it. Everything else takes its numbers from there.
-    const board   = new Board(mapById(data.mapId), data.houseRules);
+    // First, and before anything is built: loading a game is what puts its tile
+    // types and card effects in force, and a board is made of those.
+    const game = gameById(data.gameId);
+
+    // The rule set is the game's economy with the player's switches over it, and
+    // everything else takes its numbers from `board.rules`.
+    const board   = new Board(game.map, resolveRules(game.rules, data.houseRules));
     const bank    = new Bank(board.rules);
     // A variant may play with dice of its own — the speed die does.
     const dice    = diceFor(board.rules);
     const players = data.players.map(
       (p, i) => new Player(`p${i + 1}`, p.name, p.token, p.isBot ?? false, board.rules.startingCash),
     );
-    const decks = decksFor(board.map);
+    const decks = decksFor(game);
 
     return {
+      gameId: game.id,
       board, bank, dice, players,
       turnManager: new TurnManager(players, board, dice),
       chanceDeck:  new CardDeck(decks.chance),
@@ -178,6 +185,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private applyParts(parts: GameParts): void {
+    this.gameId      = parts.gameId;
     this.board       = parts.board;
     this.bank        = parts.bank;
     this.dice        = parts.dice;
@@ -845,6 +853,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     const snapshot = captureGame({
+      gameId: this.gameId,
       board: this.board, bank: this.bank, dice: this.dice, players: this.players,
       turnManager: this.turnManager, chanceDeck: this.chanceDeck, commDeck: this.commDeck,
       cardEffects: this.cardEffects, rules: this.rules,

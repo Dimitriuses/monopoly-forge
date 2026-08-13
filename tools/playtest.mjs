@@ -39,8 +39,12 @@ const BOTS = flag('bots');
 const TURNS = Number(value('turns', TAKE_SHOTS ? 26 : 30));
 const SEED = Number(value('seed', 20260512));
 const EXTERNAL_URL = value('url', null);
-/** Which board to play on — the alternatives are not 40 tiles in a square. */
-const MAP = value('map', null);
+/**
+ * Which game to play. A game is a board, an economy, a deck and a palette in one
+ * folder (M9a) — `--game roundabout` is the whole choice, where `--map round`
+ * used to be the board with its economy hidden inside the map file.
+ */
+const GAME = value('game', null);
 /** Comma-separated variants to switch on, e.g. `--variants speedDie`. */
 const VARIANTS = value('variants', null);
 /**
@@ -191,7 +195,7 @@ async function main() {
   }
 
   const url = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}debug=1&seed=${SEED}`
-            + (MAP ? `&map=${MAP}` : '')
+            + (GAME ? `&game=${GAME}` : '')
             + (VARIANTS ? `&variants=${VARIANTS}` : '')
             + (HOUSE_RULES ? `&houseRules=${HOUSE_RULES}` : '')
             + (THEME ? `&theme=${THEME}` : '');
@@ -263,12 +267,19 @@ async function main() {
     // A variant that reshapes the turn has to be *in* the turn — and if the
     // extra step ever held the turn without giving it back, the stall detector
     // below is what would catch it.
-    if (VARIANTS?.includes('speedDie')) {
+    //
+    // Asked of the *rules in force* rather than of the flag: a variant can come
+    // from `--variants`, or from the game itself (`--game speed` does), and this
+    // has to hold either way.
+    const inPlay = await page.evaluate(() => window.__forge.rules().variants ?? []);
+    if (inPlay.includes('speedDie')) {
       const turn = await page.evaluate(() => window.__forge.phases());
       if (!turn.includes('SPEED_BONUS')) {
-        throw new Error(`the speed die was switched on but the turn is ${turn.join(' → ')}`);
+        throw new Error(`the speed die is in play but the turn is ${turn.join(' → ')}`);
       }
       console.log(`  ✓ speed die in play — the turn is ${turn.length} phases`);
+    } else if (VARIANTS?.includes('speedDie')) {
+      throw new Error('--variants speedDie was passed but the game is not playing it');
     }
 
     if (HOUSE_RULES) {

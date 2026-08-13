@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import type { HouseRules, TokenType } from '@/config';
 import { TOKEN_LABELS, DEFAULT_HOUSE_RULES, HOUSE_RULE_LABELS } from '@/config';
 import { SaveLoad } from '@/utils/SaveLoad';
-import { MAPS, mapById } from '@/maps';
+import { GAMES, DEFAULT_GAME } from '@/games';
 import { validateSnapshot, type GameSnapshot } from '@/game/Snapshot';
 import { knownVariants, variantNamed } from '@/game/Variants';
 import { theme, setTheme, knownThemes } from '@/ui/Theme';
@@ -24,10 +24,21 @@ export class MenuScene extends Phaser.Scene {
   /** Variants switched on. `?variants=speedDie` preselects, the chips override. */
   private variants: string[] = new URLSearchParams(window.location.search)
     .get('variants')?.split(',').filter((name) => knownVariants().includes(name)) ?? [];
-  /** `?map=<id>` preselects a board; the chips override it. */
-  private mapId: string = mapById(
-    new URLSearchParams(window.location.search).get('map'),
-  ).id;
+  /** Whether the player has touched the variant chips, which outranks a game's. */
+  private variantsChosen = !!new URLSearchParams(window.location.search).get('variants');
+  /**
+   * Which game to play. `?game=<id>` preselects one; the chips override it.
+   *
+   * Read without loading it — `gameById` applies a game's registrations, and the
+   * menu has no business doing that for a game nobody has started yet. The id is
+   * checked against what ships and falls back if it is not one of them.
+   */
+  /** Whether the player has picked a palette themselves, which outranks a game's. */
+  private themeChosen = !!new URLSearchParams(window.location.search).get('theme');
+  private gameId: string = (() => {
+    const asked = new URLSearchParams(window.location.search).get('game');
+    return asked && GAMES[asked] ? asked : DEFAULT_GAME.id;
+  })();
 
   constructor() {
     super({ key: 'MenuScene' });
@@ -54,7 +65,7 @@ export class MenuScene extends Phaser.Scene {
       color: '#aaaacc',
     }).setOrigin(0.5);
 
-    this.buildMapSelector();
+    this.buildGameSelector();
     this.buildThemeSelector();
 
     // ── Player count selector ─────────────────────────────────────────────────
@@ -108,16 +119,17 @@ export class MenuScene extends Phaser.Scene {
   }
 
   /**
-   * Which board to play on. The alternatives are not decoration: they are what
-   * proves the rules and the renderer take their shape from the map rather than
-   * from a hardcoded square (ROADMAP M8a).
+   * Which game to play — a board, the economy it is balanced for, the deck it
+   * deals and the palette it looks best in, all in one choice. It was a *board*
+   * picker until M9a, with the economy hidden inside the map file and no way to
+   * tell from the menu that Roundabout starts you with less money.
    */
-  private buildMapSelector(): void {
+  private buildGameSelector(): void {
     const { width } = this.scale;
-    const maps = Object.values(MAPS);
+    const games = Object.values(GAMES);
     const chipW = 150;
     const gap = 10;
-    const left = width / 2 - (maps.length * chipW + (maps.length - 1) * gap) / 2;
+    const left = width / 2 - (games.length * chipW + (games.length - 1) * gap) / 2;
 
     // The chips draw from their top-left, so they occupy 148–172; the blurb sits
     // under them and still clears "Number of Players" at y=200.
@@ -125,24 +137,40 @@ export class MenuScene extends Phaser.Scene {
       fontFamily: 'Georgia, serif', fontSize: '11px', color: '#55667a',
     }).setOrigin(0.5);
 
-    const chips = maps.map((map, i) => {
-      const chip = this.add.text(left + i * (chipW + gap), 148, map.name, {
+    const chips = games.map((game, i) => {
+      const chip = this.add.text(left + i * (chipW + gap), 148, game.name, {
         fontFamily: 'Georgia, serif', fontSize: '14px',
         padding: { x: 8, y: 5 }, fixedWidth: chipW, align: 'center',
       }).setInteractive({ useHandCursor: true });
-      chip.on('pointerdown', () => { this.mapId = map.id; paint(); });
+      chip.on('pointerdown', () => { this.selectGame(game.id); paint(); });
       return chip;
     });
 
     const paint = () => {
-      maps.forEach((map, i) => {
-        const active = map.id === this.mapId;
+      games.forEach((game, i) => {
+        const active = game.id === this.gameId;
         chips[i].setColor(active ? '#ffffff' : '#8899aa');
         chips[i].setBackgroundColor(active ? '#2a6b9b' : '#1a2640');
-        if (active) blurb.setText(map.blurb);
+        if (active) blurb.setText(game.blurb);
       });
     };
     paint();
+    // `?game=` may have preselected one, and its defaults have to be applied the
+    // same way clicking the chip would.
+    this.selectGame(this.gameId);
+  }
+
+  /**
+   * Take a game's defaults. They are *defaults*, not requirements: once somebody
+   * has picked a palette or touched the variant chips themselves, their choice
+   * outranks whatever the next game would have preferred.
+   */
+  private selectGame(id: string): void {
+    this.gameId = id;
+    const game = GAMES[id];
+    if (!game) return;
+    if (game.theme && !this.themeChosen)  this.applyTheme(game.theme);
+    if (!this.variantsChosen)             this.variants = [...(game.variants ?? [])];
   }
 
   /**
@@ -165,6 +193,7 @@ export class MenuScene extends Phaser.Scene {
         label:  variantNamed(name).label,
         on:     () => this.variants.includes(name),
         toggle: () => {
+          this.variantsChosen = true;
           this.variants = this.variants.includes(name)
             ? this.variants.filter((v) => v !== name)
             : [...this.variants, name];
@@ -241,15 +270,21 @@ export class MenuScene extends Phaser.Scene {
 
     chip.on('pointerdown', () => {
       const ids = knownThemes().map((t) => t.id);
-      const next = ids[(ids.indexOf(theme().id) + 1) % ids.length];
-      setTheme(next);
+      this.themeChosen = true;
+      this.applyTheme(ids[(ids.indexOf(theme().id) + 1) % ids.length]);
       paint();
-      // The pieces and the buildings are baked textures, so a new palette means
-      // baking them again. The menu itself keeps its own colours — it is the
-      // frame around the game, not part of the board.
-      bakeTokenTextures(this);
-      bakeBuildingTextures(this);
     });
+  }
+
+  /**
+   * Switch palette. The pieces and the buildings are baked textures, so a new one
+   * means baking them again. The menu itself keeps its own colours — it is the
+   * frame around the game, not part of the board.
+   */
+  private applyTheme(id: string): void {
+    setTheme(id);
+    bakeTokenTextures(this);
+    bakeBuildingTextures(this);
   }
 
   /**
@@ -372,7 +407,7 @@ export class MenuScene extends Phaser.Scene {
     this.scene.start('GameScene', {
       players: this.players,
       seed: this.readSeedFromUrl(),
-      mapId: this.mapId,
+      gameId: this.gameId,
       houseRules: { ...this.houseRules, variants: this.variants },
     });
     // UIScene is launched by GameScene once the model is ready

@@ -10,6 +10,7 @@ import { Bank } from '@/game/Bank';
 import { Player } from '@/game/Player';
 import { CLASSIC_RULES, resolveRules } from '@/game/Rules';
 import { CLASSIC_MAP, ROUND_MAP } from '@/maps';
+import { ROUNDABOUT_GAME } from '@/games';
 import { bus } from '@/utils/EventBus';
 import type { GameMap } from '@/maps';
 
@@ -149,15 +150,20 @@ describe('Rule sets', () => {
     expect(rules.jailFine).toBe(CLASSIC_RULES.jailFine);   // untouched
   });
 
-  it('gives a board the rule set its map asked for', () => {
+  // A board has no economy of its own since M9a — the *game* dealing it supplies
+  // one, and the board takes whatever it is handed.
+  it('gives a board the rule set it is handed', () => {
     expect(new Board(CLASSIC_MAP).rules.startingCash).toBe(CLASSIC_RULES.startingCash);
-    expect(new Board(ROUND_MAP).rules.goSalary).toBe(ROUND_MAP.rules?.goSalary);
+    expect(new Board(ROUND_MAP, ROUNDABOUT_GAME.rules).rules.goSalary)
+      .toBe(ROUNDABOUT_GAME.rules?.goSalary);
   });
 
-  it('lets a player switch a house rule over the map', () => {
-    const board = new Board(ROUND_MAP, { freeParkingJackpot: true });
+  it('lets a player switch a house rule over the game', () => {
+    const board = new Board(ROUND_MAP, resolveRules(ROUNDABOUT_GAME.rules, {
+      freeParkingJackpot: true,
+    }));
     expect(board.rules.freeParkingJackpot).toBe(true);
-    expect(board.rules.goSalary).toBe(ROUND_MAP.rules?.goSalary);   // still the map's
+    expect(board.rules.goSalary).toBe(ROUNDABOUT_GAME.rules?.goSalary);   // still the game's
   });
 
   it('pays the salary the rule set names, not a constant', () => {
@@ -165,9 +171,9 @@ describe('Rule sets', () => {
     const paid: Array<{ amount?: number }> = [];
     bus.on('rent:pay', (p: { amount?: number }) => paid.push(p));
 
-    const board = new Board(ROUND_MAP);
+    const board = new Board(ROUND_MAP, ROUNDABOUT_GAME.rules);
     board.getTile(board.anchor('start')).onPass('p1');
-    expect(paid[0].amount).toBe(ROUND_MAP.rules?.goSalary);
+    expect(paid[0].amount).toBe(ROUNDABOUT_GAME.rules?.goSalary);
   });
 
   it('stocks the bank from the rule set', () => {

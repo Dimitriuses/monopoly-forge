@@ -19,10 +19,11 @@ npm run verify:install  # would CI's npm accept package-lock.json?
 ```
 
 `npm run playtest` accepts `--turns N`, `--seed N`, `--headed` (watch it play),
-`--url <url>` (drive a deployed site instead of `dist/`), `--map <id>`,
-`--variants <a,b>`, `--house-rules` and `--theme <id>`. The last four go through
-the URL (`?map=`, `?variants=`, `?houseRules=`, `?theme=`) because the switches
-are canvas text with no DOM for a harness to click.
+`--url <url>` (drive a deployed site instead of `dist/`),
+`--game <id>`, `--variants <a,b>`, `--house-rules` and `--theme <id>`. The last
+four go through the URL (`?game=`, `?variants=`, `?houseRules=`, `?theme=`)
+because the switches are canvas text with no DOM for a harness to click.
+`--map` is gone: a board is not what you choose to play any more, a game is.
 
 ## Invariants
 
@@ -53,8 +54,8 @@ Length comes from `board.size` (or `board.move` / `board.stepsBetween`, which wr
 for you); jail and GO come from `board.anchor('jail')` / `board.anchor('start')`;
 how many lots a colour group holds comes from `board.groupTiles(group).length`.
 `Board` takes a `GameMap`, and the game ships a circle and a three-ring board as
-well as the square — run `npm run playtest -- --bots --map round` before believing
-a board change is safe.
+well as the square — run `npm run playtest -- --bots --game roundabout` before
+believing a board change is safe.
 
 **6b. Tiles are drawn in their own frame.** Every tile is a rectangle whose local
 top edge faces the middle of the board, positioned at `layout.x/y` and turned by
@@ -74,6 +75,31 @@ new kind needs a branch in exactly two places — `GameScene.awardAuction` and t
 bot's bid. Anything that runs an auction must give the bot a way to price the
 subject, or it will sit there being asked forever.
 
+**11. A game is the unit, and `gameById` is how you get one.** `src/games/<id>/`
+holds a board, the economy it is balanced for, the deck it deals, the variants it
+is played with and the palette it prefers. Four ship. **A map has no economy** —
+`GameMap` is tiles and a shape, and anything that reaches for `map.rules` is
+reaching for something that moved in M9a.
+
+`gameById(id)` **loads before it validates**, and the order is load-bearing: a
+game's registrations have to be in force before anything asks whether its tile
+types exist or its board can be built. Never construct a `Board` from a game's map
+without loading the game first — in the scene, in a test, or in the runner M8d
+will bring.
+
+**11b. Loading a game resets every registry.** `games/scope.ts` puts the built-ins
+back and applies that game's own, so two games cannot get each other's tile types
+or card effects. That is *serial* isolation: one game live at a time. Registering
+a type at module scope still works and still leaks — use `Game.register` for
+anything a game owns, and keep module-level registration for built-ins only.
+`registerTheme` is deliberately outside the scoped set (a colour is not a
+correctness problem, and scoping it would make `games/` import `ui/`).
+
+**11c. A game's theme and variants are defaults, not requirements.** The menu
+applies them when a game is picked and stops as soon as the player has chosen for
+themselves. Anything else added to `Game` that a player can also set owes the same
+treatment.
+
 **7. The bank does not know the rules.** `Bank` moves cash and inventory and asks
 no questions, because it has no view of the board — `bank.buyHouse` will happily
 put a house on a lot whose colour group you do not own. Legality lives in
@@ -84,7 +110,7 @@ when a button is dead.
 **7b. Rule *values* come from `board.rules`, never from a constant.** Starting
 cash, the GO salary, the jail fine and term, the doubles-to-jail count, the house
 supply and how many houses a hotel is worth are all in `game/Rules.ts`, resolved
-as classic → the map's → the player's switches. Writing `50` for the jail fine or
+as classic → the game's → the player's switches. Writing `50` for the jail fine or
 `>= 3` for doubles puts the classic board back into the engine. The rule set is
 saved with the game, so anything added to it belongs in the snapshot too.
 

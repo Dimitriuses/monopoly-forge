@@ -1,6 +1,7 @@
 import { dwarn } from '@/utils/log';
 import { liquidValue } from './Estate';
 import { applyVariants } from './Variants';
+import { Registry } from '@/utils/Registry';
 // Side-effect import: the variants that ship register themselves, the same way
 // the built-in tile types do. It has to be a module everything that builds a
 // turn already reaches, and `SpeedDie` imports nothing from here but types, so
@@ -114,14 +115,14 @@ export type TurnOrderFn = (ctx: OrderContext) => number | null;
 
 export type BuiltInTurnOrder = 'seat' | 'reverse';
 
-const TURN_ORDERS = new Map<string, TurnOrderFn>();
+export const TURN_ORDERS = new Registry<TurnOrderFn>('turn orders');
 
 export function registerTurnOrder(name: string, fn: TurnOrderFn): void {
   TURN_ORDERS.set(name, fn);
 }
 
 export function knownTurnOrders(): string[] {
-  return [...TURN_ORDERS.keys()];
+  return TURN_ORDERS.names();
 }
 
 /** Unknown means the game cannot proceed, so this throws rather than guessing. */
@@ -180,14 +181,14 @@ export type WinConditionFn = (ctx: OutcomeContext) => { winnerId: string | null 
 
 export type BuiltInWinCondition = 'lastSolvent' | 'roundLimit';
 
-const WIN_CONDITIONS = new Map<string, WinConditionFn>();
+export const WIN_CONDITIONS = new Registry<WinConditionFn>('win conditions');
 
 export function registerWinCondition(name: string, fn: WinConditionFn): void {
   WIN_CONDITIONS.set(name, fn);
 }
 
 export function knownWinConditions(): string[] {
-  return [...WIN_CONDITIONS.keys()];
+  return WIN_CONDITIONS.names();
 }
 
 export function winConditionNamed(name: string): WinConditionFn {

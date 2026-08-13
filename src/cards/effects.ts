@@ -1,6 +1,7 @@
 import { bus } from '@/utils/EventBus';
 import { dlog, dwarn } from '@/utils/log';
 import { PropertyTile } from '@/tiles/PropertyTile';
+import { Registry } from '@/utils/Registry';
 import type { Board } from '@/game/Board';
 import type { Bank } from '@/game/Bank';
 import type { Player } from '@/game/Player';
@@ -30,7 +31,7 @@ export interface CardEffectHandler {
   (ctx: CardEffectContext, action: CardAction, player: Player, card: Card): void;
 }
 
-export const CARD_EFFECTS = new Map<string, CardEffectHandler>();
+export const CARD_EFFECTS = new Registry<CardEffectHandler>('cards');
 
 /** Teach the engine a card effect. Registering over a name replaces it. */
 export function registerCardEffect(type: string, handler: CardEffectHandler): void {
@@ -38,7 +39,7 @@ export function registerCardEffect(type: string, handler: CardEffectHandler): vo
 }
 
 export function knownCardEffects(): string[] {
-  return [...CARD_EFFECTS.keys()];
+  return CARD_EFFECTS.names();
 }
 
 // ─── The built-in effects ─────────────────────────────────────────────────────

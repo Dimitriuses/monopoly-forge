@@ -27,13 +27,13 @@ screen instead of destroying it. That leaves **8d**, the simulation platform tha
 runs M7's bots a thousand games at a time — and the last thing standing between
 the engine and being measurable.
 
-**M8 makes the parts configurable; M9 gives them somewhere to live together.** You
-can supply a board, and separately a rule set, and separately a palette, but you
-cannot hand somebody *a game*. M9 is `src/games/<id>/` — one folder, one playable
-thing, picked as one choice. Its first half runs **before 8d**, because every
-registry in the engine is currently global and 8d loads many games into one
-process; the rest runs after, because a simulator is what tells an author their
-game does not work.
+**M8 makes the parts configurable; M9 gives them somewhere to live together, and
+its first half is done.** `src/games/<id>/` is one folder, one playable thing,
+picked as one choice — four ship, including the classic board with the speed die,
+which is two games sharing a map and differing in a single field. Registration is
+scoped to the loaded game, which is what 8d needed before it could load more than
+one. The rest of M9 runs after the simulator, because a simulator is what tells
+an author their game does not work.
 
 **The destination is M8: an engine for Monopoly-style games** — configurable maps,
 rules and presentation. M1–M7 build the classic game that the engine has to be able
@@ -445,7 +445,7 @@ anything runs a thousand of them.
 
 ## M9 — a game is a folder
 
-M8 made the *parts* configurable: a map is a file, rules and turn structure are a
+**9a is done**; 9b waits for the simulator. M8 made the *parts* configurable: a map is a file, rules and turn structure are a
 registry, presentation is a theme. What it did not do is give them somewhere to
 live together. You can supply a board, and separately a rule set, and separately a
 palette — but you cannot hand somebody **a game**.
@@ -453,45 +453,49 @@ palette — but you cannot hand somebody **a game**.
 This milestone is that top level: `src/games/<id>/`, each folder a complete
 playable thing, picked as one choice and launched.
 
-### The evidence that it is missing
+### The evidence it was missing — all three now answered
 
-Three things already say so, and none of them is a matter of taste:
+None of these was a matter of taste, which is why they were worth writing down:
 
-- **A map is carrying the economy.** `GameMap` grew a `rules` field and a `cards`
-  field in 8b because there was nowhere else to put them, so `ROUND_MAP` declares
-  `{ goSalary: 150, startingCash: 1200 }` today. A map should be tiles and a
-  shape. The bundle already exists — it is just wearing a map's name.
-- **The menu asks four questions that are one.** Board, house rules, variants,
-  theme are four pickers for "which game am I playing?", with the last three
-  properly being *overrides* on top of the answer.
-- **Every registry is global.** `registerTileType`, `registerCardEffect`,
-  `registerVariant`, `registerTurnOrder`, `registerWinCondition` and
-  `registerTheme` all write to a module-level `Map`. One browser tab plays one
-  game, so it has never mattered. It matters the moment two games are loaded into
-  one process, which is exactly what 8d does.
+- ~~**A map is carrying the economy.**~~ `GameMap` grew a `rules` field and a
+  `cards` field in 8b because there was nowhere else to put them, so `ROUND_MAP`
+  declared `{ goSalary: 150, startingCash: 1200 }` — a board saying how much money
+  you start with. Both moved to the game; a map is tiles and a shape again.
+- ~~**The menu asks four questions that are one.**~~ It asks one, and treats the
+  other three as overrides. Picking Orbits now brings its economy, its deck *and*
+  its palette, which is the first time the menu has been able to say what a game
+  is rather than what a board looks like.
+- ~~**Every registry is global.**~~ Five of them are scoped to the loaded game.
+  `registerTheme` deliberately is not: a colour collision is not a correctness
+  problem, `themeById` already falls back, and scoping it would make `games/`
+  import `ui/` for no gain.
 
-### 9a — the bundle · **before 8d**
+### 9a — the bundle · **before 8d** · done
 
-Mostly moving things that already exist. The one piece of genuinely new
-engineering is the registry scoping, and that is the piece 8d cannot be built
-without.
+Mostly moving things that already existed. The one piece of genuinely new
+engineering was the registry scoping, and that is the piece 8d could not have
+been built without.
 
-- [ ] **`src/games/<id>/index.ts` exporting a `Game`** — `{ id, name, blurb, map,
-      rules, cards, variants?, theme? }`. Three to start: `classic`,
-      `roundabout`, `orbits`. Plain TypeScript modules, not data files: see the
-      open question below.
-- [ ] **`rules` and `cards` move off `GameMap`.** `validateMap` splits in two —
-      what makes a *board* coherent (ids, anchors, group sizes, layout fit) and
-      what makes a *game* coherent (its deck names tiles its board has, its rule
-      set is one the engine can resolve).
-- [ ] **Registration becomes game-scoped**, so loading two games cannot have them
-      tread on each other. Global registries stay for the built-ins; a game's own
-      types, effects and variants are its own.
-- [ ] **The menu picks a game**, and house rules, variants and theme become
-      overrides on top of it. `?game=` replaces `?map=`; the playtest's `--map`
-      becomes `--game`.
-- [ ] **`SNAPSHOT_VERSION` 7 stores `gameId`.** Old saves are refused, which
-      `validateSnapshot` already does gracefully.
+- [x] **`src/games/<id>/index.ts` exporting a `Game`** — `{ id, name, blurb, map,
+      rules, cards, variants?, theme?, register? }`. **Four** ship, not three:
+      `classic`, `roundabout`, `orbits` and **`speed`** — the classic board with
+      the third die. That last one was not planned and is the best argument for
+      the whole milestone: two games sharing a map and a deck, one field apart,
+      neither a special case in the engine or a switch on the menu.
+- [x] **`rules` and `cards` moved off `GameMap`.** `validateMap` is board
+      coherence — ids, anchors, group sizes, layout fit. `validateGame` is
+      everything that is a statement about a *pairing*: this deck against this
+      board, this rule set against what this build has registered.
+- [x] **Registration is game-scoped.** `loadGame` resets every registry to the
+      built-ins and applies that game's own, so no two can leak into each other.
+      The five module-level `Map`s became one `Registry` class with `capture` and
+      `restore`. The limit is written down rather than implied: this is *serial*
+      isolation — one game live at a time, which is what a batch is.
+- [x] **The menu picks a game**, and a game's theme and variants are *defaults* a
+      player's own choice outranks. `?game=` replaces `?map=`; the playtest's
+      `--map` became `--game`.
+- [x] **`SNAPSHOT_VERSION` 7 stores `gameId`.** Old saves are refused, which
+      `validateSnapshot` already did gracefully.
 
 ### 9b — authoring · **after 8d**
 

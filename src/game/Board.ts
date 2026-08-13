@@ -28,7 +28,11 @@ export class Board {
   readonly size: number;
   /** The map this board was built from, including the shape it is drawn in. */
   readonly map: GameMap;
-  /** The rule set in force: the map's, with the player's switches over it. */
+  /**
+   * The rule set in force. A board no longer *has* an economy of its own — the
+   * game that deals this board supplies one, and the player's switches go over
+   * it. Everything the board builds reads it from here.
+   */
   readonly rules: GameRules;
   private geometry: BoardGeometry;
   private anchors: Map<BoardAnchor, number>;
@@ -45,8 +49,8 @@ export class Board {
       ? { ...CLASSIC_MAP, id: 'inline', name: 'Inline', tiles: source }
       : source;
 
-    // The map's rule set, then whatever the player switched on top of it.
-    this.rules = resolveRules(this.map.rules, ruleOverrides);
+    // The classic rules, then whatever the game and the player put over them.
+    this.rules = resolveRules(ruleOverrides);
     // What kinds of tile exist is a registry, not a switch — see tiles/registry.ts.
     this.tiles = this.map.tiles.map((def) => createTile(def, this.rules));
     this.size     = this.tiles.length;

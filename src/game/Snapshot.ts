@@ -5,7 +5,7 @@ import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable } from '@/tiles/Tile';
 import { type TokenType } from '@/config';
 import { type GameRules } from './Rules';
-import { MAPS, mapById, decksFor } from '@/maps';
+import { GAMES, gameById, decksFor } from '@/games';
 import { Board } from './Board';
 import { Bank } from './Bank';
 import { Dice, type DiceResult } from './Dice';
@@ -33,7 +33,7 @@ import { diceFor, knownVariants } from './Variants';
 // A restore resumes at the start of the saved player's turn. Mid-move state is
 // deliberately not captured: see `restoreGame`.
 
-export const SNAPSHOT_VERSION = 6;
+export const SNAPSHOT_VERSION = 7;
 
 export interface TileSnapshot {
   id: number;
@@ -65,8 +65,12 @@ export interface DeckSnapshot {
 
 export interface GameSnapshot {
   version: number;
-  /** Which board this game is being played on — a save is map-specific. */
-  mapId: string;
+  /**
+   * Which *game* was being played. It was the map's id until M9a, which was not
+   * enough to reconstruct anything: the decks and the economy lived beside it and
+   * had to be guessed at from the same string.
+   */
+  gameId: string;
   /** Where the random stream had got to, not the seed the game started from. */
   rngState: number;
   players: PlayerSnapshot[];
@@ -82,6 +86,8 @@ export interface GameSnapshot {
 
 /** Everything a running game is made of — what a restore hands back. */
 export interface GameParts {
+  /** Which game these parts were dealt from — the one thing a save cannot infer. */
+  gameId: string;
   board: Board;
   bank: Bank;
   dice: Dice;
@@ -98,7 +104,7 @@ export interface GameParts {
 export function captureGame(parts: GameParts): GameSnapshot {
   return {
     version:  SNAPSHOT_VERSION,
-    mapId:    parts.board.map.id,
+    gameId:   parts.gameId,
     rngState: rng.getSeed(),
     players:  parts.players.map(capturePlayer),
     tiles:    parts.board.tiles.filter(isOwnable).map((tile) => ({
@@ -155,7 +161,10 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
   // but any later draw has to continue the saved stream, not restart it.
   rng.seed(snapshot.rngState);
 
-  const board = new Board(mapById(snapshot.mapId), snapshot.rules);
+  // Loaded before anything is built: it is what puts this game's tile types and
+  // card effects in force, and a board is made of those.
+  const game  = gameById(snapshot.gameId);
+  const board = new Board(game.map, snapshot.rules);
   // The board's rules, not the classic ones: `housesPerHotel` is read from them
   // and a map may say something other than four. The counts below are the saved
   // stock; what a hotel is *worth* has to come back with the map.
@@ -180,8 +189,8 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
     }
   }
 
-  // A map may bring its own decks, so a restore must rebuild from *that* map's.
-  const decks      = decksFor(board.map);
+  // A game brings its own decks, so a restore rebuilds from *that* game's.
+  const decks      = decksFor(game);
   const chanceDeck = CardDeck.restore(decks.chance, snapshot.decks.chance);
   const commDeck   = CardDeck.restore(decks.community, snapshot.decks.community);
   const allCards   = [...decks.chance, ...decks.community];
@@ -210,6 +219,7 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
   });
 
   return {
+    gameId: game.id,
     board, bank, dice, players, turnManager,
     chanceDeck, commDeck,
     cardEffects: new CardEffects(board, bank, players),
@@ -249,11 +259,11 @@ export function validateSnapshot(snapshot: unknown): snapshot is GameSnapshot {
     }
   }
 
-  // The map may have changed under the save — or be missing from this build.
-  if (typeof s.mapId !== 'string' || !MAPS[s.mapId]) {
-    return reject(`unknown map "${s.mapId}"`);
+  // The game may have changed under the save — or be missing from this build.
+  if (typeof s.gameId !== 'string' || !GAMES[s.gameId]) {
+    return reject(`unknown game "${s.gameId}"`);
   }
-  const board = new Board(mapById(s.mapId));
+  const board = new Board(gameById(s.gameId).map);
   for (const tile of s.tiles) {
     if (!Number.isFinite(tile?.id) || tile.id < 0 || tile.id >= board.size) {
       return reject(`tile ${tile?.id} is not on this board`);

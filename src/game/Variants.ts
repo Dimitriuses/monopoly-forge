@@ -1,4 +1,5 @@
 import { Dice } from './Dice';
+import { Registry } from '@/utils/Registry';
 import type { GameRules } from './Rules';
 import type { TurnFlow } from './TurnFlow';
 
@@ -27,14 +28,14 @@ export interface Variant {
   dice?(rules: GameRules): Dice;
 }
 
-const VARIANTS = new Map<string, Variant>();
+export const VARIANTS = new Registry<Variant>('variants');
 
 export function registerVariant(name: string, variant: Variant): void {
   VARIANTS.set(name, variant);
 }
 
 export function knownVariants(): string[] {
-  return [...VARIANTS.keys()];
+  return VARIANTS.names();
 }
 
 /** Unknown means a game nobody can play, so this throws rather than guessing. */

@@ -30,7 +30,7 @@ Everything is mouse-driven — there is no keyboard input.
 
 | Action | How |
 |---|---|
-| Choose a board | **Classic**, **Roundabout** or **Orbits** at the top of the menu, or `?map=round` in the URL |
+| Choose a game | **Classic**, **Roundabout**, **Speed Die** or **Orbits** at the top of the menu, or `?game=roundabout` in the URL. A game brings its board, its economy, its deck and the palette it prefers |
 | Choose 2–6 players | Click a number on the menu |
 | Change a player's token | Click the token name next to `P1`, `P2`, … to cycle |
 | Play against the computer | Each seat says **🙋 Human** or **🤖 Bot** — click to swap. Seats 2+ are bots by default |
@@ -70,8 +70,8 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 ### Implemented
 
 - **Turn engine** — a turn is a *list* of named phases (`WAITING_FOR_ROLL → ROLLING → MOVING → LANDING → AWAITING_BUY_DECISION → END_TURN`) that a rule set can add to, and who plays next and when the game ends are strategies it names rather than decisions the engine makes. Doubles grant another roll, three in a row send you to jail
-- **Three boards, and a board is a file** — the classic 40-tile square, a 24-tile circle and 30 tiles across three concentric rings. A map declares its tiles, the shape it wants, the rule set it is balanced for and the decks it deals from; the rules and the renderer take everything from that, and a map that does not add up is refused with a reason rather than half-loaded
-- **Rules are data, and kinds are registries** — starting cash, the GO salary, the jail fine and term, the doubles-to-jail count and the house supply are a rule set a map overrides and a player switches on top of. New tile types and card effects are registered by name, so a variant adds one without editing the engine
+- **Four games, and a game is a folder** — a board, the economy it is balanced for, the deck it deals, the variants it is played with and the palette it prefers, all in one place and picked as one choice. **Classic** (40 tiles in a square), **Roundabout** (24 on a circle), **Speed Die** (the classic board with the third die) and **Orbits** (30 across three concentric rings). Loading one is also what puts its tile types and card effects in force, so two games cannot get each other's; a game that does not add up is refused with a reason rather than half-loaded
+- **Rules are data, and kinds are registries** — starting cash, the GO salary, the jail fine and term, the doubles-to-jail count and the house supply are a rule set a game overrides and a player switches on top of. New tile types and card effects are registered by name, so a game adds one without editing the engine
 - **Movement** — tile-by-tile animated walk, GO salary paid on passing (and on landing exactly)
 - **Property** — buy prompt for streets, railroads and utilities; rent from the tier table, doubled on an unimproved complete colour group; railroad rent by how many the owner holds; utility rent at 4× or 10× the dice
 - **Cards** — 16 Chance and 17 Community Chest, with advance / go-back / jail / collect / pay / pay-per-house effects, drawn from a shuffled deck with a discard pile that reshuffles. "Nearest railroad" and "nearest utility" search the board rather than naming a tile, and charge the double / ten-times-dice rate for arriving by card; a spent Get Out of Jail Free card goes back under its own deck
@@ -149,7 +149,7 @@ Three axes of customisation, none of which should require editing engine code:
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 375 unit tests pin down.
+it is what the 389 unit tests pin down.
 
 ### What already supports it
 
@@ -225,7 +225,7 @@ Three consequences worth the trouble:
 **The model runs in Node.** `src/config.ts` deliberately contains no Phaser
 import — the `Phaser.Game` options live in `main.ts` instead — so everything under
 `game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 375 unit tests run in ~8 s with no jsdom, and it is the seam a
+That is what lets 389 unit tests run in ~8 s with no jsdom, and it is the seam a
 headless AI opponent would plug into.
 
 **Games are reproducible.** Every dice roll and both deck shuffles draw from one
@@ -244,6 +244,9 @@ available on any build — including the deployed demo — with `?debug=1`.
 src/
 ├── main.ts               Phaser bootstrap, debug-logging switch
 ├── config.ts             Tile sizes, economy constants, house rules  [no Phaser]
+├── games/                **A game is a folder**: board + economy + deck + theme
+│                         classic, roundabout, speed, orbits · Game + validateGame
+│                         scope.ts — whose registrations are in force
 ├── maps/                 GameMap + validateMap; classic, round and orbit boards
 ├── game/
 │   ├── Rules.ts          The rule set: classic → the map's → the player's
@@ -279,12 +282,12 @@ tests/                    Vitest — model only, plain Node
 tools/playtest.mjs        Plays the built game in a real browser
 ```
 
-`src/games/` is the folder that is **not** there yet: a board, a rule set, decks
-and a theme currently live in three different places and are chosen by three
-different controls. Gathering them into one folder per game is [M9](ROADMAP.md),
-and the reason it comes before the simulator is that every registry above is a
-module-level `Map` — fine for one game in a browser tab, not fine for a batch
-runner loading three at once.
+`src/games/` is the top of that tree, and everything under it is a part a game
+assembles. Four ship, and two of them — **Classic** and **Speed Die** — share a
+board and a deck and differ in one field, which is the shortest way to say what a
+bundle is for. Loading a game is also what puts its tile types and card effects in
+force: the registries are scoped to it, so a batch runner can load one game after
+another without them treading on each other.
 
 ---
 
@@ -317,7 +320,7 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test                # 375 unit tests, plain Node, ~8 s
+npm test                # 389 unit tests, plain Node, ~8 s
 npm run typecheck       # tsc --noEmit
 npm run playtest        # build first: plays 30 seeded turns in a headless browser
 npm run playtest -- --bots   # hand every seat to a bot and watch them play it out

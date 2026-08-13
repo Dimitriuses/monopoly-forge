@@ -302,6 +302,7 @@ src/
 | **M8 — Engine** (configurable maps, rules, presentation, simulation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). **8a complete**: a map is a file, and three ship (square, circle, three rings). **8b complete**: registries for tile types, card effects, turn orders, win
 conditions and variants; a rule set a map overrides; a turn that is a list of
 phases; the speed die; and the last houses sold at auction. **8c complete**: colours, fonts and per-tile-type decoration are a theme with two palettes; the panels update in place. 8d: not started |
+| **M9 — A game is a folder** (board + economy + deck + theme, in one place) | 🟡 **9a complete**: four games ship, registration is scoped to the loaded one. 9b (assets, rule composition, authoring docs) waits for the simulator |
 
 ---
 
@@ -1524,3 +1525,82 @@ different game from a 50-tick one, not a prefix of it.
   and every colour group on all three boards.
 - Ten playtest configurations green: the classic, round and orbit boards, human
   and bot, plus `--variants speedDie`, `--house-rules` and `--theme parchment`.
+
+---
+
+## M9a — a game is a folder
+
+M8 made the parts configurable. This is the part that gives them somewhere to
+live together: `src/games/<id>/`, one folder, one playable thing, picked as one
+choice on the menu.
+
+### What it actually was: mostly moving
+
+`GameMap` had grown a `rules` field and a `cards` field in 8b, because there was
+nowhere else to put them. The consequence was a *board* declaring
+`{ goSalary: 150, startingCash: 1200 }`, which is a map doing a game's job. Those
+two fields moving into `Game` is most of the diff, and with them went the split
+that had been waiting to happen:
+
+- **`validateMap`** is board coherence — ids that match the circuit, anchors the
+  rules resolve by name, colour groups that can be completed, a shape the tile
+  count can make.
+- **`validateGame`** is everything that is a statement about a *pairing*: this
+  deck against this board, this rule set against what this build has registered.
+  The same deck is perfectly valid next to a different board, which is exactly
+  why the check does not belong to either one alone.
+
+### The part that was not moving
+
+Five registries were module-level `Map`s. That is right for a browser tab playing
+one game and wrong for the batch runner 8d is going to be, which is the whole
+reason this milestone went in front of it: two games that each register a
+`tollBooth`, or each replace `collectFromBank`, would quietly get each other's,
+and a simulation that answers *wrongly* is worse than one that fails.
+
+They became one `Registry` class with `capture` and `restore`, and `loadGame`
+resets to the built-ins before applying a game's own. The limit is written down
+rather than implied: this is **serial** isolation, one game live at a time, which
+is what a batch is. If a runner ever needs two at once, the registries have to
+become instances, and `games/scope.ts` says so.
+
+`registerTheme` is deliberately outside the scoped set. A colour collision is not
+a correctness problem, `themeById` already falls back, and scoping it would make
+`games/` import `ui/` for nothing.
+
+### The fourth game, which was not planned
+
+Three games were scheduled. A fourth wrote itself while the type was being
+tested: **Speed Die** is the classic map and the classic deck with
+`variants: ['speedDie']`, and it is the shortest possible argument for the whole
+milestone. Two games, one board, one field apart — and neither is a special case
+in the engine or a switch somebody has to remember to tick.
+
+Before this, "the classic board with the speed die" was not a thing you could
+hand anybody. It was a board plus a chip on the menu.
+
+### One ordering that is load-bearing
+
+`gameById` **loads a game before it validates it**. That looks backwards until
+you notice what validation asks: are this game's tile types registered, can this
+board be built. Both are questions only answerable once the game's own
+registrations are in force. The fallback path loads the classic game properly
+rather than leaving the failed one half-registered.
+
+### A game's preferences are defaults
+
+`Game.theme` and `Game.variants` are applied when a game is picked and stop
+applying the moment the player picks for themselves. Orbits names `parchment`,
+which is the only reason `theme` is a field rather than a plan — a flag nothing
+consults does not belong in this repo, and the same rule that deleted `speedDie`
+in M6 applies to a game's fields.
+
+### Verification
+
+- 389 unit tests (up from 375). The new file covers the four games validating,
+  the deck-against-board and rule-set-against-build checks, the fallback, and
+  five on scoped registration — including the one that would have produced a
+  wrong simulation rather than a crash: two games registering different handlers
+  under one name.
+- Nine playtest configurations: all four games, human and bot, plus
+  `--house-rules` and `--theme parchment`. `--map` is gone from the harness.

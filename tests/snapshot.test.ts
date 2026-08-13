@@ -13,6 +13,7 @@ import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable } from '@/tiles/Tile';
 import { CLASSIC_RULES, resolveRules } from '@/game/Rules';
 import { ROUND_MAP } from '@/maps';
+import { ROUNDABOUT_GAME } from '@/games';
 import { bus } from '@/utils/EventBus';
 import { rng } from '@/utils/PRNG';
 
@@ -66,6 +67,7 @@ function playedGame(): GameParts {
   commDeck.drawCard();
 
   return {
+    gameId: 'classic',
     board, bank, dice, players, turnManager, chanceDeck, commDeck,
     cardEffects: new CardEffects(board, bank, players),
     rules: resolveRules({ freeParkingJackpot: true }),
@@ -150,16 +152,19 @@ describe('Snapshot — round trip', () => {
     expect(restored.rules.startingCash).toBe(CLASSIC_RULES.startingCash);
   });
 
-  // A map may bring its own economy, and a save is of a game on *that* map.
-  it('brings back a map rule set that is not the classic one', () => {
+  // A game brings its own economy, and a save is of a game — not of a board.
+  it('brings back a game whose rule set is not the classic one', () => {
     const parts = playedGame();
-    const board = new Board(ROUND_MAP);
-    const onRound: GameParts = { ...parts, board, rules: board.rules };
+    const board = new Board(ROUND_MAP, ROUNDABOUT_GAME.rules);
+    const onRound: GameParts = {
+      ...parts, gameId: ROUNDABOUT_GAME.id, board, rules: board.rules,
+    };
     const restored = restoreGame(captureGame(onRound));
 
+    expect(restored.gameId).toBe('roundabout');
     expect(restored.board.map.id).toBe('round');
-    expect(restored.rules.goSalary).toBe(ROUND_MAP.rules?.goSalary);
-    expect(restored.rules.startingCash).toBe(ROUND_MAP.rules?.startingCash);
+    expect(restored.rules.goSalary).toBe(ROUNDABOUT_GAME.rules?.goSalary);
+    expect(restored.rules.startingCash).toBe(ROUNDABOUT_GAME.rules?.startingCash);
   });
 
   // A cloned card would break `deck.owns()`, and a spent Get Out of Jail Free
