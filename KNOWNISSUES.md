@@ -193,6 +193,25 @@ The consequence to know about: a phase a rule set adds runs on the way to
 move at all (a jailed player staying put). A handler that only makes sense after a
 landing has to check for itself.
 
+### Every registry is global, and a map is carrying the economy
+
+Two facts that cost nothing today and are the reason M9a is scheduled before 8d.
+
+**The registries are module-level.** `registerTileType`, `registerCardEffect`,
+`registerVariant`, `registerTurnOrder`, `registerWinCondition` and
+`registerTheme` each write to one `Map` for the whole process. A browser tab plays
+one game, so nothing has ever collided. A batch runner loads several — and two
+games that each register a `tollBooth`, or each replace `collectFromBank`, would
+quietly get each other's. The failure mode is a simulation result that is *wrong*
+rather than one that crashes, which is why this is worth fixing before there is a
+simulator rather than after.
+
+**`GameMap` owns `rules` and `cards`.** They went there in 8b because there was
+nowhere else; the consequence is that `ROUND_MAP` declares `goSalary: 150` — a
+board deciding an economy. Nothing is broken by it, but it means a game's
+definition is spread across a map file, a menu switch and a URL parameter, and
+there is no single thing you can hand somebody and call a game.
+
 ### A panel updates in place; the board does not
 
 *Fixed for the panels (M8c):* all three draw onto a `Surface` (`ui/Retained.ts`),

@@ -27,6 +27,14 @@ screen instead of destroying it. That leaves **8d**, the simulation platform tha
 runs M7's bots a thousand games at a time — and the last thing standing between
 the engine and being measurable.
 
+**M8 makes the parts configurable; M9 gives them somewhere to live together.** You
+can supply a board, and separately a rule set, and separately a palette, but you
+cannot hand somebody *a game*. M9 is `src/games/<id>/` — one folder, one playable
+thing, picked as one choice. Its first half runs **before 8d**, because every
+registry in the engine is currently global and 8d loads many games into one
+process; the rest runs after, because a simulator is what tells an author their
+game does not work.
+
 **The destination is M8: an engine for Monopoly-style games** — configurable maps,
 rules and presentation. M1–M7 build the classic game that the engine has to be able
 to express; M8 generalises it. Some M8 groundwork is already deliberate (a
@@ -358,10 +366,18 @@ Running the game thousands of times without a renderer, driven by M7's bots. Thi
 is where a rules engine stops being a claim and starts being measurable — and it
 is the fastest way to find the rule bugs a hand-played game never reaches.
 
-- [ ] **A headless runner.** No Phaser, no canvas: seed, players, rule set in;
-      a finished game out. The model already runs in plain Node, and M7's decision
-      layer is deliberately separate from the scene that currently drives it, so
-      the runner supplies the driving instead.
+**Runs after M9a**, which is not a scheduling preference — see the note under M9.
+The short version: every registry in this engine is a module-level `Map`, and
+8d's whole premise is many games in one Node process. Two games that each
+register a `tollBooth`, or each replace `collectFromBank`, tread on each other
+silently, and the failure mode is a simulation result that is *wrong* rather than
+one that crashes. So the runner takes a `Game`, and games own their registrations
+before a batch ever loads two of them.
+
+- [ ] **A headless runner.** No Phaser, no canvas: **a `Game`**, a seed and a
+      table of players in; a finished game out. The model already runs in plain
+      Node, and M7's decision layer is deliberately separate from the scene that
+      currently drives it, so the runner supplies the driving instead.
 - [ ] **Sequence a landing from completion, not from a delay** (moved from
       KNOWNISSUES). `GameScene` ends a turn with `safeEndTurn(300)` / `(400)` /
       `(700)` / `(800)`, tuned by feel against animation lengths. It has been
@@ -370,19 +386,27 @@ is the fastest way to find the rule bugs a hand-played game never reaches.
       landing has to report when it is finished rather than be waited out — and
       that has to be true before the runner can play a single game, which is why
       it is here rather than filed as debt.
-- [ ] **A batch CLI** — `npm run simulate -- --games 1000 --seed 1` — reporting
-      what a balance pass needs: bankruptcy rates, game length, how often the bank
-      runs out of houses, how often a game fails to terminate.
+- [ ] **A batch CLI** — `npm run simulate -- --game classic --games 1000 --seed 1`
+      — reporting what a balance pass needs: bankruptcy rates, game length, how
+      often the bank runs out of houses, how often a game fails to terminate.
+      Naming a game rather than a pile of flags is the point: `--games 1000` over
+      *which* map, rules and variants is a question the old shape could not
+      answer, and a report that cannot say what it ran is not evidence.
 - [ ] **Invariant checking across the batch** (the richer assertions moved here
       from M7). Total cash conserved, deck census intact, no player ever off the
       board, every game reaching a winner. A rule bug that shows up once in five
-      hundred games is invisible at the table and obvious here.
+      hundred games is invisible at the table and obvious here. Run over **every
+      shipped game**, not just the classic one — "all three finish, always" is a
+      far stronger claim than "the classic board does", and it is the claim an
+      engine has to be able to make.
 - [ ] **A second policy to measure the first against.** `game/Bot.ts` is a
       deliberately simple baseline — a fixed reserve, a tenth-of-face bidding
       step, build the cheapest complete group. The point of a simulator is being
       able to say whether a different one is actually better.
 - [ ] **A balance pass** driven by those numbers (moved from M7, which cannot do
-      it without the runner).
+      it without the runner). Per game, and editable in one place: Roundabout's
+      economy and its board are one folder by then, so balancing it is changing
+      that folder and re-running the batch against it.
 
 ### Sequencing — why some of this did not wait
 
@@ -408,6 +432,95 @@ needs a phase that polls the table, and turn order and the win condition *are*
 pipeline parts. Building any of them first would mean building a private version
 of the pipeline inside `TurnManager` and then removing it. So it moved to the
 front, and the speed die immediately after it as the proof it works.
+
+The same argument puts **M9a in front of 8d**, and this one is not about cost but
+about correctness. Every registry the engine has is a module-level `Map`, which is
+harmless while one process plays one game and is not harmless at all when a batch
+runner loads three. Two games registering different handlers under one name would
+produce a simulation result that is wrong rather than one that fails, and that is
+the worst kind of thing to find late. So games own their registrations before
+anything runs a thousand of them.
+
+---
+
+## M9 — a game is a folder
+
+M8 made the *parts* configurable: a map is a file, rules and turn structure are a
+registry, presentation is a theme. What it did not do is give them somewhere to
+live together. You can supply a board, and separately a rule set, and separately a
+palette — but you cannot hand somebody **a game**.
+
+This milestone is that top level: `src/games/<id>/`, each folder a complete
+playable thing, picked as one choice and launched.
+
+### The evidence that it is missing
+
+Three things already say so, and none of them is a matter of taste:
+
+- **A map is carrying the economy.** `GameMap` grew a `rules` field and a `cards`
+  field in 8b because there was nowhere else to put them, so `ROUND_MAP` declares
+  `{ goSalary: 150, startingCash: 1200 }` today. A map should be tiles and a
+  shape. The bundle already exists — it is just wearing a map's name.
+- **The menu asks four questions that are one.** Board, house rules, variants,
+  theme are four pickers for "which game am I playing?", with the last three
+  properly being *overrides* on top of the answer.
+- **Every registry is global.** `registerTileType`, `registerCardEffect`,
+  `registerVariant`, `registerTurnOrder`, `registerWinCondition` and
+  `registerTheme` all write to a module-level `Map`. One browser tab plays one
+  game, so it has never mattered. It matters the moment two games are loaded into
+  one process, which is exactly what 8d does.
+
+### 9a — the bundle · **before 8d**
+
+Mostly moving things that already exist. The one piece of genuinely new
+engineering is the registry scoping, and that is the piece 8d cannot be built
+without.
+
+- [ ] **`src/games/<id>/index.ts` exporting a `Game`** — `{ id, name, blurb, map,
+      rules, cards, variants?, theme? }`. Three to start: `classic`,
+      `roundabout`, `orbits`. Plain TypeScript modules, not data files: see the
+      open question below.
+- [ ] **`rules` and `cards` move off `GameMap`.** `validateMap` splits in two —
+      what makes a *board* coherent (ids, anchors, group sizes, layout fit) and
+      what makes a *game* coherent (its deck names tiles its board has, its rule
+      set is one the engine can resolve).
+- [ ] **Registration becomes game-scoped**, so loading two games cannot have them
+      tread on each other. Global registries stay for the built-ins; a game's own
+      types, effects and variants are its own.
+- [ ] **The menu picks a game**, and house rules, variants and theme become
+      overrides on top of it. `?game=` replaces `?map=`; the playtest's `--map`
+      becomes `--game`.
+- [ ] **`SNAPSHOT_VERSION` 7 stores `gameId`.** Old saves are refused, which
+      `validateSnapshot` already does gracefully.
+
+### 9b — authoring · **after 8d**
+
+Deliberately after, because 8d is what tells an author their game is unplayable,
+and because guessing at these now means guessing without that.
+
+- [ ] **Per-game assets.** The repo has none today — every texture is drawn at
+      runtime, which is what keeps it free of third-party art and its licence
+      questions. A game bringing its own needs a loading story that does not
+      exist yet, and one that keeps the no-assets default intact.
+- [ ] **Composing a rule set, not just overriding one.** `GameRules` layers
+      cleanly already. What is *not* expressible is subtracting — a game that
+      wants no utilities, or the classic deck minus three cards. Which knobs are
+      worth building is a question 1,000 simulated games can answer and a
+      guess cannot.
+- [ ] **Authoring documentation**, written against a simulator that can tell an
+      author their board never terminates.
+
+### The open question, recorded rather than settled
+
+**Modules or data?** A game folder of TypeScript modules is typechecked,
+importable, needs no loader, and keeps every guarantee the engine has now. A
+folder of JSON is what "users create a game" really implies — authorable with no
+build step — but needs a schema and a runtime validator to be safe.
+
+9a starts with modules, because the validator that data-driven loading needs is
+the same one `validateGame` has to be anyway, and writing it against a typed
+shape first is the cheaper order. Data-driven loading is its own item when
+somebody actually wants to author a game without cloning the repo.
 
 ---
 

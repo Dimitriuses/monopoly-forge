@@ -144,6 +144,7 @@ Three axes of customisation, none of which should require editing engine code:
 | **Maps** | A board of any length and shape — not 40 tiles in a square — with your own tiles, groups, prices and named anchors (where "jail" is, where "start" is). *Done: see the round and multi-ring boards that ship* |
 | **Rules** | New tile types and card effects registered from outside, a rule set that decides jail terms, building rules and the economy, and a turn whose phases, order and win condition come from that rule set. *Done — the speed die is the proof: its own dice and an extra phase, with the engine never learning what one is* |
 | **Presentation** | How each element draws — tiles, tokens, panels, HUD — swapped per theme, without touching the rules. *Done: two themes ship, and how a tile type draws is a registered decoration rather than a branch in the renderer* |
+| **A game** | All three of the above in one place — a folder holding a board, a rule set, decks, a theme and whatever else it needs, picked as a single choice and launched. *Not yet: today you supply the parts separately, and there is no single thing you can hand somebody and call a game. That is [M9](ROADMAP.md), and its first half runs before the simulator* |
 
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
@@ -269,12 +270,21 @@ src/
 ├── cards/                Deck, discard/reshuffle, CardEffects, the classic decks,
 │                         effects registry (registerCardEffect)
 ├── scenes/               Boot, Menu, Game (tokens + wiring), UI (HUD), Card
-├── ui/                   BoardRenderer, PropertyPanel, AuctionPanel, TradePanel,
-│                         DiceView, PlayerPanel, Notification (turn log), Sfx
+├── ui/                   Theme + TileDecor (the palette and per-type drawing),
+│                         Retained (panels update in place), BoardRenderer,
+│                         PropertyPanel, AuctionPanel, TradePanel, DiceView,
+│                         PlayerPanel, Notification (turn log), Textures, Sfx
 └── utils/                EventBus, PRNG, SaveLoad, log
 tests/                    Vitest — model only, plain Node
 tools/playtest.mjs        Plays the built game in a real browser
 ```
+
+`src/games/` is the folder that is **not** there yet: a board, a rule set, decks
+and a theme currently live in three different places and are chosen by three
+different controls. Gathering them into one folder per game is [M9](ROADMAP.md),
+and the reason it comes before the simulator is that every registry above is a
+module-level `Map` — fine for one game in a browser tab, not fine for a batch
+runner loading three at once.
 
 ---
 
