@@ -797,6 +797,91 @@ async function main() {
       }
     }
 
+    // ── Saving while something is under the hammer ────────────────────────────
+    // An auction is plain model state; the clock is not part of it, so a restore
+    // brings back the same subject, the same bidders and the same standing bid,
+    // and starts the countdown again.
+    if (!BOTS) {
+      // Decline a property to open one, then save from inside it.
+      let opened = false;
+      for (let tries = 0; tries < 14 && !opened; tries++) {
+        await waitFor(page, ready, { timeout: 8000 });
+        await clickGame(page, box, HOTSPOTS.roll);
+        await waitFor(page, idle, { timeout: 9000 });
+        await sleep(350);
+        if (await page.evaluate(() => window.__forge.cardOpen())) {
+          await clickGame(page, box, HOTSPOTS.cardOk);
+          await sleep(400);
+        }
+        if (await page.evaluate(() => window.__forge.buyPromptOpen())) {
+          await clickGame(page, box, HOTSPOTS.pass);
+          await sleep(500);
+          opened = await page.evaluate(() => window.__forge.auctionOpen());
+        }
+      }
+
+      if (!opened) {
+        console.log('  · no auction opened in time; skipping the mid-auction save');
+      } else {
+        // Put a bid on the table, so what comes back has something to compare.
+        await clickGame(page, box, HOTSPOTS.auctionBid);
+        await sleep(450);
+        const mid = await page.evaluate(() => window.__forge.auctionState());
+
+        await clickGame(page, box, HOTSPOTS.pause);
+        await sleep(400);
+        const saveRow = (await menuSpots(page)).find((r) => r.id === 'save');
+        if (!saveRow || !saveRow.enabled) {
+          throw new Error(
+            `saving mid-auction was refused: ${saveRow ? saveRow.label : 'no Save row'}`,
+          );
+        }
+        await menuPress(page, box, 'save');
+        await menuPress(page, box, 'slot3');
+        await sleep(400);
+
+        await page.reload({ waitUntil: 'load' });
+        await page.waitForSelector('canvas');
+        await sleep(900);
+        await menuPress(page, box, 'load');
+        await menuPress(page, box, 'slot3');
+
+        if (!(await waitFor(page, forgeReady, { timeout: 12000 }))) {
+          throw new Error('loading a mid-auction save did not start the game');
+        }
+        await waitFor(page, () => window.__forge.auctionOpen(), { timeout: 8000 });
+        const back = await page.evaluate(() => window.__forge.auctionState());
+
+        if (!back) throw new Error('the auction did not come back at all');
+        for (const key of ['tileId', 'highBid', 'highBidderId', 'currentBidder']) {
+          if (JSON.stringify(back[key]) !== JSON.stringify(mid[key])) {
+            throw new Error(
+              `restored auction differs on ${key}: ${JSON.stringify(mid[key])} became ` +
+              `${JSON.stringify(back[key])}`,
+            );
+          }
+        }
+        if (JSON.stringify(back.bidders) !== JSON.stringify(mid.bidders)) {
+          throw new Error(
+            `restored auction has different bidders: ${mid.bidders} became ${back.bidders}`,
+          );
+        }
+
+        // It has to be *finishable*, not merely on screen.
+        for (let guard = 0; guard < 10; guard++) {
+          if (!(await page.evaluate(() => window.__forge.auctionOpen()))) break;
+          await clickGame(page, box, HOTSPOTS.auctionPass);
+          await sleep(450);
+        }
+        if (await page.evaluate(() => window.__forge.auctionOpen())) {
+          throw new Error('a restored auction could not be finished');
+        }
+        console.log(
+          `  ✓ saved mid-auction at $${mid.highBid}, reloaded, and it came back the same`,
+        );
+      }
+    }
+
     // ── Save and restore ──────────────────────────────────────────────────────
     // Save, reload the page, resume from the menu, and check the game came back
     // exactly as it was. The turn phase is excluded on purpose: a restore always

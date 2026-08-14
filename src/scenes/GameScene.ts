@@ -62,6 +62,7 @@ import { askChoice, preferredOption, type ChoiceRequest } from '@/game/Choice';
 import { Menu } from '@/ui/Menu';
 import { gameById, decksFor, rulesFor, GAMES } from '@/games';
 import { Auction, tileSubject, type AuctionSubject } from '@/game/Auction';
+import type { AuctionState } from '@/game/Snapshot';
 import {
   houseClaims, housesContested, houseReserve, nominateLot, type HouseClaim,
 } from '@/game/Contention';
@@ -196,6 +197,61 @@ export class GameScene extends Phaser.Scene {
     };
   }
 
+  /** What is under the hammer, for the snapshot. Null when nothing is. */
+  private captureAuction(): AuctionState | null {
+    if (!this.auction && !this.auctionQueue.length) return null;
+    return {
+      live:  this.auction?.capture() ?? null,
+      queue: this.auctionQueue.map((subject) => ({ ...subject })),
+      endsTurn: this.auctionEndsTurn,
+      contention: this.houseContention
+        ? { requestedBy: this.houseContention.requestedBy, lotId: this.houseContention.lot.id }
+        : null,
+    };
+  }
+
+  /**
+   * Put an auction back. The bidders are looked up in the *restored* table, so
+   * bidding settles against the cash everyone actually has; the claims behind a
+   * contested house are recomputed from the board and the bank rather than
+   * saved, because a stored copy could disagree with the board it came from.
+   *
+   * The clock starts again from the top. That is the whole cost of saving here,
+   * and it is a fair one — the clock is a courtesy to a hot seat, not a rule.
+   */
+  private resumeAuction(saved: AuctionState): void {
+    this.auctionQueue    = saved.queue.map((subject) => ({ ...subject }));
+    this.auctionEndsTurn = saved.endsTurn;
+
+    if (saved.contention) {
+      const lot = this.board.getTile(saved.contention.lotId);
+      if (lot instanceof PropertyTile) {
+        this.houseContention = {
+          claims: houseClaims(this.board, this.bank, this.players),
+          requestedBy: saved.contention.requestedBy,
+          lot,
+        };
+      }
+    }
+
+    if (!saved.live) {
+      // Nothing open, but a queue waiting — a bankruptcy had filled it.
+      this.startNextQueued();
+      return;
+    }
+
+    this.auction = Auction.restore(saved.live, this.players);
+    if (this.auction.complete) {
+      // The standing bid had already decided it; settle rather than reopening.
+      this.finishAuction();
+      return;
+    }
+    this.panel.hide();
+    this.boardView.setSelected(this.auction.tileId);
+    this.auctionPanel.show(this.auctionView(this.auction));
+    this.botDecideBid();
+  }
+
   /**
    * Pick a saved turn up where it was put down.
    *
@@ -262,6 +318,8 @@ export class GameScene extends Phaser.Scene {
   /** What the model needs to resolve a landing — see `game/Landing.ts`. */
   /** Where a restored game left off, or null for a new one. */
   private resumedPhase: TurnPhase | null = null;
+  /** What was under the hammer when the save was taken, or null. */
+  private resumedAuction: AuctionState | null = null;
   /** A saved move whose landing had not resolved — see `resumeSavedTurn`. */
   private pendingLanding = false;
 
@@ -289,6 +347,7 @@ export class GameScene extends Phaser.Scene {
     this.rules       = parts.rules;
     this.resumedPhase   = parts.resumedPhase ?? null;
     this.pendingLanding = parts.pendingLanding ?? false;
+    this.resumedAuction = parts.auction ?? null;
   }
 
   /**
@@ -346,6 +405,9 @@ export class GameScene extends Phaser.Scene {
     this.scene.launch('UIScene', { players: this.players });
     if (this.resumedPhase) this.resumeSavedTurn(this.resumedPhase);
     else                   this.turnManager.startTurn();
+    // After the turn, not before: an auction opening over a landing that is
+    // about to resolve is the ordering `startNextQueued` already guards against.
+    if (this.resumedAuction) this.resumeAuction(this.resumedAuction);
     this.exposeDebugHandle();
   }
 
@@ -1017,8 +1079,6 @@ export class GameScene extends Phaser.Scene {
     // What is left is genuinely un-saveable, and the division is worth stating —
     // **you may save whenever the game is making you wait, and not in the middle
     // of your own half-finished input.**
-    if (this.auction)             return 'Something is under the hammer';
-    if (this.auctionQueue.length) return 'An estate is waiting to be auctioned';
     if (this.tradePanel.isOpen)   return 'A trade is half built';
     if (this.pendingChoice)       return 'Something is waiting to be chosen';
     return null;
@@ -1039,6 +1099,7 @@ export class GameScene extends Phaser.Scene {
       // has not been resolved. The model is already at the destination, so a
       // restore owes the landing rather than the walk.
       pendingLanding: this.isAnimating,
+      auction: this.captureAuction(),
     });
     SaveLoad.save(snapshot, snapshot.rngState, slot, {
       gameId: this.gameId, round: this.turnManager.round,

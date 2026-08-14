@@ -12,6 +12,7 @@ import {
 import { registerVariant, variantNamed, VARIANTS } from '@/game/Variants';
 import { unloadGame } from '@/games/scope';
 import { rng } from '@/utils/PRNG';
+import { Auction } from '@/game/Auction';
 
 // ─── A save taken mid-turn ────────────────────────────────────────────────────
 // A restore used to call `startTurn()` whatever had been saved, which threw the
@@ -44,7 +45,7 @@ afterEach(() => { bus.clear(); unloadGame(); });
 
 describe('the snapshot carries where in the turn it was', () => {
   it('bumped its version, because the shape changed', () => {
-    expect(SNAPSHOT_VERSION).toBe(8);
+    expect(SNAPSHOT_VERSION).toBe(9);
   });
 
   it('records the phase, not just whose turn it is', () => {
@@ -194,5 +195,107 @@ describe('a resumed game plays on identically', () => {
     const restored = restoreGame(captureGame(p));
     expect(restored.dice.lastResult).toEqual(p.dice.lastResult);
     expect(variantNamed('speedDie').dice).toBeTruthy();
+  });
+});
+
+// ─── An auction ───────────────────────────────────────────────────────────────
+
+describe('an auction survives a save', () => {
+  const subject = { kind: 'tile', id: 39, label: 'Boardwalk' };
+
+  function table(): Player[] {
+    return [
+      new Player('p1', 'Ann', 'car', false, 1500),
+      new Player('p2', 'Bo',  'dog', false, 1500),
+      new Player('p3', 'Cy',  'iron', false, 1500),
+    ];
+  }
+
+  it('captures what is under the hammer and who is still in', () => {
+    const players = table();
+    const auction = new Auction(subject, players, 10);
+    auction.bid('p1', 50);
+    auction.pass('p2');
+
+    const saved = auction.capture();
+    expect(saved.highBid).toBe(50);
+    expect(saved.highBidderId).toBe('p1');
+    expect(saved.bidderIds).toEqual(['p1', 'p3']);   // Bo passed, and is out for good
+  });
+
+  it('comes back bidding against the same people, at the same price', () => {
+    const players = table();
+    const auction = new Auction(subject, players, 10);
+    auction.bid('p1', 50);
+    auction.pass('p2');
+
+    const restored = Auction.restore(auction.capture(), players);
+    expect(restored.highBid).toBe(50);
+    expect(restored.minimumBid).toBe(60);
+    expect(restored.bidders.map((p) => p.id)).toEqual(['p1', 'p3']);
+    expect(restored.currentBidder?.id).toBe(auction.currentBidder?.id);
+    expect(restored.complete).toBe(false);
+  });
+
+  /** The bidders must be the *same objects*, or bidding settles against cash
+   *  nobody actually has. */
+  it('bids against the restored table, not copies of it', () => {
+    const players = table();
+    const auction = new Auction(subject, players, 10);
+    const restored = Auction.restore(auction.capture(), players);
+    expect(restored.bidders[0]).toBe(players[0]);
+  });
+
+  it('does not reopen one the standing bid had already decided', () => {
+    const players = table();
+    const auction = new Auction(subject, players, 10);
+    auction.bid('p1', 50);
+    auction.pass('p2');
+    auction.pass('p3');
+    expect(auction.complete).toBe(true);
+
+    expect(Auction.restore(auction.capture(), players).complete).toBe(true);
+  });
+
+  it('drops a bidder who is no longer at the table rather than faking one', () => {
+    const players = table();
+    const auction = new Auction(subject, players, 10);
+    const saved = auction.capture();
+
+    const restored = Auction.restore(saved, players.slice(0, 2));
+    expect(restored.bidders.map((p) => p.id)).toEqual(['p1', 'p2']);
+    expect(restored.currentBidder).not.toBeNull();
+  });
+
+  it('round-trips through the game snapshot, queue and all', () => {
+    const p = parts();
+    p.turnManager.startTurn();
+    const auction = new Auction(subject, p.players, 10);
+    auction.bid('p1', 70);
+
+    const snap = captureGame({
+      ...p,
+      auction: {
+        live: auction.capture(),
+        queue: [{ kind: 'tile', id: 1, label: 'Mediterranean Ave' }],
+        endsTurn: true,
+        contention: null,
+      },
+    });
+    expect(snap.auction?.live?.highBid).toBe(70);
+
+    const restored = restoreGame(snap);
+    expect(restored.auction?.queue).toHaveLength(1);
+    expect(restored.auction?.endsTurn).toBe(true);
+
+    const back = Auction.restore(restored.auction!.live!, restored.players);
+    expect(back.highBid).toBe(70);
+    expect(back.highBidderId).toBe('p1');
+  });
+
+  it('saves nothing when nothing is under the hammer', () => {
+    const p = parts();
+    p.turnManager.startTurn();
+    expect(captureGame(p).auction).toBeNull();
   });
 });

@@ -363,6 +363,18 @@ dice).
 **`pendingLanding` comes from the driver, not the model.** Only the scene knows a
 tween is in flight; `captureGame` takes it as a parameter for that reason.
 
+**14d. An auction saves itself; what is around it does not.** `Auction.capture`
+covers the subject, the bidders still in, whose turn it is and the standing bid —
+the clock is a `scene.time` event the panel owns and is deliberately not in it,
+so a restored auction counts down from the top. The driver saves three more
+things beside it and each has a reason: the **queue** a bankruptcy fills,
+**`auctionEndsTurn`** (without it a restored estate sale ends a turn it has no
+business ending), and *which lot* a contested house was asked for. The
+**contention claims are recomputed** rather than saved — `houseClaims` derives
+them from the board and the bank, which both come back, and a stored copy could
+disagree with the board it came from. Restore the bidders from the **restored
+table**: an auction bidding against copies settles against cash nobody has.
+
 **14b. What may be saved is a rule, not a list.** *You may save whenever the game
 is making you wait, and not in the middle of your own half-finished input.*
 `saveBlockedBecause()` returns a sentence, and every entry in it should be

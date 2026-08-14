@@ -151,14 +151,12 @@ the simulator is now the thing that could measure whether it did.
 
 ### Three things cannot be saved, and one of them is only a callback
 
-*Narrowed in M10b.* A save taken mid-turn now works: the snapshot carries the
+*Narrowed twice in M10b.* A save taken mid-turn works: the snapshot carries the
 phase, whether the turn was held, and whether a landing is owed, so a walk in
-progress and an open buy prompt both survive a reload. What is left refused:
+progress and an open buy prompt survive a reload — and so does a live auction,
+bidders and standing bid intact, with the clock starting again. What is left
+refused is **two**, not three:
 
-- **An auction.** Plain data, and the only reason it is not done is what
-  surrounds it — the turn-ending flag, the queue a bankruptcy fills, the
-  house-contention claims. Scheduled, with that reasoning, in the ROADMAP.
-  Pausing stops the clock, so nothing is lost by finishing the auction first.
 - **A half-built trade.** The offer is serialisable; re-opening the panel on the
   far side is the work, and a draft is the one thing here a player can rebuild in
   seconds.

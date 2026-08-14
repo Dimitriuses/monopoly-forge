@@ -31,6 +31,19 @@ export interface AuctionResult {
   amount: number;
 }
 
+/** An auction between saves. See `Auction.capture`. */
+export interface AuctionSnapshot {
+  subject: AuctionSubject;
+  increment: number;
+  reserve: number;
+  /** Still in the running, in seat order. A pass has already removed them. */
+  bidderIds: string[];
+  /** Index into `bidderIds` of whoever is to bid. */
+  turn: number;
+  highBid: number;
+  highBidderId: string | null;
+}
+
 export const MIN_BID_INCREMENT = 10;
 
 /** The subject for the ordinary case: a deed nobody bought. */
@@ -115,6 +128,49 @@ export class Auction {
 
     this.settleIfDecided();
     return true;
+  }
+
+  // ─── Saving ─────────────────────────────────────────────────────────────────
+  // An auction is plain model state and always was, which is why it can be put
+  // down and picked up: what is under the hammer, who is still in, whose turn it
+  // is and what the standing bid is. The **clock is not here** and never was —
+  // it is a `scene.time` event the panel owns — so a restored auction simply
+  // starts its countdown again, which is the honest cost and the only one.
+
+  capture(): AuctionSnapshot {
+    return {
+      subject:      { ...this.subject },
+      increment:    this.increment,
+      reserve:      this.reserve,
+      bidderIds:    this.active.map((p) => p.id),
+      turn:         this.turn,
+      highBid:      this.highBid,
+      highBidderId: this.highBidderId,
+    };
+  }
+
+  /**
+   * Rebuild one. `players` is the restored table, so the bidders come back as
+   * the *same objects* the rest of the game holds — an auction bidding against
+   * copies would settle against cash nobody has.
+   *
+   * A bidder missing from the table (bankrupt and gone) is dropped rather than
+   * faked, and `turn` is clamped, so a save written by a build that ordered
+   * bidders differently cannot point at nobody.
+   */
+  static restore(saved: AuctionSnapshot, players: Player[]): Auction {
+    const bidders = saved.bidderIds
+      .map((id) => players.find((p) => p.id === id))
+      .filter((p): p is Player => p !== undefined);
+
+    const auction = new Auction(saved.subject, bidders, saved.increment, saved.reserve);
+    auction.highBid      = saved.highBid;
+    auction.highBidderId = saved.highBidderId;
+    auction.turn         = bidders.length ? saved.turn % bidders.length : 0;
+    // The bid that was standing may already have decided it — a restore must not
+    // reopen an auction the saved game had settled.
+    auction.settleIfDecided();
+    return auction;
   }
 
   get result(): AuctionResult | null {

@@ -306,7 +306,7 @@ src/
 | M8d — A simulation platform | ✅ A headless runner, six invariants after every turn, a batch CLI, a second policy measured, and a balance pass driven by the numbers |
 | **M9 — A game is a folder** (board + economy + deck + theme) | ✅ **Complete.** Six games ship, registration is scoped to the loaded one, a game can be composed from another and bring its own artwork, and [authoring a game](docs/authoring-a-game.md) is written down |
 | **M11 — A board that is not a circuit** | ✅ **Complete.** Ultimate Monopoly: 120 tiles across three loops. Movement became a named strategy, `move` reports its route, a tile's rule may mention somebody else, colour groups opened, and group rent stopped being a literal |
-| **M10 — Refinement** | 🟡 Under way — **10a and 10d done**, 10b all but one item. All four printed-rule corners closed, both menus are a tree, the turn log comes out, and a save may now be taken mid-turn |
+| **M10 — Refinement** | 🟡 Under way — **10a and 10d done**, 10b down to two items. All four printed-rule corners closed, both menus are a tree, the turn log comes out, and a save may be taken mid-turn *and* mid-auction |
 
 ---
 
@@ -2220,3 +2220,63 @@ A question in flight is different in kind and will stay refused until somebody
 wants it: a `ChoiceRequest` carries an `answer` **callback**, and a closure does
 not go into localStorage. Saving one means the *asker* being able to ask again
 from saved state, which is per-asker work rather than one mechanism.
+
+## M10b — saving during an auction — 2026-08-14
+
+The last of the three refusals that was only *work* rather than a different kind
+of problem. An auction has been plain model state since 8b — what is under the
+hammer, who is still in, whose turn it is, what the standing bid is — and the
+comment at the top of `Auction.ts` had already said the thing that made this
+easy: **no timer lives here.** The clock is a `scene.time` event the panel owns.
+So a restored auction comes back with everything that is a rule and starts its
+countdown again, and that is the entire cost.
+
+`capture()` and `restore()` on the class, snapshot version 9.
+
+### Three things around it, each with its own answer
+
+**The queue.** A bankruptcy fills it with a whole estate to be sold deed by deed,
+and a save taken during the first of those has to bring the rest with it.
+
+**`auctionEndsTurn`.** Only the auction a *declined property* started ends the
+turn; an estate sale and a contested house happen in the middle of somebody's
+turn and must leave it alone. That flag is the difference between the two, and a
+restore without it would end a turn it had no business ending — the bug that
+comment exists because of.
+
+**The house-contention claims are recomputed, not saved.** `houseClaims` derives
+them from the board and the bank, and both of those come back in the snapshot, so
+storing a copy would be storing an answer that could disagree with the board it
+came from. Only *which* lot was asked for and by whom is saved, because those are
+choices rather than derivations.
+
+One more that is easy to get wrong and would fail quietly: the bidders are looked
+up in the **restored** table. An auction holding copies of the players would
+settle against cash nobody has, and the board would end up with a deed paid for
+out of an account that never moved.
+
+### What the harness does now
+
+Three save-and-reload scenarios in a real browser, and each proves something
+different: mid-walk (a landing is owed on the far side), mid-auction (the same
+subject, bidders and standing bid come back, and it can be *finished*), and the
+original quiescent save (byte-identical state). The mid-auction one declines a
+property to open an auction, puts a bid on the table so there is something to
+compare, and then checks the restored auction can be passed out rather than
+merely being on screen.
+
+### Where the line is now
+
+Two refusals left, and they are no longer the same kind of thing:
+
+- **A half-built trade.** Serialisable; re-opening the panel on the far side is
+  the work, and it is the one thing here a player rebuilds in seconds.
+- **A question in flight.** Different in kind: a `ChoiceRequest` carries an
+  `answer` **callback**, and a closure does not go into localStorage. Saving one
+  means the *asker* being able to ask again from saved state — per-asker work
+  rather than one mechanism.
+
+The rule the guard follows is unchanged and still reads true: you may save
+whenever the game is making you wait, and not in the middle of your own
+half-finished input. An auction turned out to be the former — you are waiting on
+a clock and on three other people — which is why it moved.

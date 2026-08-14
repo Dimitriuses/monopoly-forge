@@ -12,6 +12,7 @@ import { Dice, type DiceResult } from './Dice';
 import { Player } from './Player';
 import { TurnManager } from './TurnManager';
 import { knownTurnOrders, knownWinConditions, type TurnPhase } from './TurnFlow';
+import type { AuctionSnapshot, AuctionSubject } from './Auction';
 import { diceFor, knownVariants } from './Variants';
 
 // ─── Snapshot ─────────────────────────────────────────────────────────────────
@@ -33,7 +34,7 @@ import { diceFor, knownVariants } from './Variants';
 // A restore resumes at the start of the saved player's turn. Mid-move state is
 // deliberately not captured: see `restoreGame`.
 
-export const SNAPSHOT_VERSION = 8;
+export const SNAPSHOT_VERSION = 9;
 
 export interface TileSnapshot {
   id: number;
@@ -97,13 +98,46 @@ export interface GameSnapshot {
     pendingLanding?: boolean;
   };
   dice: DiceResult | null;
+  /**
+   * Whatever is under the hammer, and whatever is waiting to be. Saved because
+   * an auction is plain model state — the *clock* is not in it, so a restored
+   * auction starts its countdown again and loses nothing else.
+   */
+  auction?: {
+    live: AuctionSnapshot | null;
+    /** Subjects still queued — a bankrupt estate is sold deed by deed. */
+    queue: AuctionSubject[];
+    /** Whether the live auction is the reason the current turn is ending. */
+    endsTurn: boolean;
+    /**
+     * A contested house: who asked to build, and where. The *claims* are not
+     * saved — `houseClaims` recomputes them from the board and the bank, which
+     * are both restored, so storing them would be storing a derived answer that
+     * could disagree with the board it came from.
+     */
+    contention: { requestedBy: string; lotId: number } | null;
+  } | null;
   decks: { chance: DeckSnapshot; community: DeckSnapshot };
   /** The rule set the game is being played under, switches and all. */
   rules: GameRules;
 }
 
 /** Everything a running game is made of — what a restore hands back. */
+/** The auction context a driver has to put back — see `GameScene.resumeAuction`. */
+export interface AuctionState {
+  live: AuctionSnapshot | null;
+  queue: AuctionSubject[];
+  endsTurn: boolean;
+  contention: { requestedBy: string; lotId: number } | null;
+}
+
 export interface GameParts {
+  /**
+   * What was under the hammer when the save was taken, or null. Passed in and
+   * handed back rather than living on the model, because *which* auction is open
+   * is the driver's business — the same division `pendingLanding` follows.
+   */
+  auction?: AuctionState | null;
   /**
    * A move applied to the model whose landing has not been resolved — a token
    * mid-walk when the save was taken. Only a driver knows this, which is why it
@@ -155,6 +189,7 @@ export function captureGame(parts: GameParts): GameSnapshot {
       held:           parts.turnManager.isHeld,
       pendingLanding: parts.pendingLanding ?? false,
     },
+    auction: parts.auction ?? null,
     dice:  parts.dice.lastResult,
     decks: {
       chance:    parts.chanceDeck.snapshot(),
@@ -263,6 +298,7 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
   return {
     pendingLanding: snapshot.turn.pendingLanding ?? false,
     resumedPhase:   snapshot.turn.phase ?? null,
+    auction:        snapshot.auction ?? null,
     gameId: game.id,
     board, bank, dice, players, turnManager,
     chanceDeck, commDeck,
