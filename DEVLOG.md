@@ -306,7 +306,7 @@ src/
 | M8d — A simulation platform | ✅ A headless runner, six invariants after every turn, a batch CLI, a second policy measured, and a balance pass driven by the numbers |
 | **M9 — A game is a folder** (board + economy + deck + theme) | ✅ **Complete.** Six games ship, registration is scoped to the loaded one, a game can be composed from another and bring its own artwork, and [authoring a game](docs/authoring-a-game.md) is written down |
 | **M11 — A board that is not a circuit** | ✅ **Complete.** Ultimate Monopoly: 120 tiles across three loops. Movement became a named strategy, `move` reports its route, a tile's rule may mention somebody else, colour groups opened, and group rent stopped being a literal |
-| **M10 — Refinement** | 🟡 Under way — **10a and 10d done**, 10b down to two items. All four printed-rule corners closed, both menus are a tree, the turn log comes out, and a save may be taken mid-turn *and* mid-auction |
+| **M10 — Refinement** | 🟡 Under way — **10a and 10d done**, 10b down to one item. All four printed-rule corners closed, both menus are a tree, the turn log comes out, a save may be taken mid-turn and mid-auction, and bots offer *you* trades |
 
 ---
 
@@ -2280,3 +2280,55 @@ The rule the guard follows is unchanged and still reads true: you may save
 whenever the game is making you wait, and not in the middle of your own
 half-finished input. An auction turned out to be the former — you are waiting on
 a clock and on three other people — which is why it moved.
+
+## M10b — a bot that offers you a trade — 2026-08-14
+
+`proposeTrade` has been finding good swaps since M7 and bots have been making
+them to each other ever since. What they would not do is put one in front of a
+person, and the comment on `botTrade` said exactly why: *an unsolicited modal on
+a person's turn is a different question from whether the trade is a good one, and
+this answers only the second.*
+
+So this milestone answered the first, and it turned out to be almost entirely
+about manners rather than plumbing. The panel needed nothing: `review` mode is
+the same screen a person builds an offer in, arriving from the other direction,
+so accept, decline and counter all already worked.
+
+### How often is too often
+
+`mayInterrupt` is a pure function in `Bot.ts` — a bot may ask, then not again for
+`botTradeCooldown` rounds. It is there rather than in the scene because "how
+often may a bot interrupt somebody" is a decision about the game, not about the
+panel that shows it, and because a pure function is a thing that can be tested
+without a browser.
+
+Two rule values go with it and both are on the generated settings screen, which
+cost one line each now that the screen is built from metadata: `botOffersTrades`
+for people who never want to be asked, and `botTradeCooldown` for people who want
+to be asked less. A year ago that would have been a scene edit.
+
+### The bit that would have been a bug
+
+**The bot's turn stops until the offer is answered.** `botRollWhenClear` waits on
+a pending offer exactly as it waits on an auction. Without that the bot would ask
+a question and then roll straight past it — a modal that appears, gets ignored by
+the game, and is answered into a turn that has already moved on. The harness
+asserts it directly: after the offer opens it waits two and a half seconds and
+checks whose turn it still is.
+
+### Arranging the position, never the answer
+
+A bot only finds a swap on a board where two players hold each other's key, and a
+played game reaches one rarely and late — so this needed a third write-hook on
+the debug handle, after `forceHouseShortage` and `forceBankruptcy`.
+
+`forceMutualKeys` rigs the *board*: each of a bot and a person ends up one deed
+short of a monopoly, holding the deed the other is short of. Then the real
+`proposeTrade` finds the trade, the real manners check lets it through, and the
+real panel shows it. That is the shape a write-hook has to have — arrange the
+position, never the answer — and it is now written down in CLAUDE.md, because
+the temptation with this one was to inject an offer and call it tested.
+
+`npm run playtest -- --bot-trades` runs a table of one person and two bots, plays
+the person's turns until a bot asks, checks the bot waits, accepts, and then
+checks the deed moved and the game went on.

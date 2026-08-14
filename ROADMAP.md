@@ -46,9 +46,8 @@ than by what it generalises. Not started.
 
 **M10 is refinement**, and it is under way — the corners this implementation
 knowingly cuts, the things a player asks for, and a bot worth playing against.
-**10d is done**: both menus are a tree rendered from one component, saving moved
-into a pause screen where a dead row can say why, and the Game Settings screen is
-*generated* from metadata beside the rules rather than laid out by hand.
+**10a and 10d are done**, and 10b has one item left: a theme that can change
+mid-game. 10c, a bot worth playing against, is untouched.
 
 **Why the classic game came first.** A configurable engine whose only consumer is
 a toy proves nothing. M1–M7 build the game the engine has to be able to express;
@@ -659,10 +658,12 @@ it twice more, so it landed here. M12a is struck through accordingly.
       clipboard is what somebody usually wants and browsers refuse it outside a
       secure context, and a file always works but is heavier. Each row says what
       happened rather than failing quietly.
-- [ ] **A bot that offers *you* a trade.** `proposeTrade` exists and bots use it
-      on each other; a bot will not interrupt a person with one. That is a
-      question about the game's manners, and answering it means a modal that
-      arrives uninvited plus a harness that knows to answer it.
+- [x] **A bot that offers *you* a trade.** On its own turn, in the trade panel's
+      `review` mode, and the bot's turn holds until it is answered. Rationed by
+      `mayInterrupt`, and switchable off — `botOffersTrades` and
+      `botTradeCooldown` are on the generated settings screen. Exercised by
+      `npm run playtest -- --bot-trades`, which rigs the board with a third
+      write-hook and lets the real `proposeTrade` find the swap.
 - [ ] **A theme that can change mid-game.** Picked at boot or on the menu today.
       The HUD, the buttons and the board's static layer are drawn once at
       `create()`, and the pieces are baked textures.

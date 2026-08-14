@@ -57,6 +57,8 @@ const VARIANTS = value('variants', null);
 // own pass because it *removes* the auction step the ordinary run depends on, so
 // it needs the opposite assertion rather than the same ones.
 const NO_AUCTION  = flag('no-auction');
+// One person and two bots, so a bot has somebody to interrupt.
+const BOT_TRADES  = flag('bot-trades');
 const HOUSE_RULES = NO_AUCTION ? 'noAuction'
   : flag('house-rules') ? 'freeParkingJackpot,doubleGoSalary'
   : null;
@@ -300,6 +302,9 @@ async function main() {
     if (BOTS) {
       // Seat 1 is yours by default; hand it over too, so nobody has to click.
       await menuPress(page, box, 'seat1', { adjust: 1 });
+    } else if (BOT_TRADES) {
+      // Seat 1 stays a person and seats 2–3 stay bots: exactly the table an
+      // uninvited offer needs.
     } else {
       // All-human keeps the buy prompt, auction and trade steps below on rails.
       await menuPress(page, box, 'seat2', { adjust: 1 });
@@ -377,6 +382,102 @@ async function main() {
         throw new Error(`house rules were switched on but the game is not playing them: ${missing}`);
       }
       console.log(`  ✓ house rules in force: ${HOUSE_RULES.split(',').join(', ')}`);
+    }
+
+    // ── A bot offers *you* a trade ────────────────────────────────────────────
+    // Rigged rather than waited for: `proposeTrade` only finds a swap on a board
+    // where two players each hold the other's key, and a played game reaches one
+    // rarely and late. `forceMutualKeys` arranges the board and the *real* policy
+    // finds the trade, so what is under test is the policy and the manners.
+    if (BOT_TRADES) {
+      const rigged = await page.evaluate(() => window.__forge.forceMutualKeys());
+      if (!rigged) throw new Error('could not arrange two players holding each other’s keys');
+      console.log('  ✓ rigged a board where a swap makes both sides a monopoly');
+
+      // Seat 1 is a person, and nobody else is going to roll for them — so the
+      // person's turns are played here until a bot's comes round and it asks.
+      let offered = false;
+      for (let turn = 0; turn < 24 && !offered; turn++) {
+        offered = await waitFor(
+          page, () => window.__forge.botOfferFrom() !== null, { timeout: 2500 },
+        );
+        if (offered) break;
+
+        // Clear whatever the last landing left on screen, then roll if it is ours.
+        if (await page.evaluate(() => window.__forge.cardOpen())) {
+          await clickGame(page, box, HOTSPOTS.cardOk);
+        } else if (await page.evaluate(() => window.__forge.buyPromptOpen())) {
+          await clickGame(page, box, HOTSPOTS.buy);
+        } else if (await page.evaluate(() => window.__forge.auctionOpen())) {
+          await clickGame(page, box, HOTSPOTS.auctionPass);
+        } else if (await page.evaluate(
+          () => window.__forge.activeId() === 'p1' && !window.__forge.isAnimating()
+                && window.__forge.phase() === 'WAITING_FOR_ROLL',
+        )) {
+          await clickGame(page, box, HOTSPOTS.roll);
+        }
+        await sleep(600);
+      }
+      if (!offered) throw new Error('no bot ever offered the person a trade');
+
+      const state = await page.evaluate(() => ({
+        from:  window.__forge.botOfferFrom(),
+        open:  window.__forge.tradeOpen(),
+        offer: window.__forge.tradeOffer(),
+        active: window.__forge.activeId(),
+      }));
+      if (!state.open) throw new Error('a bot offered a trade and no panel opened');
+      if (state.offer.mode !== 'review') {
+        throw new Error(`the offer opened in ${state.offer.mode} mode, not review`);
+      }
+      if (state.offer.toId !== 'p1') {
+        throw new Error(`the offer went to ${state.offer.toId}, not the person`);
+      }
+      console.log(`  ✓ ${state.from} offered p1 a trade, on screen for review`);
+
+      // The bot must *wait*. Rolling past an uninvited question would be asking
+      // it and then answering it for them.
+      await sleep(2500);
+      const during = await page.evaluate(() => ({
+        active: window.__forge.activeId(),
+        open:   window.__forge.tradeOpen(),
+      }));
+      if (!during.open) throw new Error('the offer closed on its own');
+      if (during.active !== state.active) {
+        throw new Error(
+          `the bot rolled on while its offer was unanswered: ${state.active} → ${during.active}`,
+        );
+      }
+      console.log('  ✓ the bot held its turn open rather than rolling past it');
+
+      const wanted = state.offer.toTileIds[0];
+      await clickGame(page, box, await tradeSpot(page, 'accept'));
+      await sleep(700);
+
+      const after = await page.evaluate((tile) => ({
+        open:  window.__forge.tradeOpen(),
+        from:  window.__forge.botOfferFrom(),
+        owner: window.__forge.state().board.tiles[tile].ownerId,
+      }), wanted);
+      if (after.open) throw new Error('accepting the offer did not close the panel');
+      if (after.from !== null) throw new Error('the bot is still waiting after an answer');
+      if (after.owner !== state.from) {
+        throw new Error(`tile ${wanted} went to ${after.owner}, expected ${state.from}`);
+      }
+      console.log(`  ✓ accepted it; tile ${wanted} changed hands`);
+
+      // …and the game carries on rather than stalling on the released bot.
+      const movedOn = await waitFor(
+        page, () => window.__forge.activeId() !== window.__forge.state().players[1].id,
+        { timeout: 25000 },
+      );
+      if (!movedOn) throw new Error('the game never moved on after the offer was answered');
+      console.log('  ✓ the turn moved on afterwards');
+
+      console.log('\n✓ bot-trade playtest passed — a bot asked, waited, and was answered');
+      await browser.close();
+      server.close();
+      return;
     }
 
     // ── Bot mode: no clicking, just check they play a real game ───────────────

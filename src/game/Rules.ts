@@ -55,6 +55,15 @@ export interface GameRules {
    */
   majorityRent: number;
   /**
+   * Whether a bot may offer *you* a trade, uninvited, on its own turn. Bots have
+   * always traded with each other; this is the switch for whether they may
+   * interrupt a person, because that is a question about the game's manners
+   * rather than about whether the trade is a good one.
+   */
+  botOffersTrades: boolean;
+  /** Rounds a bot waits before interrupting the same person again. */
+  botTradeCooldown: number;
+  /**
    * Sell a house at auction when more players could buy one than the bank has
    * left. On in the classic rules, because it *is* the classic rule — see
    * `game/Contention.ts`. Off, and turn order decides who gets the last ones.
@@ -116,6 +125,8 @@ export const CLASSIC_RULES: GameRules = {
   monopolyRent: 2,
   majorityRent: 1,
   houseAuctions: true,
+  botOffersTrades: true,
+  botTradeCooldown: 3,
   auctionSeconds: 15,
   bidIncrement: 10,
   bidSteps: [0, 40, 90],

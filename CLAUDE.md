@@ -416,6 +416,15 @@ this build cannot read rather than half-restoring it.
 
 ### Bots decide, the scene drives
 
+**15. A bot may interrupt a person, and the rules of that are `mayInterrupt`.**
+Whether a trade is worth making is `proposeTrade`; whether a bot may put one in
+front of somebody who did not ask is separate, pure, and in `Bot.ts` — rationed
+by `botTradeCooldown` and switchable off with `botOffersTrades`. **The bot's turn
+holds until the offer is answered**: `botRollWhenClear` waits on
+`pendingBotOffer` the same way it waits on an auction, because a question the
+game rolls past is a question nobody got to answer. `closeTrade` is what releases
+it, whatever the answer was.
+
 `game/Bot.ts` answers questions — buy this? bid how much? build where? — and
 `GameScene` applies the answers through the same paths a button would. Nothing in
 `Bot.ts` may touch a scene, a button or a tween: the headless runner in M8d will
@@ -633,7 +642,10 @@ needs a board a played game reaches only at the very end, or not at all. The bot
 run calls them part-way in and then asserts that a house, and a returned estate,
 went under the hammer. `forceBankruptcy` settles the debt through `settleDebt` and
 `announceSettlement` rather than setting flags, so what it exercises is the real
-chain. Keep new hooks read-only unless the alternative is a rule with no
+chain; `forceMutualKeys` rigs a *board* where two players hold each other's key
+and lets the real `proposeTrade` find the swap, rather than injecting an offer.
+That is the shape a write-hook must have — **arrange the position, never the
+answer.** Keep new hooks read-only unless the alternative is a rule with no
 end-to-end check at all.
 
 **A turn does not end while anything is under the hammer.** `safeEndTurn` waits

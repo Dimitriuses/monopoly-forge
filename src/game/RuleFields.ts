@@ -101,6 +101,14 @@ export const RULE_FIELDS: readonly RuleField[] = [
     zeroLabel: 'off', hint: 'Only used by the "roundLimit" ending',
   },
 
+  {
+    key: 'botOffersTrades', group: 'house', label: 'Bots may offer you trades', kind: 'boolean',
+    hint: 'Uninvited, on their own turn',
+  },
+  {
+    key: 'botTradeCooldown', group: 'house', label: 'Rounds between their offers',
+    kind: 'number', min: 0, max: 20, zeroLabel: 'no wait',
+  },
   { key: 'freeParkingJackpot', group: 'house', label: 'Free Parking jackpot', kind: 'boolean' },
   { key: 'doubleGoSalary', group: 'house', label: 'Double salary landing on GO', kind: 'boolean' },
   { key: 'noAuction', group: 'house', label: 'No auctions', kind: 'boolean' },

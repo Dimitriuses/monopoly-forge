@@ -39,7 +39,7 @@ import {
 import { countOwnedOfType, type ArrivalRent } from '@/game/Rent';
 import {
   shouldBuy, nextBid, nextHouseBid, jailChoice, buildPlan, redeemPlan,
-  acceptTrade, proposeTrade,
+  acceptTrade, proposeTrade, mayInterrupt,
   type BotContext,
 } from '@/game/Bot';
 
@@ -141,6 +141,17 @@ export class GameScene extends Phaser.Scene {
   private auctionEndsTurn = false;
   /** The offer being built or reviewed, if the trade panel is open. */
   private offer: TradeOffer | null = null;
+  /**
+   * The bot waiting on a person's answer to an uninvited offer, or null. Its
+   * turn does not go on until this clears.
+   */
+  private pendingBotOffer: string | null = null;
+  /**
+   * The round each bot last interrupted somebody, so it does not do it again
+   * next turn. Not in the snapshot: the worst a reload can cost is one extra
+   * offer, and a cooldown is manners rather than state anybody plays against.
+   */
+  private lastBotOffer = new Map<string, number>();
   private tradeMode: 'edit' | 'review' = 'edit';
   private tradeScroll = { left: 0, right: 0 };
 
@@ -471,6 +482,9 @@ export class GameScene extends Phaser.Scene {
       // there. Gated on `?debug=1` like everything else on this handle.
       forceHouseShortage: () => this.forceHouseShortage(),
       forceBankruptcy:    () => this.forceBankruptcy(),
+      forceMutualKeys:    () => this.forceMutualKeys(),
+      /** The bot waiting on a person's answer, or null. */
+      botOfferFrom:       () => this.pendingBotOffer,
       // Frame counter and clock state: if the game ever looks frozen, this says
       // whether the loop is still turning or whether it stopped underneath you.
       loop:        () => {
@@ -884,7 +898,10 @@ export class GameScene extends Phaser.Scene {
 
   /** Roll, once nothing else is waiting on the table. */
   private botRollWhenClear(): void {
-    if (this.auction) {
+    // An offer a person has not answered yet is exactly as much a reason to wait
+    // as an auction is — rolling past it would ask a question and then answer it
+    // for them.
+    if (this.auction || this.pendingBotOffer) {
       this.botAct(() => this.botRollWhenClear(), BOT_THINK);
       return;
     }
@@ -892,17 +909,29 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Make an offer, if there is one worth making. Only to another bot: an
-   * unsolicited modal on a person's turn is a different question from whether
-   * the trade is a good one, and this answers only the second. Both sides being
-   * model decisions, the offer is settled here and now.
+   * Make an offer, if there is one worth making.
+   *
+   * Two cases, and they are genuinely different. Bot to bot is settled here and
+   * now: both sides are model decisions and nobody is waiting. Bot to **person**
+   * puts the offer on screen and *stops the bot's turn* until it is answered —
+   * an uninvited modal that the game then rolled straight past would be a
+   * question nobody got to answer.
+   *
+   * Whether the trade is good is `proposeTrade`'s business. Whether a bot may
+   * interrupt at all is `mayInterrupt`'s, and it is rationed: once, then not
+   * again for `botTradeCooldown` rounds.
    */
   private botTrade(player: Player): void {
     const offer = proposeTrade(this.botContext(player));
     if (!offer) return;
 
     const partner = this.players.find((p) => p.id === offer.toId);
-    if (!partner?.isBot) return;
+    if (!partner) return;
+
+    if (!partner.isBot) {
+      this.offerToPerson(player, partner, offer);
+      return;
+    }
     // Asked again rather than assumed: `proposeTrade` searched with the same
     // policy, and if the two ever disagree the trade should simply not happen.
     if (!acceptTrade(this.botContext(partner), offer)) return;
@@ -913,6 +942,30 @@ export class GameScene extends Phaser.Scene {
     this.boardView.refresh();
     this.pushUIUpdate();
     this.refreshPanel();
+  }
+
+  /**
+   * Put a bot's offer in front of a person, and hold the bot's turn open until
+   * they answer. The panel is the one a person builds an offer in, opened in
+   * `review` mode — the same screen, arriving from the other direction, so
+   * accept, decline and counter all already work.
+   */
+  private offerToPerson(bot: Player, person: Player, offer: TradeOffer): void {
+    if (!this.rules.botOffersTrades) return;
+    if (this.tradePanel.isOpen || this.auction || this.pendingChoice) return;
+    if (!mayInterrupt(
+      this.turnManager.round, this.lastBotOffer.get(bot.id), this.rules.botTradeCooldown,
+    )) return;
+
+    this.lastBotOffer.set(bot.id, this.turnManager.round);
+    this.pendingBotOffer = bot.id;
+
+    this.offer     = offer;
+    this.tradeMode = 'review';
+    this.tradeScroll = { left: 0, right: 0 };
+    this.tradePanel.show(this.tradeView());
+    this.notif.show(`🤝 ${bot.name} has an offer for ${person.name}.`, 'info');
+    sfx.play('card');
   }
 
   /** Redeem what it can afford, then build what the plan asks for. */
@@ -1151,6 +1204,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private closeTrade(): void {
+    // Whatever the answer was, the bot that was waiting for it may go on.
+    this.pendingBotOffer = null;
     this.offer = null;
     this.tradePanel.hide();
   }
@@ -1541,6 +1596,65 @@ export class GameScene extends Phaser.Scene {
    * or null if this board cannot produce the situation. Reachable only through
    * the debug handle.
    */
+  /**
+   * DEV TOOL — put the first bot and the first person one deed each from a
+   * monopoly, holding each other's missing lot.
+   *
+   * The third write-hook, and for the same reason as the other two: the rule it
+   * sets up needs a board a played game reaches rarely and late, and without it
+   * "a bot offers you a trade" has no end-to-end check at all. It rigs the
+   * *board* and then lets the real `proposeTrade` find the swap, so what is
+   * being tested is still the policy rather than a shortcut past it.
+   *
+   * Returns whether it could arrange one.
+   */
+  private forceMutualKeys(): boolean {
+    const bot    = this.players.find((p) => p.isBot && !p.isBankrupt);
+    const person = this.players.find((p) => !p.isBot && !p.isBankrupt);
+    if (!bot || !person) return false;
+
+    const groups = new Map<string, PropertyTile[]>();
+    for (const tile of this.board.tiles) {
+      if (!(tile instanceof PropertyTile)) continue;
+      const list = groups.get(tile.group) ?? [];
+      list.push(tile);
+      groups.set(tile.group, list);
+    }
+    // Two different groups, each of at least two lots, so each side can hold all
+    // but one of its own and the key to the other's.
+    const usable = [...groups.values()].filter((lots) => lots.length >= 2).slice(0, 2);
+    if (usable.length < 2) return false;
+
+    const hand = (owner: Player, lots: PropertyTile[]) => {
+      for (const lot of lots) {
+        for (const p of this.players) p.ownedTileIds.delete(lot.id);
+        lot.ownerId = owner.id;
+        lot.houses = 0;
+        lot.hasHotel = false;
+        lot.isMortgaged = false;
+        owner.ownedTileIds.add(lot.id);
+      }
+    };
+
+    const [first, second] = usable;
+    // Each side keeps all but the last of its own group, and is handed the last
+    // of the other's — so both are exactly one deed short, and the one they need
+    // is the one the other can spare.
+    hand(bot,    first.slice(0, -1));
+    hand(person, [first[first.length - 1]]);
+    hand(person, second.slice(0, -1));
+    hand(bot,    [second[second.length - 1]]);
+
+    bot.cash    = Math.max(bot.cash, 1500);
+    person.cash = Math.max(person.cash, 1500);
+    this.lastBotOffer.clear();
+
+    this.boardView.refresh();
+    this.pushUIUpdate();
+    dlog(`[GameScene] forceMutualKeys: ${bot.name} and ${person.name} each hold the other's key`);
+    return true;
+  }
+
   private forceHouseShortage(): number | null {
     const byGroup = new Map<string, PropertyTile[]>();
     for (const tile of this.board.tiles) {

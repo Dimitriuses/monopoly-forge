@@ -268,6 +268,27 @@ export function acceptTrade(ctx: BotContext, offer: TradeOffer): boolean {
  * `acceptTrade` — the partner's real policy, not a guess at it. Deterministic
  * and drawing no randomness, like every other decision in this file.
  */
+/**
+ * Whether a bot may interrupt a *person* with an offer this round.
+ *
+ * Whether a trade is good is `proposeTrade`'s question and always was. This is
+ * the other one, and it is about manners rather than about value: an offer a
+ * person did not ask for costs them attention, and a bot that made one every
+ * turn would be answered by reflex rather than considered. So it is rationed —
+ * a bot may interrupt once, then not again for `cooldown` rounds, and a decline
+ * is what starts the wait.
+ *
+ * Pure, and here rather than in the scene, because "how often is too often" is a
+ * decision about the game and not about the panel that shows it.
+ */
+export function mayInterrupt(
+  round: number, lastOffered: number | undefined, cooldown: number,
+): boolean {
+  if (cooldown <= 0) return true;
+  if (lastOffered === undefined) return true;
+  return round - lastOffered >= cooldown;
+}
+
 export function proposeTrade(ctx: BotContext): TradeOffer | null {
   const budget = Math.max(0, ctx.player.cash - profileOf(ctx).reserve);
   return swapForMonopoly(ctx, budget) ?? buyOutright(ctx, budget);

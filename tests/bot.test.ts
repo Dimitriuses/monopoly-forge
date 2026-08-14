@@ -4,10 +4,12 @@ import { Bank } from '@/game/Bank';
 import { Player } from '@/game/Player';
 import {
   shouldBuy, auctionCeiling, nextBid, jailChoice, buildPlan, redeemPlan,
-  acceptTrade, proposeTrade,
+  acceptTrade, proposeTrade, mayInterrupt,
   DEFAULT_PROFILE, type BotContext,
 } from '@/game/Bot';
 import { emptyOffer } from '@/game/Trade';
+import { CLASSIC_RULES, resolveRules } from '@/game/Rules';
+import { RULE_FIELDS } from '@/game/RuleFields';
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable, type Ownable, type Tile } from '@/tiles/Tile';
 import { CHANCE_CARDS } from '@/cards/CardDeck';
@@ -317,5 +319,46 @@ describe('Bot', () => {
       buildPlan(ctx),
     ]);
     expect(second).toBe(first);
+  });
+});
+
+// ─── Manners ──────────────────────────────────────────────────────────────────
+// Whether a trade is *good* is `proposeTrade`'s question and has its own tests.
+// This is the other one: whether a bot may interrupt a person with it at all.
+// Rationed, because an offer arriving every turn would be answered by reflex.
+
+describe('mayInterrupt — how often a bot may ask', () => {
+  it('lets a bot that has never asked, ask', () => {
+    expect(mayInterrupt(1, undefined, 3)).toBe(true);
+    expect(mayInterrupt(9, undefined, 3)).toBe(true);
+  });
+
+  it('makes it wait the cooldown out', () => {
+    expect(mayInterrupt(4, 3, 3)).toBe(false);   // one round later
+    expect(mayInterrupt(5, 3, 3)).toBe(false);
+    expect(mayInterrupt(6, 3, 3)).toBe(true);    // three rounds later
+  });
+
+  it('never bars it when the cooldown is off', () => {
+    expect(mayInterrupt(4, 3, 0)).toBe(true);
+    expect(mayInterrupt(4, 3, -1)).toBe(true);
+  });
+
+  it('is per bot, because the map is keyed by one', () => {
+    const asked = new Map([['p2', 3]]);
+    expect(mayInterrupt(4, asked.get('p2'), 3)).toBe(false);
+    expect(mayInterrupt(4, asked.get('p3'), 3)).toBe(true);
+  });
+
+  it('is switchable, and on by default', () => {
+    expect(CLASSIC_RULES.botOffersTrades).toBe(true);
+    expect(CLASSIC_RULES.botTradeCooldown).toBeGreaterThan(0);
+    expect(resolveRules({ botOffersTrades: false }).botOffersTrades).toBe(false);
+  });
+
+  it('is on the settings screen, so it can be turned off without a rebuild', () => {
+    const keys = RULE_FIELDS.map((f) => f.key);
+    expect(keys).toContain('botOffersTrades');
+    expect(keys).toContain('botTradeCooldown');
   });
 });

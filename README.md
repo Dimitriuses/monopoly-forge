@@ -32,6 +32,7 @@ Everything is mouse-driven — there is no keyboard input.
 |---|---|
 | Choose a game | **Play → Game** on the menu, or `?game=ultimate` in the URL. Six ship: **Classic**, **Roundabout**, **Speed Die**, **Orbits**, **Pocket**, **Ultimate**. A game brings its board, its economy, its deck, the palette it prefers and any artwork of its own |
 | Change the rules | **Play → Game Settings.** Starting cash, the salary, the jail fine and term, the house supply, how a full colour group is charged, how the game ends — about twenty of them, in sections, each showing what this game would have played |
+| Trade with a bot | Bots offer *you* trades on their own turn, in the same panel you build one in. Rationed so it is not every turn, and switchable off in **Play → Game Settings → House rules** |
 | Pause | **Escape**, or the MENU button. Resume, save to one of three slots, copy or download the turn log, change the sound or the theme, or quit to the title. A save may be taken **mid-turn** — a walking token, an open buy prompt and a live auction all survive a reload |
 | Choose 2–6 players | Click a number on the menu |
 | Change a player's token | Click the token name next to `P1`, `P2`, … to cycle |
@@ -157,7 +158,7 @@ Three axes of customisation, none of which should require editing engine code:
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 527 unit tests pin down.
+it is what the 533 unit tests pin down.
 
 ### What already supports it
 
