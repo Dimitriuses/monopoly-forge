@@ -58,6 +58,18 @@ export class CardDeck {
     return this.source.includes(card);
   }
 
+  /** The same question by id, for a census that only has ids to go on. */
+  ownsId(id: string): boolean {
+    return this.source.some((card) => card.id === id);
+  }
+
+  /** How many cards were dealt into it. Every one of them is in exactly one
+   *  place — the draw pile, the discard, or somebody's hand — and the batch
+   *  invariants check that after every turn. */
+  get size(): number {
+    return this.source.length;
+  }
+
   /** Put a card back underneath the draw pile, so it returns without a reshuffle. */
   returnToBottom(card: Card): void {
     this.draw.unshift(card);

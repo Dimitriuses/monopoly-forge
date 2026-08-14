@@ -299,10 +299,13 @@ src/
 | M5 — Multiplayer UI (trade dialog, auction system) | ✅ Complete — see [M5 below](#m5--multiplayer-interaction--2026-08-12) |
 | M6 — Polish (animations, sound, save/load, house rules) | ✅ Complete — see [M6 below](#m6--polish--2026-08-12) |
 | M7 — Opponents (bots you can play against) | ✅ Complete — see [M7 below](#m7--opponents-you-can-play-against--2026-08-12) |
-| **M8 — Engine** (configurable maps, rules, presentation, simulation) | 🟡 The destination — see [ROADMAP.md](ROADMAP.md). **8a complete**: a map is a file, and three ship (square, circle, three rings). **8b complete**: registries for tile types, card effects, turn orders, win
-conditions and variants; a rule set a map overrides; a turn that is a list of
-phases; the speed die; and the last houses sold at auction. **8c complete**: colours, fonts and per-tile-type decoration are a theme with two palettes; the panels update in place. 8d: not started |
-| **M9 — A game is a folder** (board + economy + deck + theme, in one place) | 🟡 **9a complete**: four games ship, registration is scoped to the loaded one. 9b (assets, rule composition, authoring docs) waits for the simulator |
+| **M8 — Engine** — the destination | ✅ **Complete.** Four parts, below |
+| M8a — A board is a file | ✅ `GameMap` + `validateMap`; a square, a circle and three concentric rings ship |
+| M8b — Rules are registries, not switches | ✅ Tile types, card effects, turn orders, win conditions, variants; a turn is a list of phases; the speed die is the proof; the last houses sold at auction |
+| M8c — Presentation is a theme | ✅ Colours, fonts and per-tile-type decoration in one object, two palettes; the panels update in place instead of rebuilding |
+| M8d — A simulation platform | ✅ A headless runner, six invariants after every turn, a batch CLI, a second policy measured, and a balance pass driven by the numbers |
+| **M9 — A game is a folder** (board + economy + deck + theme) | 🟡 **9a complete**: four games ship, registration scoped to the loaded one. **9b** — assets, rule composition, authoring docs — is next |
+| **M10 — Refinement** | ⚪ Not started — the corners the rules still cut, what a player asks for, and a bot worth playing against |
 
 ---
 
@@ -1604,3 +1607,126 @@ in M6 applies to a game's fields.
   under one name.
 - Nine playtest configurations: all four games, human and bot, plus
   `--house-rules` and `--theme parchment`. `--map` is gone from the harness.
+
+---
+
+## M8d — the simulator, and what it found
+
+A game played to the end with no Phaser, no canvas and nobody clicking; then a
+thousand of them; then the numbers. This is the milestone where a rules engine
+stops being a claim.
+
+### Two drivers, and the line between them
+
+`sim/Runner.ts` is the *second* driver of the same model. `GameScene` is the
+first: it animates a move, shows a prompt, waits a beat, ends the turn on a timer.
+The runner does none of that — a move is a position change, every prompt is
+answered by `Bot.ts`, and a turn ends the instant its landing returns.
+
+The temptation was to let the simulator reimplement the landing. It would have
+been a hundred lines and it would have been wrong within a month, because the two
+would drift. So `game/Landing.ts` took the part that *decides* anything — quote
+the rent, settle the debt, pot the tax, draw the card, pay what a free landing
+pays — and both drivers call it.
+
+What they do not share is timing, and that is the honest reading of the roadmap
+item that asked for a landing "sequenced from completion rather than a delay".
+`safeEndTurn(700)` is still there and should be: it is how long a person is given
+to read what happened. The runner has no tween to be slower than. The point is
+that the *rules* no longer depend on which it is.
+
+### The first batch found a bug in ten seconds
+
+```
+✗ invariants broken in classic seed 13:
+  deck: 15 cards accounted for, 16 were dealt
+```
+
+A bankrupt player's Get Out of Jail Free cards were **destroyed**. `transferEstate`
+had a branch that said as much in its own log line — "N Get Out of Jail Free
+card(s) lost" — written in M5 and never questioned. Enough bankruptcies would have
+emptied a deck.
+
+It is now a `card:return` event that both drivers listen for. Worth noting how it
+was caught: not by a test somebody thought to write, but by a census that says
+*every card is in exactly one place* run after every turn of every game.
+
+### The second batch found a bug in the simulator itself
+
+Speed Die and Classic reported **identical** medians, percentiles, win
+distributions and unfinished seeds. Identical numbers from two different games is
+not a coincidence; the runner was resolving `game.rules` and dropping
+`game.variants`, so Speed Die was playing without the speed die.
+
+The fix is `rulesFor(game, overrides)` in `games/index.ts` — one place where a
+rule set is assembled, called by both drivers. With it, the two games separate:
+median 162 turns against 257, and the bank runs out of houses in 19% of games
+against 7%. Which is exactly what a third die should do.
+
+### And one thing about the game rather than the code
+
+Across 500 games, 24 of Classic's outran the turn cap — about 5%, and the same
+rate for Speed Die. Following one to 60,000 turns:
+
+```
+turns=60000 rounds=12665 bankrupt=0
+deeds={p1:5, p2:6, p3:6, p4:11}  houses=0  hotels=0
+cash={p1:199711, p2:77616, p3:1109, p4:1407129}
+```
+
+Nobody ever completed a colour group, so nothing was ever built, so rent never
+rose above the salary, so nobody could go under. **Monopoly does not always
+terminate.** The roadmap had listed "every game reaches a winner" as an invariant
+to check; it is not one, and it is not implemented. Neither is "total cash
+conserved" — the salary and half the Chance deck create money and taxes destroy
+it. An invariant that does not hold is worse than none.
+
+What `npm run simulate` does instead is report them, and `--round-limit N` bounds
+a batch by a rule rather than by a cap.
+
+### The second policy is not better
+
+`AGGRESSIVE_PROFILE` — almost no reserve, 1.6× at auction, building the moment it
+can — against the M7 baseline, four seats, mirrored to cancel the position effect:
+
+| | wins |
+|---|---|
+| baseline | 287 |
+| aggressive | 289 |
+
+576 finished games. That is a tie, and it is a *result*: the baseline's three
+constants were picked by feel in M7, and they are not where the leverage is. What
+is: **seat order**. Across 300 four-player games the first two seats took roughly
+60% of the wins — worth far more than either policy. A better bot has to be a
+different shape, not different numbers, and that is now a measurable claim.
+
+### The balance pass, which was one change
+
+Roundabout ships with `winCondition: 'roundLimit', roundLimit: 80`. Not a feeling:
+300 games put its median at 27 rounds and its 90th percentile at 46, so eighty
+bounds the tail without touching a typical game. The re-run confirmed exactly
+that and nothing else — median unchanged at 112 turns, longest down from 984 to
+384, stalemates 2-in-300 to zero.
+
+Classic and Speed Die were deliberately left alone. The classic game is the
+reference implementation this engine exists to be able to express; balancing it
+away from the printed rules would make it a worse reference, not a better game.
+
+### A note on the build
+
+`npm run simulate` bundles `tools/simulate.ts` with Vite into `dist-sim/` and runs
+it with Node. Node cannot run the sources directly — they use `@/` aliases, which
+type stripping does not resolve — and adding a TypeScript runner to
+`package.json` costs a `verify:install` and has broken CI here once. Ten lines of
+Vite config was the cheaper answer.
+
+### Verification
+
+- 408 unit tests (up from 389): the runner plays every shipped game with
+  invariants on, a seed replays exactly, a game that will not end is reported
+  rather than hung, the two bugs above are pinned, and the report's arithmetic —
+  medians rather than means, wins by seat — is tested on synthetic results.
+- One pre-existing test was rewritten rather than given a longer timeout: the
+  dice-range check called `expect` 140,000 times and started timing out once the
+  simulator's tests competed for the same core. It collects the bad rolls and
+  asserts once now, which is both quicker and a better failure message.

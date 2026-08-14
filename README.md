@@ -149,7 +149,7 @@ Three axes of customisation, none of which should require editing engine code:
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 389 unit tests pin down.
+it is what the 408 unit tests pin down.
 
 ### What already supports it
 
@@ -225,7 +225,7 @@ Three consequences worth the trouble:
 **The model runs in Node.** `src/config.ts` deliberately contains no Phaser
 import — the `Phaser.Game` options live in `main.ts` instead — so everything under
 `game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 389 unit tests run in ~8 s with no jsdom, and it is the seam a
+That is what lets 408 unit tests run in ~8 s with no jsdom, and it is the seam a
 headless AI opponent would plug into.
 
 **Games are reproducible.** Every dice roll and both deck shuffles draw from one
@@ -264,6 +264,7 @@ src/
 │   ├── Trade.ts          Two-sided offers: validation, netting, counters
 │   ├── Estate.ts         Fire sales, debt settlement, bankruptcy transfer
 │   ├── Snapshot.ts       Capture/restore the whole game, and validate a save
+│   ├── Landing.ts        What a landing costs — shared by both drivers
 │   ├── Bot.ts            Opponent decisions — no Phaser, no randomness
 │   ├── TurnFlow.ts       A turn's phases, plus the turn-order and win-condition
 │   │                     registries a rule set picks from by name
@@ -277,9 +278,11 @@ src/
 │                         Retained (panels update in place), BoardRenderer,
 │                         PropertyPanel, AuctionPanel, TradePanel, DiceView,
 │                         PlayerPanel, Notification (turn log), Textures, Sfx
-└── utils/                EventBus, PRNG, SaveLoad, log
+├── sim/                  The headless driver — Runner, Invariants, Report
+└── utils/                EventBus, PRNG, SaveLoad, Registry, log
 tests/                    Vitest — model only, plain Node
 tools/playtest.mjs        Plays the built game in a real browser
+tools/simulate.ts         Plays it a thousand times with no browser at all
 ```
 
 `src/games/` is the top of that tree, and everything under it is a part a game
@@ -320,13 +323,14 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test                # 389 unit tests, plain Node, ~8 s
+npm test                # 408 unit tests, plain Node, ~8 s
 npm run typecheck       # tsc --noEmit
 npm run playtest        # build first: plays 30 seeded turns in a headless browser
 npm run playtest -- --bots   # hand every seat to a bot and watch them play it out
 npm run playtest -- --house-rules      # ...with the Free Parking jackpot on
 npm run playtest -- --variants speedDie
 npm run playtest -- --theme parchment    # ...and in the other palette
+npm run simulate -- --games 500          # 500 headless games of every shipped game
 npm run screenshots
 npm run verify:install  # would CI's npm accept this lockfile?
 ```

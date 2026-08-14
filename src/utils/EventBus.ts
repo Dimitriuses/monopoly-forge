@@ -68,6 +68,8 @@ export type GameEvent =
   | 'tax:pay'
   | 'card:draw'
   | 'card:execute'
+  /** Cards leaving a bankrupt estate, for whoever holds the decks to put back. */
+  | 'card:return'
   | 'jail:enter'
   | 'jail:exit'
   | 'trade:open'

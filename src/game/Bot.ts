@@ -12,7 +12,8 @@ import { emptyOffer, validateTrade, type TradeOffer } from './Trade';
 // ─── Bot ──────────────────────────────────────────────────────────────────────
 // The decision layer. It answers questions — buy this? bid how much? build
 // where? — and returns decisions; it never touches a scene, a button or a tween.
-// Whoever is driving applies them: `GameScene` today, a headless runner in M8d.
+// Whoever is driving applies them — `GameScene` in a browser, `sim/Runner.ts` in
+// a batch of a thousand games.
 //
 // Everything here is a pure function of the state passed in. No randomness, for
 // two reasons: a bot that drew from the shared PRNG would shift the dice stream
@@ -20,8 +21,10 @@ import { emptyOffer, validateTrade, type TradeOffer } from './Trade';
 // actually debug when a simulated game goes wrong.
 //
 // The policy is deliberately simple and readable rather than strong. It is a
-// baseline: something to play against, and something for M8d to measure a better
-// one against.
+// baseline — and since M8d it is a *measured* one: tuning its three constants
+// changes nothing (see `AGGRESSIVE_PROFILE`), while seat order is worth 60/40 to
+// the first two seats. A better bot has to be a different shape, not different
+// numbers.
 
 export interface BotProfile {
   /** Cash the bot tries not to spend below. Keeps it from mortgaging itself flat. */
@@ -36,6 +39,29 @@ export const DEFAULT_PROFILE: BotProfile = {
   reserve: 150,
   auctionCeiling: 1.2,
   buildBuffer: 100,
+};
+
+/**
+ * A second policy, so the first one can be *measured* rather than asserted to be
+ * reasonable. It is the same decisions with different numbers — it keeps almost
+ * no cash back, pays well over the odds at auction, and starts building the
+ * moment it can — which is exactly the axis worth testing first: the baseline's
+ * three constants were picked by feel in M7 and have never been checked against
+ * anything.
+ *
+ * A genuinely different *shape* of policy (counting the rent it is likely to
+ * face, weighing position, planning more than one purchase ahead) is a bigger
+ * question, and one this simulator now makes answerable.
+ */
+export const AGGRESSIVE_PROFILE: BotProfile = {
+  reserve: 40,
+  auctionCeiling: 1.6,
+  buildBuffer: 0,
+};
+
+export const PROFILES: Record<string, BotProfile> = {
+  baseline:   DEFAULT_PROFILE,
+  aggressive: AGGRESSIVE_PROFILE,
 };
 
 /** Everything a decision can depend on. Read-only by convention. */
@@ -85,8 +111,8 @@ export function auctionCeiling(ctx: BotContext, tile: Tile & Ownable): number {
  *
  * The raise is a real step — a tenth of the deed's face value — rather than the
  * table minimum. Matching the minimum turns a $300 deed into a thirty-round
- * crawl at $10 a time: slow to watch, and slower still when M8d runs a thousand
- * games of it. Stepping converges in a handful of rounds and still lets the
+ * crawl at $10 a time: slow to watch, and slower still when the simulator runs a
+ * thousand games of it. Stepping converges in a handful of rounds and still lets the
  * bidder with the highest ceiling win.
  */
 export function nextBid(

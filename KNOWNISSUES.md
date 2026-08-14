@@ -92,13 +92,23 @@ interrupt your turn with an unsolicited offer is a question about the game's
 manners rather than about the trade, and answering it means a modal that arrives
 uninvited, plus a harness that knows to answer it.
 
-### The bots are a baseline, not a challenge
+### The bots are a baseline, and tuning their numbers does not help
 
 The policy is deliberately plain: a flat $150 reserve, a bid ceiling of 1.2× face
 value (1.7× for a deed that completes a group), build the cheapest complete group
 it can afford. It does not count what rent it is likely to face, weigh position on
-the board, or plan more than one purchase ahead. It is something to play against
-and something for M8d to measure a better policy against.
+the board, or plan more than one purchase ahead.
+
+M8d measured the obvious alternative. `AGGRESSIVE_PROFILE` — almost no reserve,
+1.6× at auction, building the moment it can — won **289 games to the baseline's
+287** across 576 finished games in both seatings. That is a tie, and it says the
+three constants are not where the leverage is.
+
+What *does* matter, by a lot, is seat order: across 300 four-player games the
+first two seats took roughly 60% of the wins. A better policy has to be a
+different *shape* — one that values a deed by the rent it is likely to face
+rather than by its price — and that is now a measurable claim rather than an
+opinion.
 
 ### What a repeated dice face means is still hardcoded
 
@@ -120,6 +130,25 @@ larger change to a method three bugs have already been fixed in. Both are worth
 doing only alongside the variant that needs them; the speed die's triples rule is
 the only candidate today, and it also needs a pick-a-tile prompt.
 
+### Monopoly does not always end
+
+Across 500 four-player games, 24 of Classic's and 24 of Speed Die's ran past a
+6,000-turn cap — about 5%. One followed to 60,000 turns had four players holding
+5/6/6/11 deeds, **no monopoly, no houses**
+and £1.4M on the table. With nothing built, rent never rises above the salary and
+nobody can be bankrupted. It is a property of the game, not a defect in this
+implementation — but it is worth knowing before trusting a batch:
+
+- `npm run simulate` **reports** these rather than failing on them.
+- `--round-limit N` bounds a batch by a rule instead of by a cap.
+- **Roundabout** ships with `winCondition: 'roundLimit'` for exactly this reason
+  (M8d's balance pass), which took its stalemate rate to zero in 500 games.
+
+The underlying cause is the bots: `proposeTrade` only makes a mutual-monopoly
+swap, so four players who are never simultaneously one-lot-short of two different
+groups will never complete one. A stronger trading policy would shrink this, and
+the simulator is now the thing that could measure whether it did.
+
 ### The games that are not Classic are unbalanced
 
 Roundabout and Orbits exist to prove the geometry is not hardcoded, and their
@@ -128,10 +157,16 @@ derived from price by formula, and neither has been balanced. Orbits in
 particular is odd on purpose — the circuit spirals inward across three rings and
 then jumps back out to GO.
 
-Speed Die inherits the classic board and is unbalanced in a different way: a
-third die makes every lap shorter without anything else changing, so rent arrives
-faster than the salary does. All three want ROADMAP 8d's balance pass, and each
-is now one folder to edit rather than a map file plus an economy hidden in it.
+Speed Die inherits the classic board and is unbalanced in a different way, and
+the simulator can now put a number on it: median 162 turns against Classic's 257,
+and the bank runs out of houses in 19% of games against Classic's 7%. A third die
+makes every lap shorter without anything else changing, so rent arrives faster
+than the salary does.
+
+Only Roundabout has had a balance change made to it (an eighty-round limit, M8d).
+Classic and Speed Die were left alone deliberately: the classic game is the
+reference implementation this engine exists to be able to express, and balancing
+it away from the printed rules would make it a worse reference.
 
 ### The no-auction house rule is still untested
 
@@ -165,23 +200,20 @@ generation counter is the actual fix. Both behaviours are pinned by tests in
 `tests/turns.test.ts`, including one that documents the flag's *inability* to
 block a stale call, so nobody "fixes" it by deleting the counter.
 
-### Landing side effects are scattered across scene event handlers
+### The scene's turn-end delays are still tuned by feel
 
-Every tile emits a bus event and `GameScene` decides how long to wait before
-ending the turn (`safeEndTurn(300)`, `(400)`, `(700)`, `(800)`, `(100)`). The
-delays are tuned by feel against animation lengths rather than sequenced from
-completion callbacks, so changing an animation duration can reorder events. It
-has been stable across long playtests, but it is timing-coupled by construction.
+*Narrowed twice.* In M4 the *rent* left the scene for `game/Rent.ts`. In M8d
+everything a landing **costs** left for `game/Landing.ts` — quoting, settling,
+potting a tax, drawing a card, paying what a free landing pays — because the
+headless runner needed the same rules and the alternative was a second
+implementation of them inside the simulator.
 
-*Narrowed in M4:* how much rent a tile charges is no longer among those side
-effects — it moved to `game/Rent.ts` and is unit-tested. What remains in the
-scene handlers is the sequencing: who pays whom, when, and how long to wait.
-
-**Scheduled into ROADMAP 8d**, not because it is small but because that is where
-it stops being optional: a headless runner has no tweens to wait for and no clock
-to wait on, so the sequencing has to come from completion rather than from a
-delay before the simulator can run a game at all. Fixing it earlier would be the
-same work done twice.
+What is left in `GameScene` is genuinely presentational: `safeEndTurn(300)`,
+`(400)`, `(700)`, `(800)` are how long a person is given to read what happened,
+picked against animation lengths. The simulator has none of them and ends a turn
+the instant its landing returns, which is the evidence that the *rules* no longer
+depend on the timing. Changing an animation's duration can still reorder what a
+watcher sees; it can no longer change the result.
 
 ### A turn's phases are a list; the path between them is not
 

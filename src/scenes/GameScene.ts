@@ -23,7 +23,7 @@ import {
 } from '@/ui/PropertyPanel';
 import { type TokenType } from '@/config';
 import { theme } from '@/ui/Theme';
-import { CLASSIC_RULES, resolveRules, type GameRules } from '@/game/Rules';
+import { CLASSIC_RULES, type GameRules } from '@/game/Rules';
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable, type Tile } from '@/tiles/Tile';
 import {
@@ -34,7 +34,7 @@ import {
   canMortgage, canUnmortgage, unmortgageCost, ownsWholeGroup, groupBuildingCount,
   type RuleCheck,
 } from '@/game/BuildRules';
-import { quoteRent, countOwnedOfType, type ArrivalRent } from '@/game/Rent';
+import { countOwnedOfType, type ArrivalRent } from '@/game/Rent';
 import {
   shouldBuy, nextBid, nextHouseBid, jailChoice, buildPlan, redeemPlan,
   acceptTrade, proposeTrade,
@@ -50,7 +50,10 @@ const BOT_CARD_LINGER = 1600;
 /** How quickly the tokens already on a tile shuffle over to make room. */
 const CLUSTER_SHUFFLE = 140;
 import { settleDebt, announceSettlement } from '@/game/Estate';
-import { gameById, decksFor } from '@/games';
+import {
+  payRent, payTax, drawCard, isSelfTerminating, applyLandingRules, type LandingContext,
+} from '@/game/Landing';
+import { gameById, decksFor, rulesFor } from '@/games';
 import { Auction, tileSubject, type AuctionSubject } from '@/game/Auction';
 import {
   houseClaims, housesContested, houseReserve, nominateLot, type HouseClaim,
@@ -164,7 +167,7 @@ export class GameScene extends Phaser.Scene {
 
     // The rule set is the game's economy with the player's switches over it, and
     // everything else takes its numbers from `board.rules`.
-    const board   = new Board(game.map, resolveRules(game.rules, data.houseRules));
+    const board   = new Board(game.map, rulesFor(game, data.houseRules));
     const bank    = new Bank(board.rules);
     // A variant may play with dice of its own — the speed die does.
     const dice    = diceFor(board.rules);
@@ -181,6 +184,14 @@ export class GameScene extends Phaser.Scene {
       commDeck:    new CardDeck(decks.community),
       cardEffects: new CardEffects(board, bank, players),
       rules:       board.rules,
+    };
+  }
+
+  /** What the model needs to resolve a landing — see `game/Landing.ts`. */
+  private landingContext(): LandingContext {
+    return {
+      board: this.board, bank: this.bank, players: this.players,
+      rules: this.rules, dice: this.dice,
     };
   }
 
@@ -623,7 +634,7 @@ export class GameScene extends Phaser.Scene {
   // ── Bot turns ─────────────────────────────────────────────────────────────────
   // The scene *drives*, `game/Bot.ts` *decides*. Everything below applies a
   // decision through the same paths a button would; nothing here works out what
-  // the right move is. That line is what lets M8d's headless runner reuse the
+  // the right move is. That line is what lets the headless runner reuse the
   // policy without dragging a scene along.
 
   private botContext(player: Player): BotContext {
@@ -824,25 +835,21 @@ export class GameScene extends Phaser.Scene {
    * menu turns them on. Kept here rather than in the tiles because a tile can see
    * neither the rule set nor the bank.
    */
+  /** Both landing house rules are the model's; this reports what they did. */
   private applyLandingHouseRules(playerId: string, tileId: number): void {
     const player = this.players.find((p) => p.id === playerId);
     if (!player) return;
-    const tile = this.board.getTile(tileId);
 
-    if (this.rules.freeParkingJackpot && tile.type === 'freeParking' && this.bank.pot > 0) {
-      const won = this.bank.takePot(player);
-      this.notif.show(`${player.name} collected the $${won} Free Parking jackpot!`, 'success');
-      this.pushUIUpdate();
+    const { jackpot, doubleSalary } = applyLandingRules(this.landingContext(), playerId, tileId);
+    if (jackpot) {
+      this.notif.show(`${player.name} collected the $${jackpot} Free Parking jackpot!`, 'success');
     }
-
-    // Passing GO already paid the salary; landing exactly on it pays it twice.
-    if (this.rules.doubleGoSalary && tileId === this.board.anchor('start')) {
-      this.bank.payPlayer(player, this.rules.goSalary);
+    if (doubleSalary) {
       this.notif.show(
-        `${player.name} landed on GO — double salary, $${this.rules.goSalary * 2}!`, 'success',
+        `${player.name} landed on GO — double salary, $${doubleSalary * 2}!`, 'success',
       );
-      this.pushUIUpdate();
     }
+    if (jackpot || doubleSalary) this.pushUIUpdate();
   }
 
   // ── Save / load ───────────────────────────────────────────────────────────────
@@ -1670,43 +1677,29 @@ export class GameScene extends Phaser.Scene {
     });
 
     // ── Rent ──────────────────────────────────────────────────────────────────
-    bus.on<RentPayload>('rent:pay', ({ debtorId, creditorId, amount, tileId, reason }) => {
-      // Go salary: bank pays player. Fires *during* a move, so it must not touch
-      // the arrival rate the landing still needs.
-      if (reason === 'go') {
-        const player = this.players.find((p) => p.id === creditorId)!;
-        this.bank.payPlayer(player, amount ?? 0);
+    bus.on<RentPayload>('rent:pay', (payload) => {
+      // What is charged, and who ends up owing whom, is the model's — see
+      // game/Landing.ts. What is left here is the part a person needs: a sound,
+      // a line in the log, and a beat to read it before the turn moves on.
+      const outcome = payRent(this.landingContext(), payload, this.arrivalRent);
+
+      if (outcome.kind === 'salary') {
         sfx.play('cash');
-        this.notif.show(`${player.name} passed GO — collect $${amount ?? 0}!`, 'success');
+        this.notif.show(
+          `${outcome.player.name} passed GO — collect $${outcome.amount}!`, 'success',
+        );
         this.pushUIUpdate();
-        return; // DO NOT end turn — the normal move flow does that
+        return;   // DO NOT end turn — the normal move flow does that
       }
+      if (outcome.kind === 'none') return;
 
-      // Player-to-player rent
-      const debtor   = this.players.find((p) => p.id === debtorId);
-      const creditor = this.players.find((p) => p.id === creditorId);
-      if (!debtor || !creditor) return;
-
-      // What the tile actually charges is a rules question — see game/Rent.ts.
-      const { amount: resolved, notes } = quoteRent(
-        this.board, this.board.getTile(tileId), creditor,
-        {
-          diceTotal: this.dice.lastResult?.total ?? 7,
-          arrival:   this.arrivalRent,
-          declared:  amount,
-        },
-      );
       this.arrivalRent = null;   // consumed
-
-      // Settlement, not a clamped subtraction: a debtor who cannot pay sells and
-      // mortgages first, and only then goes under, handing over their estate.
-      const settlement = settleDebt(this.board, this.bank, debtor, creditor, resolved);
       sfx.play('spend');
-      const note = notes.length ? ` (${notes.join(', ')})` : '';
+      const note = outcome.notes.length ? ` (${outcome.notes.join(', ')})` : '';
       this.notif.show(
-        `${debtor.name} paid $${settlement.paid} rent to ${creditor.name}${note}.`, 'warning',
+        `${outcome.debtor.name} paid $${outcome.settlement.paid} rent to ` +
+        `${outcome.creditor.name}${note}.`, 'warning',
       );
-      announceSettlement(debtor, creditor, settlement);
       this.pushUIUpdate();
       this.safeEndTurn(700);
     });
@@ -1718,12 +1711,9 @@ export class GameScene extends Phaser.Scene {
 
     // ── Tax ───────────────────────────────────────────────────────────────────
     bus.on<TaxPayload>('tax:pay', ({ playerId, amount }) => {
-      const player = this.players.find((p) => p.id === playerId)!;
-      const settlement = settleDebt(this.board, this.bank, player, null, amount);
-      // House rule: tax does not vanish into the bank, it waits on Free Parking.
-      if (this.rules.freeParkingJackpot) this.bank.addToPot(settlement.paid);
-      this.notif.show(`${player.name} paid $${settlement.paid} tax.`, 'danger');
-      announceSettlement(player, null, settlement);
+      const paid = payTax(this.landingContext(), playerId, amount);
+      if (!paid) return;
+      this.notif.show(`${paid.player.name} paid $${paid.settlement.paid} tax.`, 'danger');
       this.pushUIUpdate();
       this.safeEndTurn(700);
     });
@@ -1778,25 +1768,30 @@ export class GameScene extends Phaser.Scene {
       dlog(`[GameScene] returned "${card.id}" to the bottom of its deck`);
     });
 
+    // ── Cards handed back by a bankrupt estate ────────────────────────────────
+    bus.on('card:return', ({ cards }: { cards: Card[] }) => {
+      for (const card of cards) {
+        const deck = [this.chanceDeck, this.commDeck].find((d) => d.owns(card));
+        if (deck) deck.returnToBottom(card);
+        else dwarn(`[GameScene] returned card "${card.id}" belongs to neither deck`);
+      }
+    });
+
     // ── Card draw ─────────────────────────────────────────────────────────────
     bus.on('card:draw', ({ playerId, deckType }: { playerId: string; deckType: string }) => {
       const player = this.players.find((p) => p.id === playerId)!;
       const deck   = deckType === 'chance' ? this.chanceDeck : this.commDeck;
-      const card   = deck.drawCard();
+      // Drawn *and returned to the discard* in one step — see game/Landing.ts for
+      // why deferring the return is what drains a deck.
+      const card   = drawCard(deck);
 
-      // Guard: drawCard() returns undefined when the deck is exhausted with no
-      // discard to refill from (e.g. all GOOJ cards held by players).
+      // Null when the deck is exhausted with no discard to refill from (e.g.
+      // every Get Out of Jail Free card is in somebody's hand).
       if (!card) {
-        console.error('[GameScene] drawCard() returned undefined for deck:', deckType);
+        console.error('[GameScene] the', deckType, 'deck had nothing to draw');
         this.safeEndTurn(300);
         return;
       }
-
-      // Return non-GOOJ cards to the discard immediately so the deck is always
-      // self-consistent. Deferring this to the shutdown callback is fragile:
-      // if CardScene never shuts down (stuck / launch no-op on a running scene)
-      // the card is never returned and the deck exhausts after enough draws.
-      if (!card.isGetOutOfJail) deck.returnCard(card);
 
       sfx.play('card');
       // Stop any currently-running CardScene before launching a new one.
@@ -1831,8 +1826,7 @@ export class GameScene extends Phaser.Scene {
         //
         // Only static cards (money transfers, get-out-of-jail card) need us to
         // close the turn here.
-        const selfTerminating = ['advanceTo', 'advanceToNearest', 'advanceToGo', 'goBack', 'goToJail'];
-        if (selfTerminating.includes(card.action.type)) {
+        if (isSelfTerminating(card)) {
           dlog(`[GameScene] Card action "${card.action.type}" is self-terminating — skipping safeEndTurn(200)`);
         } else {
           this.safeEndTurn(200);

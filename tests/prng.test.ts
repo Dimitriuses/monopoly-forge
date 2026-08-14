@@ -73,19 +73,24 @@ describe('PRNG.shuffle', () => {
 // outside 1–6, because an out-of-range total corrupts player.position and
 // every later roll cascades the bad value.
 describe('Dice', () => {
+  // One assertion, not 140,000: this used to call `expect` seven times per roll
+  // over 20,000 rolls, which was slow enough to time out once the simulator's
+  // tests started competing for the same core. Collecting the bad rolls and
+  // asserting once is both quicker and a better failure message — it says which
+  // roll was wrong rather than stopping at the first.
   it('only ever yields faces 1–6 and totals 2–12', () => {
     rng.seed(4242);
     const dice = new Dice();
+    const bad: string[] = [];
+
     for (let i = 0; i < 20_000; i++) {
       const r = dice.roll();
-      expect(r.die1).toBeGreaterThanOrEqual(1);
-      expect(r.die1).toBeLessThanOrEqual(6);
-      expect(r.die2).toBeGreaterThanOrEqual(1);
-      expect(r.die2).toBeLessThanOrEqual(6);
-      expect(r.total).toBe(r.die1 + r.die2);
-      expect(r.total).toBeGreaterThanOrEqual(2);
-      expect(r.total).toBeLessThanOrEqual(12);
+      const ok = r.die1 >= 1 && r.die1 <= 6
+              && r.die2 >= 1 && r.die2 <= 6
+              && r.total === r.die1 + r.die2;
+      if (!ok) bad.push(`roll ${i}: ${r.die1}+${r.die2}=${r.total}`);
     }
+    expect(bad).toEqual([]);
   });
 
   it('flags doubles exactly when the faces match', () => {

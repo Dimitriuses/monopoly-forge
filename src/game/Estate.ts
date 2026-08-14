@@ -179,12 +179,21 @@ export function transferEstate(
   }
 
   if (debtor.jailCards.length) {
-    const count = debtor.jailCards.length;
-    if (creditor) creditor.jailCards.push(...debtor.jailCards);
+    const cards = debtor.jailCards;
     debtor.jailCards = [];
+
+    if (creditor) {
+      creditor.jailCards.push(...cards);
+    } else {
+      // They used to be *lost* here, which the simulator's deck census caught on
+      // its first batch: "15 cards accounted for, 16 were dealt". A card that
+      // leaves the game shortens the deck for the rest of it, and enough
+      // bankruptcies would empty one. Whoever holds the decks puts them back.
+      bus.emit('card:return', { cards });
+    }
     actions.push(creditor
-      ? `${count} Get Out of Jail Free card(s) passed to ${creditor.name}`
-      : `${count} Get Out of Jail Free card(s) lost`);
+      ? `${cards.length} Get Out of Jail Free card(s) passed to ${creditor.name}`
+      : `${cards.length} Get Out of Jail Free card(s) returned to the deck`);
   }
 
   // Only when there is no creditor: with one, the deeds have an owner already

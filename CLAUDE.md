@@ -16,7 +16,15 @@ npm run test:watch
 npm run playtest     # needs a build first — drives dist/ in headless Chromium
 npm run screenshots  # playtest + writes screenshots/*.png
 npm run verify:install  # would CI's npm accept package-lock.json?
+npm run simulate     # plays games headlessly and reports; see below
 ```
+
+`npm run simulate` builds a Node bundle (`vite.sim.config.ts` → `dist-sim/`) and
+runs it. `--game <id|all>`, `--games N`, `--seed N`, `--players N`,
+`--policies a,b` (one seat each, for a head-to-head), `--round-limit N`,
+`--max-turns N`, `--no-invariants`, `--json`. It exits non-zero **only** when an
+invariant breaks; a game that outruns the cap is reported, because Monopoly
+genuinely does not always terminate.
 
 `npm run playtest` accepts `--turns N`, `--seed N`, `--headed` (watch it play),
 `--url <url>` (drive a deployed site instead of `dist/`),
@@ -27,11 +35,12 @@ because the switches are canvas text with no DOM for a harness to click.
 
 ## Invariants
 
-These are not style preferences. The project's destination is M8 — an engine for
-Monopoly-style games with configurable maps, rules and presentation
-([ROADMAP.md](ROADMAP.md)) — and invariants 1 and 2 are what keep that reachable:
-a rules core that runs headlessly, and a renderer that can be replaced without
-touching the rules. Breaking either forecloses the engine.
+These are not style preferences. The project *is* an engine for Monopoly-style
+games now — configurable maps, rules, presentation and whole games, with a
+headless simulator to check them ([ROADMAP.md](ROADMAP.md)) — and invariants 1
+and 2 are what made that reachable and what keep it: a rules core that runs
+without a browser, and a renderer that can be replaced without touching the
+rules. Breaking either takes the engine back apart.
 
 **1. The model must not import Phaser.** Everything under `game/`, `tiles/`,
 `cards/` and `utils/` runs in plain Node — that is what makes it unit-testable
@@ -84,8 +93,7 @@ reaching for something that moved in M9a.
 `gameById(id)` **loads before it validates**, and the order is load-bearing: a
 game's registrations have to be in force before anything asks whether its tile
 types exist or its board can be built. Never construct a `Board` from a game's map
-without loading the game first — in the scene, in a test, or in the runner M8d
-will bring.
+without loading the game first — in the scene, in a test, or in the simulator.
 
 **11b. Loading a game resets every registry.** `games/scope.ts` puts the built-ins
 back and applies that game's own, so two games cannot get each other's tile types
@@ -99,6 +107,23 @@ correctness problem, and scoping it would make `games/` import `ui/`).
 applies them when a game is picked and stops as soon as the player has chosen for
 themselves. Anything else added to `Game` that a player can also set owes the same
 treatment.
+
+**12. There are two drivers, and they share everything that decides anything.**
+`GameScene` animates and waits; `sim/Runner.ts` does neither. What they must
+share is `game/Landing.ts` — what a landing *costs*: quote the rent, settle the
+debt, pot the tax, draw the card, pay what a free landing pays. A rule added to
+one driver and not the other is the failure mode this split exists to prevent, so
+anything a landing does belongs in `Landing.ts` and anything about *when* belongs
+in the driver. `rulesFor(game, overrides)` is the same idea for a rule set: it is
+the only place one is assembled, because the simulator once resolved `game.rules`
+and dropped `game.variants`, and Speed Die played without the speed die.
+
+**12b. An invariant that does not always hold is worse than none.** `sim/Invariants.ts`
+checks positions, non-negative cash, both halves of ownership agreeing, the
+building census, the deck census and that a bankrupt player holds nothing. It
+deliberately does *not* check total cash (the salary creates money and taxes
+destroy it) or that every game reaches a winner (Monopoly does not always end —
+see KNOWNISSUES). Do not add either back.
 
 **7. The bank does not know the rules.** `Bank` moves cash and inventory and asks
 no questions, because it has no view of the board — `bank.buyHouse` will happily

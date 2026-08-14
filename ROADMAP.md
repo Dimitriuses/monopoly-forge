@@ -13,33 +13,32 @@ against. A seeded game runs with no console errors (`npm run playtest`), which
 also saves, reloads the page and resumes; `--bots` hands every seat to a bot and
 watches them play it out.
 
-What is left is the engine itself (M8). **8a is done**: the board is a file, and
-the game ships three of them — the classic square, a 24-tile circle and 30 tiles
-across three concentric rings. **8b is done too**: tile types, card effects,
-turn orders, win conditions and whole variants are registries rather than
-switches; decks travel with a map; the numbers the classic game hardcoded are a
-rule set a map can override; a turn is a list of phases a rule set can add to;
-and the speed die is the proof, added without the engine learning what one is.
-The last rule the game was missing — auctioning the houses the bank is short of —
-went in with it. **8c is done too**: colours, fonts and per-tile-type decoration
-are a theme object with two palettes registered, and the panels update what is on
-screen instead of destroying it. That leaves **8d**, the simulation platform that
-runs M7's bots a thousand games at a time — and the last thing standing between
-the engine and being measurable.
+**M8 — the engine — is done.** The board is a file (8a), the rules are registries
+rather than switches and a turn is a list of phases a rule set can add to (8b),
+presentation is a theme object (8c), and `npm run simulate` plays a game a
+thousand times with no renderer, checking six invariants after every turn (8d).
+The simulator found two real bugs on its first two batches, and one thing about
+the game itself: Monopoly does not always terminate, which is why "every game
+reaches a winner" is *not* one of the invariants it checks.
 
-**M8 makes the parts configurable; M9 gives them somewhere to live together, and
-its first half is done.** `src/games/<id>/` is one folder, one playable thing,
-picked as one choice — four ship, including the classic board with the speed die,
-which is two games sharing a map and differing in a single field. Registration is
-scoped to the loaded game, which is what 8d needed before it could load more than
-one. The rest of M9 runs after the simulator, because a simulator is what tells
-an author their game does not work.
+**M9 gives the parts somewhere to live together, and its first half is done.**
+`src/games/<id>/` is one folder, one playable thing, picked as one choice. Four
+ship, including the classic board with the speed die — two games sharing a map
+and differing in a single field. **9b** is next: per-game assets, composing a rule
+set rather than only overriding one, and authoring documentation. It was
+scheduled after the simulator because a simulator is what tells an author their
+game does not work, and that is now something it can do.
 
-**The destination is M8: an engine for Monopoly-style games** — configurable maps,
-rules and presentation. M1–M7 build the classic game that the engine has to be able
-to express; M8 generalises it. Some M8 groundwork is already deliberate (a
-Phaser-free core, an event-decoupled renderer, data-driven tiles), and some of it
-is cheaper to do early — see the sequencing note at the end.
+**M10 is refinement** — the corners this implementation knowingly cuts, the
+things a player asks for, and a bot worth playing against. Nothing in it opens a
+new seam; every item is already written down in KNOWNISSUES or in the deferred
+list, left because it was not what the milestone of the day was about.
+
+**Why the classic game came first.** A configurable engine whose only consumer is
+a toy proves nothing. M1–M7 build the game the engine has to be able to express;
+M8 generalises it. Some of that groundwork was deliberate from the start — a
+Phaser-free core, an event-decoupled renderer, data-driven tiles — and some of it
+was cheaper done early, which the sequencing note at the end explains.
 
 ---
 
@@ -360,11 +359,27 @@ it, and each is a line in KNOWNISSUES where it departs from the printed rules.
       Three entries left the harness's `HOTSPOTS` table and the note warning that
       they had to be recomputed by hand went with them.
 
-### 8d — A simulation platform
+### 8d — A simulation platform · done
 
 Running the game thousands of times without a renderer, driven by M7's bots. This
 is where a rules engine stops being a claim and starts being measurable — and it
-is the fastest way to find the rule bugs a hand-played game never reaches.
+was, on the first two batches, the fastest way to find the rule bugs a hand-played
+game never reaches:
+
+- **A card left the game.** A bankrupt player's Get Out of Jail Free cards were
+  destroyed rather than returned to their deck. Caught by the deck census in the
+  first hundred games: *"15 cards accounted for, 16 were dealt."* Enough
+  bankruptcies would have emptied a deck.
+- **Speed Die was not playing with the speed die.** The runner resolved
+  `game.rules` and nothing else, so `Game.variants` was dropped — and the batch
+  reported numbers *identical* to Classic's, which is what gave it away. Both
+  drivers assemble a rule set through one `rulesFor` now.
+- **Monopoly does not always terminate.** About 5% of Classic games run past a
+  6,000-turn cap; one, followed to 60,000 turns, had four players holding
+  5/6/6/11 deeds, no monopoly, no houses, and £1.4M on the table. Rent never rises above
+  the salary, so nobody can go under. That is a property of the game rather than
+  a bug in it, and it is why the roadmap's "every game reaches a winner" is not
+  implemented as an invariant.
 
 **Runs after M9a**, which is not a scheduling preference — see the note under M9.
 The short version: every registry in this engine is a module-level `Map`, and
@@ -374,39 +389,50 @@ silently, and the failure mode is a simulation result that is *wrong* rather tha
 one that crashes. So the runner takes a `Game`, and games own their registrations
 before a batch ever loads two of them.
 
-- [ ] **A headless runner.** No Phaser, no canvas: **a `Game`**, a seed and a
-      table of players in; a finished game out. The model already runs in plain
-      Node, and M7's decision layer is deliberately separate from the scene that
-      currently drives it, so the runner supplies the driving instead.
-- [ ] **Sequence a landing from completion, not from a delay** (moved from
-      KNOWNISSUES). `GameScene` ends a turn with `safeEndTurn(300)` / `(400)` /
-      `(700)` / `(800)`, tuned by feel against animation lengths. It has been
-      stable for four milestones, and it is the *first* thing a headless runner
-      breaks: there is no tween to be slower than and no clock to wait on. So the
-      landing has to report when it is finished rather than be waited out — and
-      that has to be true before the runner can play a single game, which is why
-      it is here rather than filed as debt.
-- [ ] **A batch CLI** — `npm run simulate -- --game classic --games 1000 --seed 1`
-      — reporting what a balance pass needs: bankruptcy rates, game length, how
-      often the bank runs out of houses, how often a game fails to terminate.
-      Naming a game rather than a pile of flags is the point: `--games 1000` over
-      *which* map, rules and variants is a question the old shape could not
-      answer, and a report that cannot say what it ran is not evidence.
-- [ ] **Invariant checking across the batch** (the richer assertions moved here
-      from M7). Total cash conserved, deck census intact, no player ever off the
-      board, every game reaching a winner. A rule bug that shows up once in five
-      hundred games is invisible at the table and obvious here. Run over **every
-      shipped game**, not just the classic one — "all three finish, always" is a
-      far stronger claim than "the classic board does", and it is the claim an
-      engine has to be able to make.
-- [ ] **A second policy to measure the first against.** `game/Bot.ts` is a
-      deliberately simple baseline — a fixed reserve, a tenth-of-face bidding
-      step, build the cheapest complete group. The point of a simulator is being
-      able to say whether a different one is actually better.
-- [ ] **A balance pass** driven by those numbers (moved from M7, which cannot do
-      it without the runner). Per game, and editable in one place: Roundabout's
-      economy and its board are one folder by then, so balancing it is changing
-      that folder and re-running the batch against it.
+- [x] **A headless runner.** `src/sim/Runner.ts`: a `Game`, a seed and a table of
+      players in; a finished game out. It is the *second* driver of the same
+      model — `GameScene` is the first — and what the two share is everything
+      that decides anything. A hundred games of the classic board take under two
+      seconds.
+- [x] **Sequence a landing from completion, not from a delay** (moved from
+      KNOWNISSUES). `game/Landing.ts` holds what a landing *costs* — quote the
+      rent, settle the debt, pot the tax, draw the card, pay what a free landing
+      pays. Both drivers call it; what they do not share is timing, which is the
+      honest division. `GameScene` still waits a beat so a person can read what
+      happened, because its landings are animated. The runner ends the turn the
+      instant the landing returns.
+- [x] **A batch CLI** — `npm run simulate -- --game classic --games 1000 --seed 1`.
+      Game length as a distribution, how often the bank runs out of houses, how
+      often nobody ever forms a monopoly, wins by seat. `--policies a,b` seats one
+      policy against another, `--round-limit N` bounds a batch by a rule rather
+      than by a cap, and `--json` is for anything that wants the numbers rather
+      than the paragraph.
+- [x] **Invariant checking across the batch.** `src/sim/Invariants.ts`, run after
+      every turn: positions on the board, no negative cash, the two halves of
+      ownership agreeing, the building census (bank stock + what is standing =
+      what the rule set stocked), the deck census (every card in exactly one
+      place), and a bankrupt player holding nothing.
+      **Two of the assertions this milestone was scheduled with are wrong, and
+      are not implemented.** *Total cash conserved* is not true of Monopoly — the
+      salary and half the Chance deck create money and taxes destroy it — and an
+      invariant that does not hold is worse than none. *Every game reaches a
+      winner* is not true either, which the batch demonstrated: see below.
+- [x] **A second policy to measure the first against.** `AGGRESSIVE_PROFILE`:
+      almost no cash held back, well over the odds at auction, building the moment
+      it can. **It is not better.** Across 576 finished games in both seatings —
+      mirrored, to cancel the position effect — baseline took 287 and aggressive
+      289. Which is a result: the baseline's three constants were picked by feel
+      in M7 and are not where the leverage is. Seat order is worth far more than
+      either of them (below).
+- [x] **A balance pass** driven by those numbers. One change, made against a
+      measurement rather than a feeling: **Roundabout ends after eighty rounds**
+      (`winCondition: 'roundLimit'`). 300 games put its median at 27 rounds and
+      its 90th percentile at 46, so eighty bounds the tail without touching a
+      typical game — and the re-run confirmed exactly that: median unchanged at
+      112 turns, longest down from 984 to 384, and the 2-in-300 that ran for ever
+      gone. Classic and Speed Die were left alone deliberately: the classic game
+      is the reference implementation, and balancing it away from the printed
+      rules would make it a worse reference.
 
 ### Sequencing — why some of this did not wait
 
@@ -528,6 +554,89 @@ somebody actually wants to author a game without cloning the repo.
 
 ---
 
+## M10 — refinement
+
+Nothing here opens a new seam. Every item is something already written down —
+in KNOWNISSUES, or in the deferred list below — that was left because it was not
+what the milestone was about at the time. This is the milestone it is about.
+
+It comes last on purpose. Each of these is easier now than it would have been at
+any earlier point: the rules are registries, presentation is a theme, a game is a
+folder, and there is a simulator to say whether a change to the bots or the
+economy actually did anything.
+
+### 10a — the corners the rules still cut
+
+Four places where this implementation knowingly departs from the printed rules.
+None is hidden; each is a KNOWNISSUES entry with its reason.
+
+- [ ] **Mortgage interest.** A mortgaged deed changes hands mortgaged — through a
+      trade, an auction, or a bankrupt estate — and the new owner inherits the
+      debt without paying the 10%. Both routes agree with each other, which is
+      why it has never looked wrong; neither agrees with the rules.
+- [ ] **The speed die's triples rule**, and with it **what a repeated dice face
+      means**. Three doubles → jail is still an `if` inside `rollDice`, so no rule
+      set can say a *triple* means anything. KNOWNISSUES states the open question
+      — a fifth registered strategy, or the `ROLLING` phase handler taking the
+      roll over — and this is where it gets answered, because triples is the
+      variant that needs it. It also needs a pick-a-tile prompt, which 10b brings.
+- [ ] **A bid of any amount.** The auction offers three buttons; the clock and
+      the raises are rule-set values since M8b, but a player who wants to raise by
+      something else cannot. Needs the stepper the trade panel already has for
+      cash — and the panel reports its own button positions now, so this no longer
+      costs a hand-recomputed hotspot table.
+- [ ] **The contested-house winner does not choose the lot.** Deterministic today
+      (whoever asked gets what they asked for; anyone else gets their cheapest
+      legal lot). A prompt would close it — the same prompt triples needs.
+
+### 10b — what a player asks for
+
+- [ ] **Named save slots, and a save mid-turn.** One localStorage key today, and
+      saving is refused mid-animation, mid-auction and mid-trade because a restore
+      resumes at the start of a turn. Slots are straightforward; mid-turn state is
+      the real work, and it is the same problem as making a landing resumable —
+      which `TurnFlow`'s `hold()` / `resume()` now has a shape for.
+- [ ] **Get the turn log out.** It keeps the whole game since M8c and scrolls,
+      but there is no copy, no download, and nothing survives closing the tab.
+- [ ] **A bot that offers *you* a trade.** `proposeTrade` exists and bots use it
+      on each other; a bot will not interrupt a person with one. That is a
+      question about the game's manners, and answering it means a modal that
+      arrives uninvited plus a harness that knows to answer it.
+- [ ] **A theme that can change mid-game.** Picked at boot or on the menu today.
+      The HUD, the buttons and the board's static layer are drawn once at
+      `create()`, and the pieces are baked textures.
+- [ ] **Test the `noAuction` house rule.** The playtest exercises the other two;
+      this one is left out because it would switch off the auction step the same
+      run depends on, so it needs a second pass with different assertions.
+
+### 10c — a bot worth playing against
+
+The simulator turned this from an opinion into a measurement, and the measurement
+is unflattering: tuning the baseline's three constants does **nothing**
+(`AGGRESSIVE_PROFILE` won 289 games to 287 across 576), while *seat order* is
+worth roughly 60/40 to the first two seats. So the work is not more numbers.
+
+- [ ] **A policy of a different shape** — one that values a deed by the rent it is
+      likely to face rather than by its printed price, weighs where the other
+      players stand, and plans more than one purchase ahead. Whether it is better
+      is now a question with an answer: `npm run simulate -- --policies a,b`,
+      mirrored to cancel the position effect.
+- [ ] **Trade more than a mutual monopoly.** The current proposer only makes the
+      one swap, which is why about 5% of Classic games never form a monopoly at
+      all and run for ever. A policy that would sell a key for enough cash, or
+      assemble a group over several trades, would shrink that — and the stalemate
+      rate is the number that says whether it did.
+
+### What M10 is not
+
+- **Not networked multiplayer**, and not simultaneous animation. Both are listed
+  below with reasons, and neither is refinement — they are different projects.
+- **Not a rewrite of the panels or the renderer.** They were done in 8c, and the
+  board's state layer still rebuilding is a small, known cost recorded in
+  KNOWNISSUES rather than a debt worth paying now.
+
+---
+
 ## Blocked / deferred, with reasons
 
 ### What a save deliberately does not carry — *resolved in M6*
@@ -541,6 +650,10 @@ than by omission, and both are why saving is refused while they are happening:
   you are doing first" instead of pretending otherwise.
 - **One save slot.** `SaveLoad` keeps a single localStorage key. Named slots,
   autosave and export-to-file are all straightforward from here; none is written.
+
+Both are **scheduled into M10b** now rather than left here — the slots because
+they are cheap, the mid-turn save because `TurnFlow`'s `hold()` / `resume()` gave
+"a turn parked part-way through" a shape it did not have when this was written.
 
 A save is refused by a build that cannot read it: `validateSnapshot` checks the
 version, that every tile is on this board, that no deed is owned by a player who

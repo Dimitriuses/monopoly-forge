@@ -11,3 +11,6 @@ dist/
 # Playwright
 test-results/
 playwright-report/
+
+# The simulator's Node bundle — built on demand by `npm run simulate`.
+dist-sim/

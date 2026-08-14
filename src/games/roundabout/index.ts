@@ -14,6 +14,18 @@ export const ROUNDABOUT_GAME: Game = {
   blurb: '24 tiles on a single circle — no corners at all',
   map: ROUND_MAP,
   cards: { chance: GENERIC_CHANCE, community: GENERIC_CHEST },
-  // A shorter circuit comes round faster, so the salary is smaller.
-  rules: { goSalary: 150, startingCash: 1200 },
+  rules: {
+    // A shorter circuit comes round faster, so the salary is smaller.
+    goSalary: 150,
+    startingCash: 1200,
+
+    // And it is the quick game, so it ends: after eighty rounds the largest
+    // estate wins. That is a design choice made against a measurement rather
+    // than a feeling — 300 simulated games put the median at 27 rounds and the
+    // 90th percentile at 46, so eighty bounds the tail without touching a
+    // typical game, and it removes the 2-in-300 that ran for ever because no
+    // monopoly ever formed. See DEVLOG, M8d.
+    winCondition: 'roundLimit',
+    roundLimit: 80,
+  },
 };

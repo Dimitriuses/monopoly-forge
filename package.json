@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "playtest": "node tools/playtest.mjs",
     "screenshots": "node tools/playtest.mjs --shots",
-    "verify:install": "node tools/verify-install.mjs"
+    "verify:install": "node tools/verify-install.mjs",
+    "simulate": "vite build -c vite.sim.config.ts --logLevel warn && node dist-sim/simulate.mjs"
   },
   "dependencies": {
     "phaser": "^3.87.0"

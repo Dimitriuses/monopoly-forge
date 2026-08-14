@@ -1,4 +1,5 @@
 import { CHANCE_CARDS, COMMUNITY_CHEST_CARDS, type Card } from '@/cards/CardDeck';
+import { resolveRules, type GameRules } from '@/game/Rules';
 import { validateGame, type Game } from './Game';
 import { loadGame } from './scope';
 import { CLASSIC_GAME } from './classic';
@@ -23,6 +24,22 @@ export const GAMES: Record<string, Game> = {
 };
 
 export const DEFAULT_GAME = CLASSIC_GAME;
+
+/**
+ * The rule set a game is played under: the classic defaults, then the game's
+ * own, then whatever the player switched on top.
+ *
+ * `Game.variants` is folded in here rather than at each call site, which is the
+ * bug this function exists because of: the simulator resolved `game.rules` and
+ * nothing else, so **Speed Die played without the speed die** — and reported
+ * numbers identical to Classic's, which is what gave it away. One place to
+ * assemble a rule set means one place for that to be wrong.
+ */
+export function rulesFor(game: Game, ...overrides: Array<Partial<GameRules> | undefined>): GameRules {
+  const own: Partial<GameRules> = { ...game.rules };
+  if (game.variants?.length) own.variants = game.variants;
+  return resolveRules(own, ...overrides);
+}
 
 /** The decks a game deals from; the classic ones for a game that does not care. */
 export function decksFor(game: Game): { chance: Card[]; community: Card[] } {
