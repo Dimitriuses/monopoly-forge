@@ -23,6 +23,7 @@ import {
 } from '@/ui/PropertyPanel';
 import { type TokenType } from '@/config';
 import { theme } from '@/ui/Theme';
+import { bakeTokenTextures, bakeBuildingTextures } from '@/ui/Textures';
 import { CLASSIC_RULES, type GameRules } from '@/game/Rules';
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable, type Tile } from '@/tiles/Tile';
@@ -53,7 +54,7 @@ import { settleDebt, announceSettlement } from '@/game/Estate';
 import {
   payRent, payTax, drawCard, isSelfTerminating, applyLandingRules, type LandingContext,
 } from '@/game/Landing';
-import { gameById, decksFor, rulesFor } from '@/games';
+import { gameById, decksFor, rulesFor, GAMES } from '@/games';
 import { Auction, tileSubject, type AuctionSubject } from '@/game/Auction';
 import {
   houseClaims, housesContested, houseReserve, nominateLot, type HouseClaim,
@@ -208,7 +209,33 @@ export class GameScene extends Phaser.Scene {
     this.rules       = parts.rules;
   }
 
+  /**
+   * A game's own artwork, queued before `create` so Phaser's loader has it ready.
+   * The default is nothing: every texture in this repo is drawn at runtime, and
+   * this hook exists so a game can bring a picture without the repo carrying one.
+   */
+  preload(): void {
+    const assets = GAMES[this.gameId]?.assets;
+    if (!assets) return;
+    for (const [key, url] of Object.entries(assets)) {
+      // The loader silently skips a key the texture manager already holds, and
+      // `BootScene` has baked `house`, `hotel` and every piece by now — so the
+      // drawn one has to go first or the game's artwork never arrives. Nothing
+      // is drawn yet at this point in the lifecycle, so nothing loses its image.
+      if (this.textures.exists(key)) this.textures.remove(key);
+      this.load.image(key, url);
+      dlog(`[GameScene] loading "${key}" for ${this.gameId}`);
+    }
+  }
+
   create(): void {
+    // Re-baked here rather than only at boot: the menu may have changed theme,
+    // and the game may have brought artwork the drawn versions must not paint
+    // over. Anything it supplied is already loaded by `preload` above.
+    const supplied = new Set(Object.keys(GAMES[this.gameId]?.assets ?? {}));
+    bakeTokenTextures(this, supplied);
+    bakeBuildingTextures(this, supplied);
+
     this.notif = new Notification(this);
 
     this.boardView = new BoardRenderer(this, this.board, (id) => this.ownerStyle(id));
@@ -273,6 +300,18 @@ export class GameScene extends Phaser.Scene {
         complete:      this.auction.complete,
       } : null),
       rules:       () => ({ ...this.rules }),
+      /**
+       * Where each texture came from. A drawn one is a canvas; one a game
+       * supplied through `Game.assets` is an image the loader fetched, and this
+       * is how the harness tells the two apart without looking at pixels.
+       */
+      textures:    () => Object.fromEntries(
+        ['house', 'hotel', ...Object.keys(this.textures.list)
+          .filter((key) => key.startsWith('token_'))]
+          .map((key) => [key, this.textures.exists(key)
+            ? this.textures.get(key).source[0]?.source?.constructor?.name ?? 'unknown'
+            : 'missing']),
+      ),
       gameOver:    () => this.gameOver,
       /** Everything the turn log has recorded, newest first. */
       log:         () => this.notif.log.map((e) => `${e.type}: ${e.message}`),

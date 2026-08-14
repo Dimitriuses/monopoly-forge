@@ -21,13 +21,14 @@ The simulator found two real bugs on its first two batches, and one thing about
 the game itself: Monopoly does not always terminate, which is why "every game
 reaches a winner" is *not* one of the invariants it checks.
 
-**M9 gives the parts somewhere to live together, and its first half is done.**
-`src/games/<id>/` is one folder, one playable thing, picked as one choice. Four
-ship, including the classic board with the speed die — two games sharing a map
-and differing in a single field. **9b** is next: per-game assets, composing a rule
-set rather than only overriding one, and authoring documentation. It was
-scheduled after the simulator because a simulator is what tells an author their
-game does not work, and that is now something it can do.
+**M9 gives the parts somewhere to live together, and it is done.**
+`src/games/<id>/` is one folder, one playable thing, picked as one choice. Five
+ship: the classic board, a circle, a three-ring spiral, the classic board with
+the speed die, and **Pocket** — the classic board with its utilities swapped out,
+a trimmed deck, a round limit and its own artwork, which is the worked example
+[the authoring guide](docs/authoring-a-game.md) is written around. A game can be
+composed from one that already exists, and can bring artwork without the repo
+carrying any.
 
 **M10 is refinement** — the corners this implementation knowingly cuts, the
 things a player asks for, and a bot worth playing against. Nothing in it opens a
@@ -469,9 +470,9 @@ anything runs a thousand of them.
 
 ---
 
-## M9 — a game is a folder
+## M9 — a game is a folder · done
 
-**9a is done**; 9b waits for the simulator. M8 made the *parts* configurable: a map is a file, rules and turn structure are a
+M8 made the *parts* configurable: a map is a file, rules and turn structure are a
 registry, presentation is a theme. What it did not do is give them somewhere to
 live together. You can supply a board, and separately a rule set, and separately a
 palette — but you cannot hand somebody **a game**.
@@ -523,22 +524,42 @@ been built without.
 - [x] **`SNAPSHOT_VERSION` 7 stores `gameId`.** Old saves are refused, which
       `validateSnapshot` already did gracefully.
 
-### 9b — authoring · **after 8d**
+### 9b — authoring · **after 8d** · done
 
 Deliberately after, because 8d is what tells an author their game is unplayable,
-and because guessing at these now means guessing without that.
+and because guessing at these would have been guessing without that.
 
-- [ ] **Per-game assets.** The repo has none today — every texture is drawn at
-      runtime, which is what keeps it free of third-party art and its licence
-      questions. A game bringing its own needs a loading story that does not
-      exist yet, and one that keeps the no-assets default intact.
-- [ ] **Composing a rule set, not just overriding one.** `GameRules` layers
-      cleanly already. What is *not* expressible is subtracting — a game that
-      wants no utilities, or the classic deck minus three cards. Which knobs are
-      worth building is a question 1,000 simulated games can answer and a
-      guess cannot.
-- [ ] **Authoring documentation**, written against a simulator that can tell an
-      author their board never terminates.
+- [x] **Per-game assets.** `Game.assets` is texture key → URL, keyed on the names
+      the renderer already asks for — so supplying one *replaces* a drawn texture
+      and nothing needs a second lookup path. Loaded in `GameScene.preload`, and
+      the bakers step aside for anything a game supplied so a theme change cannot
+      paint over it. The default stays **no assets at all**, which is what keeps
+      the repo free of third-party art.
+- [x] **Composing a rule set, not just overriding one.** `games/compose.ts`:
+      `deriveMap` + `replacingTypes` for a board like another one, `withoutCards`
+      and `portableCards` for a deck. One rule shapes it — a derived board keeps
+      its **length and its ids**, because removing a tile would renumber the
+      circuit and break every card that names a square. So "no utilities" is a
+      board where each utility is something else.
+- [x] **Authoring documentation** — [docs/authoring-a-game.md](docs/authoring-a-game.md),
+      written against the simulator, with a section on reading a batch: what
+      `unfinished`, `built at end`, `decided by` and `wins by seat` are telling
+      you about a board you just wrote.
+
+**Pocket** ships as the worked example, and is a real game rather than a demo:
+the classic board with the utilities swapped out, a deck trimmed to match, a
+forty-round limit and its own artwork. It is the only game that uses every part
+of M9, which is why the guide is written around it.
+
+Two things fell out of writing it, both recorded in DEVLOG:
+
+- The engine *made* the deck get trimmed. Swap the utilities out and
+  `validateGame` refuses the classic deck — one of its cards advances to the
+  nearest utility — which is the check earning its place.
+- **A game could not turn a house rule on.** The menu sent all three booleans
+  explicitly every time, so its `false` beat the game's `true` and Pocket
+  silently played without the Free Parking jackpot it asks for. Found by the
+  playtest printing "jackpot rule off" for a game that asks for it on.
 
 ### The open question, recorded rather than settled
 

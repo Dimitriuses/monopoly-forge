@@ -26,6 +26,8 @@ export class MenuScene extends Phaser.Scene {
     .get('variants')?.split(',').filter((name) => knownVariants().includes(name)) ?? [];
   /** Whether the player has touched the variant chips, which outranks a game's. */
   private variantsChosen = !!new URLSearchParams(window.location.search).get('variants');
+  /** House rules the player has set themselves — those outrank a game's too. */
+  private houseRulesChosen = MenuScene.houseRulesNamedInUrl();
   /**
    * Which game to play. `?game=<id>` preselects one; the chips override it.
    *
@@ -171,6 +173,16 @@ export class MenuScene extends Phaser.Scene {
     if (!game) return;
     if (game.theme && !this.themeChosen)  this.applyTheme(game.theme);
     if (!this.variantsChosen)             this.variants = [...(game.variants ?? [])];
+
+    // A house rule the *game* asks for, on any switch the player has not touched.
+    // Without this the menu sent all three booleans explicitly every time, so a
+    // game could never turn one on: `resolveRules(game.rules, houseRules)` let
+    // the menu's `false` win over the game's `true`. Pocket asks for the Free
+    // Parking jackpot and silently did not get it.
+    for (const key of Object.keys(this.houseRules) as Array<keyof HouseRules>) {
+      if (this.houseRulesChosen.has(key)) continue;
+      this.houseRules[key] = game.rules?.[key] ?? DEFAULT_HOUSE_RULES[key];
+    }
   }
 
   /**
@@ -187,7 +199,10 @@ export class MenuScene extends Phaser.Scene {
       ...(Object.keys(HOUSE_RULE_LABELS) as Array<keyof HouseRules>).map((key) => ({
         label:  HOUSE_RULE_LABELS[key],
         on:     () => this.houseRules[key],
-        toggle: () => { this.houseRules[key] = !this.houseRules[key]; },
+        toggle: () => {
+          this.houseRulesChosen.add(key);
+          this.houseRules[key] = !this.houseRules[key];
+        },
       })),
       ...knownVariants().map((name) => ({
         label:  variantNamed(name).label,
@@ -293,6 +308,14 @@ export class MenuScene extends Phaser.Scene {
    * other than the default one — the switches are canvas text with no DOM to
    * click from a harness.
    */
+  /** Which switches `?houseRules=` named, so a game cannot override those either. */
+  private static houseRulesNamedInUrl(): Set<keyof HouseRules> {
+    const named = new URLSearchParams(window.location.search).get('houseRules');
+    return new Set(
+      (named?.split(',') ?? []).filter((key) => key in DEFAULT_HOUSE_RULES),
+    ) as Set<keyof HouseRules>;
+  }
+
   private static houseRulesFromUrl(): HouseRules {
     const rules = { ...DEFAULT_HOUSE_RULES };
     const named = new URLSearchParams(window.location.search).get('houseRules');

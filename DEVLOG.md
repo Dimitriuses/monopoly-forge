@@ -304,7 +304,7 @@ src/
 | M8b — Rules are registries, not switches | ✅ Tile types, card effects, turn orders, win conditions, variants; a turn is a list of phases; the speed die is the proof; the last houses sold at auction |
 | M8c — Presentation is a theme | ✅ Colours, fonts and per-tile-type decoration in one object, two palettes; the panels update in place instead of rebuilding |
 | M8d — A simulation platform | ✅ A headless runner, six invariants after every turn, a batch CLI, a second policy measured, and a balance pass driven by the numbers |
-| **M9 — A game is a folder** (board + economy + deck + theme) | 🟡 **9a complete**: four games ship, registration scoped to the loaded one. **9b** — assets, rule composition, authoring docs — is next |
+| **M9 — A game is a folder** (board + economy + deck + theme) | ✅ **Complete.** Five games ship, registration is scoped to the loaded one, a game can be composed from another and bring its own artwork, and [authoring a game](docs/authoring-a-game.md) is written down |
 | **M10 — Refinement** | ⚪ Not started — the corners the rules still cut, what a player asks for, and a bot worth playing against |
 
 ---
@@ -1730,3 +1730,122 @@ Vite config was the cheaper answer.
   dice-range check called `expect` 140,000 times and started timing out once the
   simulator's tests competed for the same core. It collects the bad rolls and
   asserts once now, which is both quicker and a better failure message.
+
+---
+
+## M9b — authoring a game
+
+The half of M9 that waited for the simulator, because the last of its three items
+is documentation about how to tell whether a game you just wrote actually works —
+and there was no way to answer that before 8d.
+
+### Composing, and the rule that shapes it
+
+`games/compose.ts` is two ideas. `deriveMap` makes a board like another one, tile
+for tile; `withoutCards` takes named cards out of a deck. One rule runs through
+both: **a derived board keeps its length and its ids.** Removing a tile would
+renumber everything after it and break every card that names a square, so
+`deriveMap` replaces rather than removes — "no utilities" is a board where each
+utility is something else, not a board that is two tiles shorter. The id is forced
+back on afterwards, so a transform that forgets to carry it cannot silently break
+the circuit.
+
+`withoutCards` throws on an id the deck does not have. A typo that removes nothing
+is worse than one that stops the build, and the whole point of trimming a deck is
+knowing what came out.
+
+### The engine made the example finish itself
+
+Writing Pocket — the classic board with the utilities swapped for Community Chest
+squares — the first version kept the classic deck. It is refused:
+
+```
+[games] "pocket" is not loadable:
+  chance card "ch5": looks for the nearest "utility", and this board has none
+```
+
+That is `validateGame` earning its place, and it is the best thing that happened
+while writing this milestone: the composition helpers cannot be used to make a
+board whose own cards cannot resolve. The guide is written around it, and there
+is a test that pins the message rather than trusting the prose.
+
+### Artwork, without the repo carrying any
+
+Every texture here is drawn at runtime, which keeps the project free of
+third-party art and the licence questions that come with it. `Game.assets` is how
+a game brings its own without changing that: **texture key → URL**, keyed on the
+names the renderer already asks for. Supplying `house` replaces the drawn house,
+and no renderer needed a second lookup path.
+
+Two things had to be true for it to work, and one of them was not:
+
+- The bakers must step aside for a supplied key, or the next theme change paints
+  over the game's artwork. That was foreseen.
+- **The loader silently skips a key the texture manager already holds** — and
+  `BootScene` has baked `house`, `hotel` and all eight pieces by the time
+  `GameScene.preload` runs. So the artwork never arrived, and nothing said so:
+  the board just kept drawing the default house.
+
+That one was caught by asking the game where each texture came from. A drawn one
+is an `HTMLCanvasElement`; one the loader fetched is an `HTMLImageElement`:
+
+```
+before: {"house":"HTMLCanvasElement", "hotel":"HTMLCanvasElement", …}
+after:  {"house":"HTMLImageElement",  "hotel":"HTMLImageElement",  …}
+```
+
+`__forge.textures()` is now on the debug handle and the playtest asserts it, so a
+silently-drawn house fails a run instead of being noticed by eye.
+
+### A game could not turn a house rule on
+
+Pocket asks for the Free Parking jackpot. The playtest printed:
+
+```
+biggest pot       $0 (jackpot rule off)
+```
+
+The menu was sending all three house-rule booleans explicitly on every start, so
+`resolveRules(game.rules, houseRules)` let the menu's `false` beat the game's
+`true`. The same defaults-versus-choices problem the theme and the variants
+already had, on the one field that had not been given the treatment: the switches
+now take the game's value unless the player has touched that switch.
+
+The harness had the same bug in miniature — its jackpot assertions were keyed on
+the `--house-rules` *flag* rather than on the rules in force, so it would have
+mis-reported (and eventually mis-failed) any game that asks for one itself. Both
+read `__forge.rules()` now.
+
+### Pocket
+
+It ships as a real game rather than a demo, because a worked example nobody would
+play is a worked example nobody reads. The classic board with no utilities, a
+deck trimmed to match, forty rounds, the jackpot on, and its own house and hotel
+drawn by hand for this repo. Five hundred games:
+
+```
+  pocket
+    turns          median 183  ·  rounds median 40  ·  unfinished 0
+    decided by     22% bankruptcy, 78% the win condition
+```
+
+Which is a *timed* game with a real chance of a knockout — and comparing it with
+Roundabout is the sharpest thing the guide has to say about round limits:
+
+| | limit | decided by bankruptcy | what the limit is |
+|---|---|---|---|
+| Roundabout | 80 | 97% | a safety net, firing in 3% of games |
+| Pocket | 40 | 22% | the rule of the game |
+
+Same knob, two uses. `decidedByBankruptcy` was added to the batch report to make
+the difference visible, because the median alone cannot tell them apart.
+
+### Verification
+
+- 423 unit tests (up from 408). The composition helpers, including that they
+  leave their inputs alone; the validation failure the guide claims; the artwork
+  keys; and that Pocket is still the only game bringing any — so a second one
+  becomes a decision rather than a drift.
+- The playtest matrix across all five games, plus the house rules, the speed die
+  and the parchment theme. `--game pocket` asserts that two textures arrived from
+  the game and that the pot filled.

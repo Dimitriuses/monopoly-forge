@@ -6,14 +6,17 @@ import { CLASSIC_GAME } from './classic';
 import { ROUNDABOUT_GAME } from './roundabout';
 import { ORBITS_GAME } from './orbits';
 import { SPEED_GAME } from './speed';
+import { POCKET_GAME } from './pocket';
 
 export type { Game, GameProblem } from './Game';
 export { validateGame } from './Game';
 export { loadGame, unloadGame, loadedGame } from './scope';
+export { deriveMap, replacingTypes, withoutCards, portableCards } from './compose';
 export { CLASSIC_GAME } from './classic';
 export { ROUNDABOUT_GAME } from './roundabout';
 export { ORBITS_GAME } from './orbits';
 export { SPEED_GAME } from './speed';
+export { POCKET_GAME } from './pocket';
 
 /** Every game this build ships, by id. `?game=<id>` picks one. */
 export const GAMES: Record<string, Game> = {
@@ -21,6 +24,7 @@ export const GAMES: Record<string, Game> = {
   [ROUNDABOUT_GAME.id]: ROUNDABOUT_GAME,
   [SPEED_GAME.id]:      SPEED_GAME,
   [ORBITS_GAME.id]:     ORBITS_GAME,
+  [POCKET_GAME.id]:     POCKET_GAME,
 };
 
 export const DEFAULT_GAME = CLASSIC_GAME;

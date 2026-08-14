@@ -282,9 +282,24 @@ async function main() {
       throw new Error('--variants speedDie was passed but the game is not playing it');
     }
 
+    // Read from the rules in force, not from the flag: a *game* can ask for a
+    // house rule too (Pocket wants the Free Parking jackpot), and the assertions
+    // below have to be about what is actually being played.
+    const inForce = await page.evaluate(() => window.__forge.rules());
+    const jackpot = inForce.freeParkingJackpot === true;
+
+    // A game may bring its own artwork (`Game.assets`). A drawn texture is a
+    // canvas; one the loader fetched is an image — which is how this tells the
+    // two apart without comparing pixels, and how it would notice the loader
+    // silently skipping a key the texture manager already held. It did once.
+    const artwork = await page.evaluate(() => window.__forge.textures());
+    const supplied = Object.entries(artwork).filter(([, kind]) => kind === 'HTMLImageElement');
+    if (supplied.length) {
+      console.log(`  ✓ ${supplied.length} texture(s) from the game: ${supplied.map(([k]) => k).join(', ')}`);
+    }
+
     if (HOUSE_RULES) {
-      const rules = await page.evaluate(() => window.__forge.rules());
-      const missing = HOUSE_RULES.split(',').filter((key) => rules[key] !== true);
+      const missing = HOUSE_RULES.split(',').filter((key) => inForce[key] !== true);
       if (missing.length) {
         throw new Error(`house rules were switched on but the game is not playing them: ${missing}`);
       }
@@ -666,10 +681,15 @@ async function main() {
     }
     // The switch being on is one thing; the rule doing something is another. A
     // fine or a tax on any turn pools on Free Parking, and this seed has both.
-    if (HOUSE_RULES?.includes('freeParkingJackpot') && biggestPot === 0) {
+    // Pocket is the game that brings artwork; if it stops arriving, say so here
+    // rather than leaving a silently-drawn house to be noticed by eye.
+    if (GAME === 'pocket' && supplied.length !== 2) {
+      problems.push(`pocket brings two textures and ${supplied.length} arrived`);
+    }
+    if (jackpot && biggestPot === 0) {
       problems.push('the Free Parking jackpot was on and the pot never took a penny');
     }
-    if (!HOUSE_RULES && biggestPot > 0) {
+    if (!jackpot && biggestPot > 0) {
       problems.push(`the pot filled with the jackpot rule off: $${biggestPot}`);
     }
 
@@ -685,7 +705,7 @@ async function main() {
     console.log(`  tiles owned       ${owned}`);
     console.log(`  final phase       ${end.turn.phase} (of ${phases.length})`);
     console.log(`  rounds played     ${end.turn.round}`);
-    console.log(`  biggest pot       $${biggestPot}${HOUSE_RULES ? '' : ' (jackpot rule off)'}`);
+    console.log(`  biggest pot       $${biggestPot}${jackpot ? '' : ' (jackpot rule off)'}`);
     console.log(`  panel opened on   ${panelTileId === null ? 'nothing' : `tile ${panelTileId}`}`);
     console.log(`  bank houses/hotels ${end.bank.houses}/${end.bank.hotels}`);
     console.log('');

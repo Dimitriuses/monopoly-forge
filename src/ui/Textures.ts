@@ -10,6 +10,14 @@ import type { TokenType } from '@/config';
 // are baked once at boot for whatever theme the URL asked for, and again when a
 // game starts, in case the menu chose a different one. Re-baking is eight small
 // render textures; measuring it would cost more than doing it.
+//
+// A game may bring its own artwork for any of these keys (`Game.assets`). Those
+// are loaded before `create` and must survive a re-bake, which is what `supplied`
+// is for — baking over a game's house with a drawn one would undo the loader's
+// work the moment somebody changed theme.
+
+/** Nothing supplied — the default, and the case that keeps the repo art-free. */
+const EMPTY: ReadonlySet<string> = new Set();
 
 const EMBLEMS: Record<TokenType, string> = {
   topHat: '🎩', car: '🚗', dog: '🐕', battleship: '🚢',
@@ -24,11 +32,12 @@ const EMBLEMS: Record<TokenType, string> = {
  * `{ add: false }` inside the config still works at runtime but no longer
  * type-checks against Phaser 3.87's `Graphics.Options`.
  */
-export function bakeTokenTextures(scene: Phaser.Scene): void {
+export function bakeTokenTextures(scene: Phaser.Scene, supplied: ReadonlySet<string> = EMPTY): void {
   const t = theme();
 
   for (const [name, emblem] of Object.entries(EMBLEMS) as Array<[TokenType, string]>) {
     const key = `token_${name}`;
+    if (supplied.has(key)) continue;   // the game brought a picture for this one
     // Baked before under another theme: the old texture has to go first, or
     // `saveTexture` finds the key taken and the piece keeps the old colour.
     if (scene.textures.exists(key)) scene.textures.remove(key);
@@ -55,13 +64,14 @@ export function bakeTokenTextures(scene: Phaser.Scene): void {
 }
 
 /** The house and hotel drawn along a lot's colour stripe. */
-export function bakeBuildingTextures(scene: Phaser.Scene): void {
+export function bakeBuildingTextures(scene: Phaser.Scene, supplied: ReadonlySet<string> = EMPTY): void {
   const t = theme();
 
   for (const [key, color, w, h, roof] of [
     ['house', t.groups.green,   20, 18, 10],
     ['hotel', t.groups.red,     26, 20, 13],
   ] as Array<[string, number, number, number, number]>) {
+    if (supplied.has(key)) continue;
     if (scene.textures.exists(key)) scene.textures.remove(key);
     const g = scene.make.graphics({}, false);
     g.fillStyle(color, 1);

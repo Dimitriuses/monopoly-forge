@@ -49,6 +49,22 @@ export interface Game {
   /** The palette it looks best in, by id. A preference, not a requirement. */
   theme?: string;
   /**
+   * Artwork this game brings, as **texture key → URL**. The keys are the ones
+   * the renderer already asks for — `house`, `hotel`, `token_car` and the rest —
+   * so a game replaces a drawn texture simply by supplying one, and nothing in
+   * the renderer needs a second lookup path.
+   *
+   * The default stays *no assets at all*: every texture in this repo is drawn at
+   * runtime, which is what keeps it free of third-party art and the licence
+   * questions that come with it. A game that wants a picture brings its own, and
+   * its own licence with it.
+   *
+   * Import the file rather than writing a path — `import house from './house.svg'`
+   * — so the bundler hashes it and the URL is right from a dev server, from
+   * `vite preview` and from a project sub-path on GitHub Pages alike.
+   */
+  assets?: Record<string, string>;
+  /**
    * Tile types, card effects, turn orders, win conditions and variants this game
    * brings with it. Called once when the game is loaded, with every registry
    * reset to the built-ins first — see `games/scope.ts`. Anything registered

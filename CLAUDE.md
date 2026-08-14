@@ -86,7 +86,8 @@ subject, or it will sit there being asked forever.
 
 **11. A game is the unit, and `gameById` is how you get one.** `src/games/<id>/`
 holds a board, the economy it is balanced for, the deck it deals, the variants it
-is played with and the palette it prefers. Four ship. **A map has no economy** —
+is played with, the palette it prefers and any artwork it brings. Five ship, and
+[docs/authoring-a-game.md](docs/authoring-a-game.md) is how to add one. **A map has no economy** —
 `GameMap` is tiles and a shape, and anything that reaches for `map.rules` is
 reaching for something that moved in M9a.
 
@@ -103,10 +104,22 @@ anything a game owns, and keep module-level registration for built-ins only.
 `registerTheme` is deliberately outside the scoped set (a colour is not a
 correctness problem, and scoping it would make `games/` import `ui/`).
 
-**11c. A game's theme and variants are defaults, not requirements.** The menu
-applies them when a game is picked and stops as soon as the player has chosen for
-themselves. Anything else added to `Game` that a player can also set owes the same
-treatment.
+**11c. A game's theme, variants and house rules are defaults, not requirements.**
+The menu applies them when a game is picked and stops as soon as the player has
+chosen for *that* switch. Anything else added to `Game` that a player can also set
+owes the same treatment — the house rules were the field that did not get it, and
+a game could not turn one on for a whole milestone because the menu sent all three
+booleans explicitly and its `false` beat the game's `true`.
+
+**11d. A game's artwork replaces a texture; it never adds a lookup.** `Game.assets`
+is keyed on the names the renderer already asks for (`house`, `hotel`, `token_*`),
+loaded in `GameScene.preload`. Two things are easy to get wrong and are already
+paid for: **the loader silently skips a key the texture manager holds**, so the
+drawn one has to be removed first — `BootScene` has baked all of them by then —
+and the bakers must skip a supplied key, or a theme change paints over it.
+`__forge.textures()` says where each one came from (a canvas is drawn, an image
+was fetched) and the playtest asserts on it. **The default is no assets at all**,
+and that is what keeps the repo free of third-party art.
 
 **12. There are two drivers, and they share everything that decides anything.**
 `GameScene` animates and waits; `sim/Runner.ts` does neither. What they must

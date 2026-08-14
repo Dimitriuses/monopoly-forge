@@ -22,6 +22,13 @@ export interface Summary {
   rounds: { median: number };
   /** Share of games in which the bank ran out of houses at some point. */
   houseShortage: number;
+  /**
+   * Share of finished games decided by somebody actually going under, rather
+   * than by a round limit running out. An author needs this: a game whose limit
+   * decides *every* match is a timed race, which may be what was wanted or may
+   * mean the limit is too short — and the median alone cannot tell the two apart.
+   */
+  decidedByBankruptcy: number;
   /** Mean houses and hotels standing when a game ended. */
   built: { houses: number; hotels: number };
   auctions: { median: number };
@@ -58,6 +65,11 @@ export function summarise(gameId: string, results: SimResult[], millis: number):
     },
     rounds: { median: quantile(finished.map((r) => r.rounds).sort((a, b) => a - b), 0.5) },
     houseShortage: share(results, (r) => r.houseShortage),
+    // One player left standing means the bankruptcies did it; anything less and
+    // a win condition stepped in while more than one seat was still solvent.
+    decidedByBankruptcy: share(finished, (r) => (
+      r.bankruptcies.length >= Object.keys(r.cash).length - 1
+    )),
     built: {
       houses: mean(results.map((r) => r.housesBuilt)),
       hotels: mean(results.map((r) => r.hotelsBuilt)),
@@ -88,6 +100,8 @@ export function formatSummary(
     lines.push(`    unfinished     ${s.unfinished}${
       s.unfinished ? `  (seeds ${s.unfinishedSeeds.slice(0, 8).join(', ')})` : ''}`);
     lines.push(`    house shortage ${percent(s.houseShortage)} of games`);
+    lines.push(`    decided by     ${percent(s.decidedByBankruptcy)} bankruptcy, ${
+      percent(1 - s.decidedByBankruptcy)} the win condition`);
     lines.push(`    built at end   ${s.built.houses.toFixed(1)} houses, ${s.built.hotels.toFixed(1)} hotels`);
     lines.push(`    auctions       median ${s.auctions.median}   trades  median ${s.trades.median}`);
     lines.push(`    wins by seat   ${s.winsBySeat.join(' / ')}   (seat 1: ${percent(s.firstSeatEdge)})`);

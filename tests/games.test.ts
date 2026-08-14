@@ -16,8 +16,8 @@ import { CHANCE_CARDS } from '@/cards/CardDeck';
 describe('Games', () => {
   afterEach(() => { unloadGame(); });
 
-  it('ships four, and every one of them validates', () => {
-    expect(Object.keys(GAMES)).toEqual(['classic', 'roundabout', 'speed', 'orbits']);
+  it('ships five, and every one of them validates', () => {
+    expect(Object.keys(GAMES)).toEqual(['classic', 'roundabout', 'speed', 'orbits', 'pocket']);
     for (const game of Object.values(GAMES)) {
       loadGame(game);
       expect(validateGame(game), game.id).toEqual([]);

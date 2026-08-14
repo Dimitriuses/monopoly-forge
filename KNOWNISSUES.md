@@ -149,6 +149,21 @@ swap, so four players who are never simultaneously one-lot-short of two differen
 groups will never complete one. A stronger trading policy would shrink this, and
 the simulator is now the thing that could measure whether it did.
 
+### A game can bring artwork, but only for a texture that already exists
+
+*Added in M9b:* `Game.assets` maps texture key → URL and replaces a drawn
+texture. Pocket ships two SVGs, drawn by hand for this repo, and the playtest
+asserts they arrive.
+
+What it cannot do is add a texture the renderer does not already ask for — there
+are exactly eleven keys (`house`, `hotel`, and eight `token_*`), so a game cannot
+supply, say, a picture for the middle of its own board. That needs the renderer to
+ask a game what to draw rather than a game replacing what it draws, which is the
+same shape as `registerTileDecoration` and would be the way to do it.
+
+Nor is there an asset *budget*: a game that brought a 4MB texture would simply be
+slow to start, and nothing says so.
+
 ### The games that are not Classic are unbalanced
 
 Roundabout and Orbits exist to prove the geometry is not hardcoded, and their
@@ -167,6 +182,10 @@ Only Roundabout has had a balance change made to it (an eighty-round limit, M8d)
 Classic and Speed Die were left alone deliberately: the classic game is the
 reference implementation this engine exists to be able to express, and balancing
 it away from the printed rules would make it a worse reference.
+
+Pocket (M9b) is the one game *designed* against the numbers rather than balanced
+after the fact — forty rounds, chosen so the limit decides 78% of games and a
+knockout the other 22%.
 
 ### The no-auction house rule is still untested
 
