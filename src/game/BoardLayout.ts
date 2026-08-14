@@ -49,18 +49,30 @@ export interface BoardGeometry {
  * - `square` — the classic board: four corners and equal sides. Needs `4n + 4`
  *   tiles, and says so rather than mis-drawing anything else.
  * - `ring` — one circle of evenly spaced tiles, any count.
- * - `rings` — concentric circles, tiles dealt to each in order. The circuit still
- *   runs 0 → n-1 → 0; a ring is a way of arranging it, not a second loop.
+ * - `rings` — concentric circles, tiles dealt to each in order.
+ * - `squares` — concentric squares, the classic shape more than once.
+ *
+ * **A shape is not a topology.** Dealing tiles to three rings does not make them
+ * three loops; whether the circuit runs 0 → n-1 → 0 or splits into loops joined
+ * at junctions is `GameMap.tracks` and `rules.movement` — see `game/Movement.ts`.
+ * Orbits is three rings of one loop; Ultimate Monopoly is three squares of three.
  */
 export type LayoutSpec =
   | { kind: 'square' }
   | { kind: 'ring'; depth?: number }
-  | { kind: 'rings'; rings: RingSpec[]; depth?: number };
+  | { kind: 'rings'; rings: RingSpec[]; depth?: number }
+  | { kind: 'squares'; rings: SquareRingSpec[]; depth?: number };
 
 export interface RingSpec {
   count: number;
   /** Distance from the board's centre to the middle of the tile. */
   radius: number;
+}
+
+export interface SquareRingSpec {
+  count: number;
+  /** How far in from the board's edge this ring's outer edge sits. */
+  inset: number;
 }
 
 /** The square the board is drawn inside, whatever shape it actually takes. */
@@ -75,6 +87,7 @@ export function computeGeometry(spec: LayoutSpec, tileCount: number): BoardGeome
       spec.depth ?? RING_DEPTH, tileCount,
     );
     case 'rings':  return ringsGeometry(spec.rings, spec.depth ?? RING_DEPTH, tileCount);
+    case 'squares': return squaresGeometry(spec.rings, spec.depth ?? RING_DEPTH, tileCount);
   }
 }
 
@@ -134,6 +147,94 @@ function squareGeometry(tileCount: number): BoardGeometry {
 
 function mid(x: number, y: number, rotation: number, side: BoardSide): TileLayout {
   return { x, y, rotation, w: TILE_W, h: TILE_H, isCorner: false, side };
+}
+
+// ─── Concentric squares ───────────────────────────────────────────────────────
+// The classic shape, more than once. `rings` (circles) could already hold a board
+// of several loops, and Ultimate Monopoly is drawn on it perfectly well — but the
+// board it is a copy of is three nested squares, and a board should be allowed to
+// look like the thing it is.
+//
+// Each ring is `squareGeometry` again with three things parameterised: how far in
+// from the edge it starts, how deep its tiles are, and how many it has. A corner
+// is `depth × depth`, which is what keeps the nesting even — every ring sits
+// exactly one tile-depth inside the one outside it, so `inset` is a multiple of
+// `depth` in practice and the geometry does not care if it is not.
+//
+// `inset` is explicit rather than derived by walking the array, for the same
+// reason a circle's `radius` is: **the drawing order is not the tile order.**
+// Ultimate Monopoly lists its middle track first because GO has to be tile 0, and
+// its middle track is the one drawn in the middle.
+
+function squaresGeometry(
+  rings: SquareRingSpec[], depth: number, tileCount: number,
+): BoardGeometry {
+  const declared = rings.reduce((n, ring) => n + ring.count, 0);
+  if (declared !== tileCount) {
+    throw new Error(
+      `[BoardLayout] the squares hold ${declared} tiles but the map has ${tileCount}`,
+    );
+  }
+
+  const tiles: TileLayout[] = [];
+
+  for (const ring of rings) {
+    const perSide = (ring.count - 4) / 4;
+    if (!Number.isInteger(perSide) || perSide < 1) {
+      throw new Error(
+        `[BoardLayout] a square ring needs 4n + 4 tiles with n ≥ 1, not ${ring.count}`,
+      );
+    }
+
+    const size = AREA.size - ring.inset * 2;
+    const w    = (size - depth * 2) / perSide;
+    if (w <= 0) {
+      throw new Error(
+        `[BoardLayout] a square ring inset ${ring.inset} has no room for ${perSide} tiles a side`,
+      );
+    }
+
+    const x0     = AREA.x + ring.inset;
+    const y0     = AREA.y + ring.inset;
+    const right  = x0 + size;
+    const bottom = y0 + size;
+
+    // First index of each side, walking from the bottom-right the same way round
+    // as `squareGeometry` — so tile 0 of every ring is where GO sits on the
+    // classic board, and every ring turns the same way.
+    const [c0, c1, c2, c3] = [0, 1, 2, 3].map((k) => k * (perSide + 1));
+
+    const corner = (x: number, y: number, side: BoardSide, rotation: number): TileLayout =>
+      ({ x, y, rotation, w: depth, h: depth, isCorner: true, side });
+    const edge = (x: number, y: number, rotation: number, side: BoardSide): TileLayout =>
+      ({ x, y, rotation, w, h: depth, isCorner: false, side });
+
+    for (let i = 0; i < ring.count; i++) {
+      if (i === c0) {
+        tiles.push(corner(right - depth / 2, bottom - depth / 2, 'bottom', 0));
+      } else if (i === c1) {
+        tiles.push(corner(x0 + depth / 2, bottom - depth / 2, 'bottom', 0));
+      } else if (i === c2) {
+        tiles.push(corner(x0 + depth / 2, y0 + depth / 2, 'top', 180));
+      } else if (i === c3) {
+        tiles.push(corner(right - depth / 2, y0 + depth / 2, 'top', 180));
+      } else if (i < c1) {
+        tiles.push(edge(right - depth - (i - c0 - 1) * w - w / 2, bottom - depth / 2, 0, 'bottom'));
+      } else if (i < c2) {
+        tiles.push(edge(x0 + depth / 2, bottom - depth - (i - c1 - 1) * w - w / 2, 90, 'left'));
+      } else if (i < c3) {
+        tiles.push(edge(x0 + depth + (i - c2 - 1) * w + w / 2, y0 + depth / 2, 180, 'top'));
+      } else {
+        tiles.push(edge(right - depth / 2, y0 + depth + (i - c3 - 1) * w + w / 2, 270, 'right'));
+      }
+    }
+  }
+
+  return {
+    tiles,
+    backdrop: { kind: 'square', x: AREA.x, y: AREA.y, size: AREA.size },
+    centre: { x: AREA.x + AREA.size / 2, y: AREA.y + AREA.size / 2 },
+  };
 }
 
 // ─── Rings ────────────────────────────────────────────────────────────────────

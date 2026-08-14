@@ -165,11 +165,7 @@ export class CardEffects {
    *  Starts one step ahead, so standing on a railroad sends you to the next.
    *  Takes any type name, since a game may have registered one. */
   private nearest(from: number, type: string): number | null {
-    for (let s = 1; s <= this.board.size; s++) {
-      const index = this.board.move(from, s).to;
-      if (this.board.getTile(index).type === type) return index;
-    }
-    return null;
+    return this.board.scan(from, (tile) => tile.type === type);
   }
 
   private advanceTo(player: Player, targetTile: number): void {
@@ -183,26 +179,34 @@ export class CardEffects {
       );
       return;
     }
-    const from  = player.position;
-    const steps = this.board.stepsBetween(from, targetTile);
-    if (steps === 0) {
+    const from = player.position;
+    // The route, not the distance: on a board with junctions a named tile may be
+    // on another loop, and the printed rule agrees that you take the transit
+    // station on the way. `pathTo` crosses where it has to and returns exactly
+    // the forward distance on a board that is one circuit.
+    const path = this.board.pathTo(from, targetTile);
+    if (path === null) {
+      dwarn(
+        `[CardEffects] advanceTo tile=${targetTile}: no route from ${from} — the card does nothing`,
+      );
+      return;
+    }
+    if (path.length === 0) {
       dlog(`[CardEffects] advanceTo tile=${targetTile}: ${player.name} already there — no move`);
       return; // already on the target tile
     }
 
-    const { passedGo } = this.board.move(from, steps);
     const destTile = this.board.getTile(targetTile);
     dlog(
       `[CardEffects] advanceTo: ${player.name} pos ${from} → tile ${targetTile} ` +
-      `"${destTile.name}" (${steps} steps${passedGo ? ', passes GO' : ''})`,
+      `"${destTile.name}" (${path.length} steps)`,
     );
 
-    // Passed Go when the path wraps around the board
-    if (passedGo) {
-      this.board.getTile(this.board.anchor('start')).onPass(player.id);
-    }
+    this.board.announcePassing(path, player.id);
     player.position = targetTile;
-    bus.emit('player:move', { playerId: player.id, from, to: targetTile, steps, isDoubles: false });
+    bus.emit('player:move', {
+      playerId: player.id, from, to: targetTile, path, steps: path.length, isDoubles: false,
+    });
     // resolveLanding() fires after the animation completes — do NOT call onLand here
   }
 }

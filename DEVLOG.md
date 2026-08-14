@@ -304,7 +304,8 @@ src/
 | M8b — Rules are registries, not switches | ✅ Tile types, card effects, turn orders, win conditions, variants; a turn is a list of phases; the speed die is the proof; the last houses sold at auction |
 | M8c — Presentation is a theme | ✅ Colours, fonts and per-tile-type decoration in one object, two palettes; the panels update in place instead of rebuilding |
 | M8d — A simulation platform | ✅ A headless runner, six invariants after every turn, a batch CLI, a second policy measured, and a balance pass driven by the numbers |
-| **M9 — A game is a folder** (board + economy + deck + theme) | ✅ **Complete.** Five games ship, registration is scoped to the loaded one, a game can be composed from another and bring its own artwork, and [authoring a game](docs/authoring-a-game.md) is written down |
+| **M9 — A game is a folder** (board + economy + deck + theme) | ✅ **Complete.** Six games ship, registration is scoped to the loaded one, a game can be composed from another and bring its own artwork, and [authoring a game](docs/authoring-a-game.md) is written down |
+| **M11 — A board that is not a circuit** | ✅ **Complete.** Ultimate Monopoly: 120 tiles across three loops. Movement became a named strategy, `move` reports its route, a tile's rule may mention somebody else, colour groups opened, and group rent stopped being a literal |
 | **M10 — Refinement** | ⚪ Not started — the corners the rules still cut, what a player asks for, and a bot worth playing against |
 
 ---
@@ -1849,3 +1850,142 @@ the difference visible, because the median alone cannot tell them apart.
 - The playtest matrix across all five games, plus the house rules, the speed die
   and the parchment theme. `--game pocket` asserts that two textures arrived from
   the game and that the pot filled.
+
+## M11 — a board that is not a circuit — 2026-08-14
+
+The brief was a test, not a feature: add **Ultimate Monopoly**, a fan-made
+synthesis of four Monopoly editions, and find out what this engine assumes. It
+was the right board to pick because nobody designed it for this engine — 120
+tiles, three tracks, twenty colour groups, and a movement rule no version of
+Monopoly in the box has.
+
+### Reading it took longer than expected
+
+The reference was a PDF and a PNG. The PDF's content streams turned out to be
+hex strings against subset fonts, so the naive extraction produced a megabyte of
+glyph data. Pulling the `/ToUnicode` CMaps out and decoding through them gave
+readable prose — through a substitution cipher, because the subset maps several
+lowercase letters onto uppercase glyphs. `RuDOs` is "Rules"; `pDTyOL` is
+"player". Legible once you see it.
+
+The board came off the PNG in five crops, each rotated so its text was upright.
+Worth the care: the tile *order* is the game, and one transposed price would have
+been invisible until somebody played it.
+
+### The wall
+
+`Board.move` was `((from + steps) % size + size) % size`, and `layout: rings` has
+a comment saying in as many words that a ring is an arrangement rather than a
+loop. Orbits looks exactly like this board and is topologically a classic one.
+
+Ultimate Monopoly is three loops joined at four junctions, where a railroad and
+the transit station beside it are *one space*, and an even roll that carries you
+past one rides it to the next track. The rules give a worked example — States
+Avenue plus four ends on Madison Avenue, two tracks away — and that example is
+now a test. It was the first thing to pass and it is the whole feature.
+
+The fix was to make the step a strategy, the way `turnOrder` and `winCondition`
+already are, and it paid for itself immediately:
+
+- **`move` walks, so it can report where it went.** `{ to, path, passedGo }`.
+  That turned out to matter more than the crossing did — the token animation used
+  to recompute its own route step by step, which is the same answer only while a
+  board is one loop. On this one it would have picked a different way across a
+  junction and arrived somewhere the model never went.
+- **Distance became a search.** `pathTo` and `scan` are breadth-first now, and
+  two hand-rolled forward scans (`CardDeck.nearest`, `SpeedDie.scanForward`)
+  deleted themselves.
+- **`onPass` fires for every tile underfoot, the landing tile included.** This
+  started as a way to make three pay corners work and ended up *simplifying*
+  something: `passedGo` was always a special case for "landing exactly on GO
+  still pays", and it is now just what "you were on it" means.
+
+One regression, caught by an existing test: the walk loop never runs for
+`move(from, 0)`, so a zero-step move stopped normalising `from` and handed back
+the out-of-range index the function has sanitised since M1.
+
+### Three smaller walls behind it
+
+**A tile cannot see anybody else.** `onLand(playerId)` is an id. Squeeze Play
+collects from every other player; the Auction space picks from the whole board.
+Card effects have had a context since 7c, so tiles got the same shape —
+`registerTileEffect`, resolved by both drivers through one `applyTileEffect`. The
+first run of the finished game died in a stack overflow: the two Holland Tunnels
+each send you to the other, for ever. Guarded now, with a comment, because it is
+a trap any teleport pair will hit.
+
+**Eight colour groups.** `ColorGroup` was a closed union and `Theme.groups` a
+`Record` over it, so twenty groups would not compile. Opening the union is the
+easy half; the interesting half is that a theme *cannot* be asked to name groups
+it has never heard of. So an unnamed group is now drawn in a colour derived from
+its name, in the current theme's own saturation and lightness — stable across
+builds, because a colour is how a player learns a group. Ultimate Monopoly ships
+a theme naming all twenty anyway, which means the derivation is exercised by
+playing it in Parchment.
+
+**One tier of group rent.** The literal `* 2` in `quoteRent` was the last
+hardcoded rent in the engine. It is `monopolyRent` and `majorityRent` now, and
+the eight-rung utility ladder needed no engine change at all — the game registers
+its own tile over the built-in `utility` name, which is what the registry was
+always for.
+
+### What it cannot have, and why it is one thing
+
+Six of the printed rules ship reduced, and every one of them for the same reason:
+**a game cannot add state to a player.** Travel vouchers, stock certificates,
+Roll Three cards, a facing for Reverse Direction — all things you *hold*, and
+`Player` has no extension point while `captureGame` would not know to save one.
+Each ships as the nearest rule that needs nothing held: a bus ticket is spent at
+once, the Stock Exchange pays its dividend and sells no shares.
+
+Two more are the pick-a-tile prompt that stopped the speed die's triples rule in
+8b. It has three customers now.
+
+Both are in KNOWNISSUES with the shape of a fix, and neither was worth guessing
+at inside this milestone.
+
+### Numbers
+
+200 games, no invariant broken: median 63 rounds, nothing unfinished, 15.8 houses
+and 11.2 hotels standing at the end, and wins by seat 53/50/43/54 — the most even
+spread of any board here, which is a pleasant surprise on a board where two of
+the three tracks are only reachable through four junctions and two tunnels.
+
+### Three rings, then three squares
+
+It shipped drawn on `rings` — concentric circles — because that was the
+multi-loop shape the engine had, and it looked fine. It was not what the board
+*is*, though, so `squares` joined the layout list: `squareGeometry` again with
+the inset, the depth and the count parameterised, which is thirteen tiles a side
+on the outer track, nine on the middle and five on the inner, exactly as printed.
+
+The interesting part was `inset` rather than the geometry. A circle's ring takes
+an explicit `radius`, so the array order does not decide what is drawn where; a
+naive `squares` would have derived each square by insetting from the last, tying
+drawing order to tile order. Ultimate Monopoly lists its **middle** track first
+because GO has to be tile 0, and its middle track is the one drawn in the middle.
+Explicit `inset` keeps the two orders independent, which is the same separation
+the layout docstring now states outright: **a shape is not a topology.**
+
+### The last place a 40 was hiding
+
+The browser matrix failed on Ultimate with `Player 1 has an invalid position: 83`.
+Both 83 and 71 are perfectly good tiles on a 120-tile board — the harness had
+`position <= 39` hardcoded, which is the "never write 40 for the board" rule
+broken in the one file nothing type-checks. It survived four milestones because
+every board that had ever shipped was 40 tiles or fewer.
+
+Fixed by asking: `__forge.board()` reports the size and the tracks. The same run
+then failed on "the jackpot was on and the pot never took a penny", which was
+also the harness rather than the game — two tax squares in 120 tiles means eleven
+rounds can genuinely pass without anybody meeting one. That assertion now waits
+until a tax has actually been charged, which keeps it able to catch the thing it
+was written for (Pocket's silently-off house rule in 9b) without failing a board
+for being large.
+
+### What was checked
+
+The test that mattered most was not a unit test: a played-out game has to end
+with deeds on **all three tracks**. A board whose junctions were never reached
+would pass everything else and still be a 40-tile game with 80 tiles of scenery.
+`SimResult` gained `tilesOwned` for it.

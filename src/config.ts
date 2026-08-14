@@ -50,7 +50,7 @@ export const TOKEN_LABELS: Record<TokenType, string> = {
 };
 
 // ─── Color groups ──────────────────────────────────────────────────────────────
-export type ColorGroup =
+export type BuiltInColorGroup =
   | 'brown'
   | 'lightBlue'
   | 'pink'
@@ -59,6 +59,15 @@ export type ColorGroup =
   | 'yellow'
   | 'green'
   | 'darkBlue';
+
+/**
+ * A lot's colour group. The classic eight are named so they autocomplete and so
+ * a typo in `'lightBlue'` is still caught, but the type is **open**: a board may
+ * have twenty groups, and Ultimate Monopoly has exactly that. What colour an
+ * unnamed one is drawn in is derived from its name — see `groupColor` in
+ * `ui/Theme.ts` — so a new board is legible without registering anything.
+ */
+export type ColorGroup = BuiltInColorGroup | (string & {});
 
 // What colour a group is drawn in is a property of the *theme*, not of the
 // rules — `theme().groups[group]` in `ui/Theme.ts`. A GROUP_COLORS table lived

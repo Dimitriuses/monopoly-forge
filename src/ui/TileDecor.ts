@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { PropertyTile } from '@/tiles/PropertyTile';
+import { groupColor } from './Theme';
 import type { Theme } from './Theme';
 import type { Tile } from '@/tiles/Tile';
 import type { TileLayout } from '@/game/BoardLayout';
@@ -64,9 +65,9 @@ const NO_DECORATION: TileDecoration = () => {};
 /** The colour stripe every lot carries along its inner edge. */
 export const GROUP_BAND = 14;
 
-registerTileDecoration('property', ({ g, tile, layout, theme: t }) => {
+registerTileDecoration('property', ({ g, tile, layout }) => {
   if (!(tile instanceof PropertyTile)) return;
-  g.fillStyle(t.groups[tile.group], 1);
+  g.fillStyle(groupColor(tile.group), 1);
   g.fillRect(-layout.w / 2, -layout.h / 2, layout.w, GROUP_BAND);
 });
 

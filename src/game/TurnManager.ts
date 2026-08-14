@@ -256,8 +256,11 @@ export class TurnManager {
       player.position = 0;
     }
 
-    const from            = player.position;
-    const { to, passedGo } = this.board.move(from, steps);
+    const from = player.position;
+    // Parity is the rule at a junction: an even roll rides the transit station
+    // to the other track, an odd one stays put. On a board with no junctions
+    // this changes nothing, because there is nowhere to cross.
+    const { to, path, passedGo } = this.board.move(from, steps, { crossing: steps % 2 === 0 });
 
     if (steps <= 0) {
       console.error(
@@ -275,12 +278,10 @@ export class TurnManager {
       (isDoubles ? ' [doubles]' : ''),
     );
 
-    if (passedGo) {
-      this.board.getTile(this.board.anchor('start')).onPass(player.id);  // emits rent:pay reason:'go'
-    }
+    this.board.announcePassing(path, player.id);
 
     player.position = to;
-    bus.emit('player:move', { playerId: player.id, from, to, steps, isDoubles });
+    bus.emit('player:move', { playerId: player.id, from, to, path, steps, isDoubles });
   }
 
   private handleJailRoll(player: Player, isDoubles: boolean, _total: number): void {

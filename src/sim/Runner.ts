@@ -23,6 +23,9 @@ import {
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable } from '@/tiles/Tile';
 import { gameById, decksFor, rulesFor, type Game } from '@/games';
+import {
+  applyTileEffect, effectContext, type TileEffectPayload,
+} from '@/game/TileEffects';
 import { checkInvariants, type Violation } from './Invariants';
 import type { ArrivalRent } from '@/game/Rent';
 
@@ -80,6 +83,12 @@ export interface SimResult {
   cash: Record<string, number>;
   /** Deeds each seat ended holding. */
   deeds: Record<string, number>;
+  /**
+   * Every tile that ended the game owned by somebody, by id. Counts alone say
+   * how *much* of a board was played; this says *which* of it was — the check
+   * that a board with three tracks is not two tracks of scenery.
+   */
+  tilesOwned: number[];
   housesBuilt: number;
   hotelsBuilt: number;
   /** True if the bank ran out of houses at any point. */
@@ -203,6 +212,7 @@ class Simulation {
       bankruptcies: this.bankruptcies,
       cash:  Object.fromEntries(this.players.map((p) => [p.id, p.cash])),
       deeds: Object.fromEntries(this.players.map((p) => [p.id, p.ownedTileIds.size])),
+      tilesOwned: this.players.flatMap((p) => [...p.ownedTileIds]).sort((a, b) => a - b),
       housesBuilt: built.reduce((n, t) => n + t.houses, 0),
       hotelsBuilt: built.filter((t) => t.hasHotel).length,
       houseShortage: this.houseShortage,
@@ -232,6 +242,13 @@ class Simulation {
     bus.on('tax:pay', ({ playerId, amount }: { playerId: string; amount: number }) => {
       payTax(this.context(), playerId, amount);
       this.endTurn();
+    });
+
+    // A tile asking for a rule it cannot resolve alone. The effect ends the turn
+    // the way any other landing does — by emitting `player:landed`, or by moving
+    // the player and letting the walk resolve it.
+    bus.on('tile:effect', (payload: TileEffectPayload) => {
+      applyTileEffect(effectContext(this.context()), payload);
     });
 
     bus.on('property:auction', (p: { tileId: number; playerId: string; price?: number }) => {

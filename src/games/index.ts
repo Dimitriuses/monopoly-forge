@@ -7,6 +7,7 @@ import { ROUNDABOUT_GAME } from './roundabout';
 import { ORBITS_GAME } from './orbits';
 import { SPEED_GAME } from './speed';
 import { POCKET_GAME } from './pocket';
+import { ULTIMATE_GAME } from './ultimate';
 
 export type { Game, GameProblem } from './Game';
 export { validateGame } from './Game';
@@ -17,6 +18,7 @@ export { ROUNDABOUT_GAME } from './roundabout';
 export { ORBITS_GAME } from './orbits';
 export { SPEED_GAME } from './speed';
 export { POCKET_GAME } from './pocket';
+export { ULTIMATE_GAME } from './ultimate';
 
 /** Every game this build ships, by id. `?game=<id>` picks one. */
 export const GAMES: Record<string, Game> = {
@@ -25,6 +27,7 @@ export const GAMES: Record<string, Game> = {
   [SPEED_GAME.id]:      SPEED_GAME,
   [ORBITS_GAME.id]:     ORBITS_GAME,
   [POCKET_GAME.id]:     POCKET_GAME,
+  [ULTIMATE_GAME.id]:   ULTIMATE_GAME,
 };
 
 export const DEFAULT_GAME = CLASSIC_GAME;

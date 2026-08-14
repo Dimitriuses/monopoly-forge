@@ -66,6 +66,8 @@ export type GameEvent =
   | 'rent:pay'
   | 'rent:modifier'
   | 'tax:pay'
+  /** A tile asking for a rule it cannot resolve alone — see game/TileEffects.ts. */
+  | 'tile:effect'
   | 'card:draw'
   | 'card:execute'
   /** Cards leaving a bankrupt estate, for whoever holds the decks to put back. */

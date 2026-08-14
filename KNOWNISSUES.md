@@ -149,6 +149,82 @@ swap, so four players who are never simultaneously one-lot-short of two differen
 groups will never complete one. A stronger trading policy would shrink this, and
 the simulator is now the thing that could measure whether it did.
 
+### The playtest harness assumed a 40-tile board
+
+*Found and fixed in M11.*
+
+`tools/playtest.mjs` checked `position >= 0 && position <= 39` — the one place
+"never write 40 for the board" was broken, and it survived four milestones
+because every board that shipped was 40 tiles or fewer. Ultimate Monopoly's 120
+failed a perfectly good run.
+
+It asks `__forge.board()` now, which reports the size, the tracks and which
+squares charge a tax. The tax list is there for the same class of reason: the
+"jackpot rule is on but the pot is empty" assertion is only meaningful once a tax
+has actually been charged, and on a 120-tile board with two tax squares eleven
+rounds can pass without anybody meeting one.
+
+The general lesson is worth keeping: **the harness is the last place a hardcoded
+board constant hides**, because nothing type-checks it.
+
+### A game cannot add state to a player
+
+*Found in M11, by trying to add Ultimate Monopoly.*
+
+`Player` holds cash, a position, deeds, jail state and Get Out of Jail Free
+cards, and there is no way for a game to add a field to it. `game/Snapshot.ts`
+would not know to save one either, so even a game that reached in and set a
+property would lose it on a reload.
+
+That single gap is why six of Ultimate Monopoly's rules ship reduced. Each is a
+thing a player *holds*:
+
+- **Travel vouchers** (bus tickets) — drawn, kept, played on a later turn.
+- **Stock certificates** — bought at the Stock Exchange, paying dividends
+  whenever anybody lands there.
+- **Roll Three cards** — every player holds three numbers; landing on the space
+  rolls against everybody's.
+- **A facing** — Reverse Direction turns you round for your *next* turn.
+
+What ships instead is written in the ROADMAP's M11 table and commented at each
+handler. None of them is wrong to have shipped — a rule spent at once is still
+that rule's flavour — but none of them is the printed rule either.
+
+The fix has a shape: `Player.extras: Record<string, unknown>` captured and
+restored wholesale, with a game declaring what it puts there. It is not written,
+and the interesting question is whether the *bot* can be taught to value a held
+thing it has never heard of. Ask before building it.
+
+### Nothing can ask a player to pick a tile
+
+*Named in M8b, and it now has three customers.*
+
+There is no prompt that says "choose a square" and no bot policy that could
+answer one. It stopped the speed die's official triples rule ("roll a triple and
+move anywhere"); in M11 it also stopped Ultimate Monopoly's **Subway** ("travel
+to any space on your next turn") and its **Auction** space ("pick an unowned
+property for the banker to auction").
+
+Both shipped as deterministic reductions — the next unowned property, and the
+dearest unowned property — which are defensible and are not the rule. Any modal
+that waits for a click waits for ever on a bot's turn, so the prompt and the bot
+policy are one job, not two.
+
+### A tile cannot see the dice that brought a player to it
+
+*Found in M11.*
+
+`Tile.onPass(playerId)` and `Tile.onLand(playerId)` get an id. `tile:effect`
+handlers get the landing context, which includes `dice`, so a *landing* can read
+the roll — but a **pass** cannot, because `announcePassing` walks the path
+calling `onPass` with nothing else.
+
+Ultimate Monopoly's Pay Day pays "$300 if you rolled an odd number or $400 if
+even", passing or landing. What ships pays $300 for passing and $400 for
+stopping, which is the same pair of numbers keyed off the wrong thing. Widening
+`onPass` is easy; deciding whether *every* tile should get a context on every
+step of every walk is the part worth thinking about.
+
 ### A game can bring artwork, but only for a texture that already exists
 
 *Added in M9b:* `Game.assets` maps texture key → URL and replaces a drawn
@@ -186,6 +262,13 @@ it away from the printed rules would make it a worse reference.
 Pocket (M9b) is the one game *designed* against the numbers rather than balanced
 after the fact — forty rounds, chosen so the limit decides 78% of games and a
 knockout the other 22%.
+
+Ultimate Monopoly (M11) came out of the box in better shape than any of them —
+median 63 rounds, nothing unfinished in 200 games, the most even spread of wins
+by seat on any board here — but its rents are **derived, not transcribed**. The
+printed game puts them on 64 title deeds that are not in the reference material,
+so every lot outside the classic middle track charges `price / 12` scaled up the
+usual ladder. Consistent, plausible, and certainly not the designer's numbers.
 
 ### The no-auction house rule is still untested
 

@@ -2,6 +2,8 @@ import { TILE_TYPES } from '@/tiles/registry';
 import { CARD_EFFECTS } from '@/cards/effects';
 import { TURN_ORDERS, WIN_CONDITIONS } from '@/game/TurnFlow';
 import { VARIANTS } from '@/game/Variants';
+import { MOVEMENTS } from '@/game/Movement';
+import { TILE_EFFECTS } from '@/game/TileEffects';
 import { dlog } from '@/utils/log';
 import type { Game } from './Game';
 
@@ -23,7 +25,7 @@ import type { Game } from './Game';
 // to become instances rather than singletons, and this is the seam where that
 // change would go.
 
-const REGISTRIES = [TILE_TYPES, CARD_EFFECTS, TURN_ORDERS, WIN_CONDITIONS, VARIANTS];
+const REGISTRIES = [TILE_TYPES, CARD_EFFECTS, TURN_ORDERS, WIN_CONDITIONS, VARIANTS, MOVEMENTS, TILE_EFFECTS];
 
 type Baseline = Array<Map<string, unknown>>;
 

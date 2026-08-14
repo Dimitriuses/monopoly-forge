@@ -1,4 +1,4 @@
-import type { ColorGroup, TokenType } from '@/config';
+import type { TokenType } from '@/config';
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
 // What the game looks like, gathered into one object the way `GameRules` gathers
@@ -46,7 +46,14 @@ export interface Theme {
     emblem: string;
   };
 
-  groups: Record<ColorGroup, number>;
+  /**
+   * Colours for the groups this theme has an opinion about. It is not a total
+   * map any more and cannot be: a board may have twenty groups and a theme
+   * cannot know their names in advance. Ask `groupColor()` rather than indexing
+   * this — anything missing is derived from the group's name, in this theme's
+   * own saturation and lightness, so an unknown group is never colourless.
+   */
+  groups: Record<string, number>;
   tokens: Record<TokenType, number>;
 
   panel: {
@@ -289,6 +296,82 @@ export const PARCHMENT_THEME: Theme = {
     background: 0x2b2216,
   },
 };
+
+// ─── Group colours ────────────────────────────────────────────────────────────
+// A theme names the eight it cares about. Everything else is derived, because
+// `ColorGroup` is open and a board may bring twenty — Ultimate Monopoly does,
+// and requiring every theme to name every group would mean a new board could
+// not be drawn until every theme in the build had been edited.
+//
+// The derivation keeps a new group inside the theme's palette rather than
+// picking an arbitrary bright colour: the hue comes from the group's name, the
+// saturation and lightness from the average of the ones this theme *did* name.
+// So a derived group looks like it belongs in parchment when parchment is on,
+// and it is stable — the same name is always the same colour, in a build and
+// between builds, which matters because it is what a player learns a group by.
+
+const derived = new Map<string, number>();
+
+/** The colour to draw a group's stripe in. Never undefined. */
+export function groupColor(group: string): number {
+  const named = theme().groups[group];
+  if (named !== undefined) return named;
+
+  const key = `${theme().id}/${group}`;
+  const cached = derived.get(key);
+  if (cached !== undefined) return cached;
+
+  const colour = deriveGroupColor(group, Object.values(theme().groups));
+  derived.set(key, colour);
+  return colour;
+}
+
+function deriveGroupColor(group: string, palette: number[]): number {
+  // djb2 — small, stable, and good enough to spread twenty names round the wheel.
+  let hash = 5381;
+  for (let i = 0; i < group.length; i++) hash = ((hash << 5) + hash + group.charCodeAt(i)) | 0;
+  const hue = Math.abs(hash) % 360;
+
+  // Saturation and lightness borrowed from what this theme already uses, so a
+  // derived stripe sits with the named ones instead of shouting over them.
+  let s = 0;
+  let l = 0;
+  for (const colour of palette) {
+    const [, ps, pl] = toHsl(colour);
+    s += ps;
+    l += pl;
+  }
+  const n = Math.max(1, palette.length);
+  return fromHsl(hue, s / n, l / n);
+}
+
+function toHsl(colour: number): [number, number, number] {
+  const r = ((colour >> 16) & 0xff) / 255;
+  const g = ((colour >> 8) & 0xff) / 255;
+  const b = (colour & 0xff) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (d === 0) return [0, 0, l];
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h: number;
+  if (max === r)      h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else                h = ((r - g) / d + 4) / 6;
+  return [h * 360, s, l];
+}
+
+function fromHsl(h: number, s: number, l: number): number {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  const [r, g, b] =
+    h < 60  ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] :
+    h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  const to = (v: number) => Math.max(0, Math.min(255, Math.round((v + m) * 255)));
+  return (to(r) << 16) | (to(g) << 8) | to(b);
+}
 
 registerTheme(CLASSIC_THEME);
 registerTheme(PARCHMENT_THEME);

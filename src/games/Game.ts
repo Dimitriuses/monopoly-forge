@@ -1,6 +1,7 @@
 import { validateMap, type GameMap, type MapProblem } from '@/maps';
 import { knownTurnOrders, knownWinConditions } from '@/game/TurnFlow';
 import { knownVariants } from '@/game/Variants';
+import { knownMovements } from '@/game/Movement';
 import type { GameRules } from '@/game/Rules';
 import type { Card } from '@/cards/CardDeck';
 
@@ -100,6 +101,14 @@ export function validateGame(game: Game): GameProblem[] {
   }
   if (rules?.winCondition && !knownWinConditions().includes(rules.winCondition)) {
     complain(game.id, `asks for win condition "${rules.winCondition}", which is not registered`);
+  }
+  if (rules?.movement && !knownMovements().includes(rules.movement)) {
+    complain(game.id, `asks for movement "${rules.movement}", which is not registered`);
+  }
+  // A board with loops that nothing walks across is a board with one loop and a
+  // lot of misleading data, so say so rather than quietly playing it as a circuit.
+  if (game.map.tracks?.length && (rules?.movement ?? 'circuit') === 'circuit') {
+    complain(game.id, 'declares tracks but is played with "circuit" movement, which ignores them');
   }
   for (const variant of [...(game.variants ?? []), ...(rules?.variants ?? [])]) {
     if (!knownVariants().includes(variant)) {

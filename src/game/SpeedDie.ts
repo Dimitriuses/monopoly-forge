@@ -77,27 +77,16 @@ export class SpeedDice extends Dice {
  * ordinary landing already knows how to do each.
  */
 function nextForeignDeed(board: Board, player: Player): number | null {
-  return scanForward(board, player.position, (id) => {
-    const tile = board.getTile(id);
-    return isOwnable(tile) && tile.ownerId !== player.id;
-  });
+  return board.scan(
+    player.position, (tile) => isOwnable(tile) && tile.ownerId !== player.id,
+  );
 }
 
 /** The bus: on to the next card tile. */
 function nextDrawTile(board: Board, player: Player): number | null {
-  return scanForward(board, player.position, (id) => {
-    const type = board.getTile(id).type;
-    return type === 'chance' || type === 'communityChest';
-  });
-}
-
-/** The first tile forward from `from` that matches, skipping the one you are on. */
-function scanForward(board: Board, from: number, matches: (id: number) => boolean): number | null {
-  for (let step = 1; step <= board.size; step++) {
-    const id = board.move(from, step).to;
-    if (matches(id)) return id;
-  }
-  return null;
+  return board.scan(
+    player.position, (tile) => tile.type === 'chance' || tile.type === 'communityChest',
+  );
 }
 
 /**
@@ -125,12 +114,11 @@ function bonusMove(ctx: PhaseContext): void {
     return;
   }
 
-  const from  = player.position;
-  const steps = ctx.board.stepsBetween(from, target);
-  if (steps === 0) return;
+  const from = player.position;
+  const path = ctx.board.pathTo(from, target);
+  if (path === null || path.length === 0) return;
 
-  const { passedGo } = ctx.board.move(from, steps);
-  if (passedGo) ctx.board.getTile(ctx.board.anchor('start')).onPass(player.id);
+  ctx.board.announcePassing(path, player.id);
   player.position = target;
 
   bus.emit('ui:notification', {
@@ -139,12 +127,14 @@ function bonusMove(ctx: PhaseContext): void {
       : `🚌 ${player.name} takes the bus to ${ctx.board.getTile(target).name}.`,
     type: 'info',
   });
-  dlog(`[SpeedDie] ${face}: ${player.name} ${from} → ${target} (${steps} steps)`);
+  dlog(`[SpeedDie] ${face}: ${player.name} ${from} → ${target} (${path.length} steps)`);
 
   // The same contract a card's move has: emit, and let the animation's landing
   // resolve it. `hold()` parks the turn until that landing ends it, at which
   // point `GameScene.safeEndTurn` resumes the walk instead of ending twice.
-  bus.emit('player:move', { playerId: player.id, from, to: target, steps, isDoubles: false });
+  bus.emit('player:move', {
+    playerId: player.id, from, to: target, path, steps: path.length, isDoubles: false,
+  });
   ctx.hold();
 }
 

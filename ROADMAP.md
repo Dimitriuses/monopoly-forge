@@ -30,6 +30,20 @@ a trimmed deck, a round limit and its own artwork, which is the worked example
 composed from one that already exists, and can bring artwork without the repo
 carrying any.
 
+**M11 was not planned, and that is the point.** Ultimate Monopoly — a fan-made
+board of 120 tiles across **three loops** joined by transit stations — was picked
+as a stress test precisely because it was designed by somebody else, for a table,
+with no thought for this engine. It found the one assumption every milestone so
+far had shared: *a board is a circuit*. `rings` was only ever an arrangement, and
+`Board.move` was `(from + steps) % size`. Fixing that, and the three smaller walls
+behind it, is M11, and it is done. What Ultimate Monopoly still *cannot* have is
+the more useful half of the answer, and it is all one thing: **a game cannot add
+state to a player.**
+
+**M12 is the plan that came out of it** — four engine gaps, each with at least
+three customers already in the tree, and each named by what it unlocks rather
+than by what it generalises. Not started.
+
 **M10 is refinement** — the corners this implementation knowingly cuts, the
 things a player asks for, and a bot worth playing against. Nothing in it opens a
 new seam; every item is already written down in KNOWNISSUES or in the deferred
@@ -655,6 +669,253 @@ worth roughly 60/40 to the first two seats. So the work is not more numbers.
 - **Not a rewrite of the panels or the renderer.** They were done in 8c, and the
   board's state layer still rebuilding is a small, known cost recorded in
   KNOWNISSUES rather than a debt worth paying now.
+
+---
+
+## M11 — a board that is not a circuit · done
+
+Adding a game nobody designed for this engine, to find out what the engine
+assumes. It assumed four things, and Ultimate Monopoly broke all four.
+
+### 11a — movement is a strategy · done
+
+- [x] **`game/Movement.ts`** — a registry of named step strategies, resolved from
+      `rules.movement` the way `turnOrder` and `winCondition` are. `circuit` is
+      what every board did before; `tracks` walks the loops a map declares.
+- [x] **`GameMap.tracks` / `GameMap.junctions`** — topology as data. A junction is
+      two tiles that are one space; stepping off either with an even roll
+      continues from the other, which is the printed transit-station rule exactly.
+- [x] **`Board.move` reports the route.** `{ to, path, passedGo }`. The tokens
+      walk the path instead of recomputing one — a token that recomputed would
+      pick its own way across a junction and arrive somewhere the model never
+      went.
+- [x] **`pathTo` and `scan`** replace arithmetic with a breadth-first search, so
+      "advance to Boardwalk" and "the nearest railroad" work on a board where
+      distance has no closed form. On one circuit they return what the
+      subtraction did.
+- [x] **Every tile underfoot gets `onPass`, the landing tile included.** That one
+      sentence is what makes a pay corner expressible, and it reproduces GO's old
+      `passedGo` special case exactly. Backwards walks still pay nothing.
+- [x] Validation: tracks must tile the board end to end, a junction must join two
+      *different* loops, and a map that declares tracks but is played with
+      `circuit` is refused rather than quietly played as one loop.
+
+### 11b — a tile whose rule mentions somebody else · done
+
+- [x] **`game/TileEffects.ts`** — `onLand(playerId)` is handed an id and nothing
+      else, which is enough for a lot and useless for "collect $50 from every
+      other player". Tiles get the shape card effects have had since 7c: a
+      registry of named handlers, each given the landing context, resolved by both
+      drivers through one `applyTileEffect` so the rule cannot drift between them.
+- [x] `walkTo` moved into `Landing.ts` and is shared, because a card is no longer
+      the only thing that moves somebody.
+
+### 11c — twenty colour groups · done
+
+- [x] **`ColorGroup` is open**, and a theme's `groups` is no longer a total map —
+      it cannot be, when a board may bring twenty and a theme cannot know their
+      names in advance.
+- [x] **A group with no named colour is derived from its name**, in the current
+      theme's own saturation and lightness, so it sits in the palette rather than
+      shouting over it. Stable across builds, because a colour is how a player
+      learns a group. Ultimate Monopoly ships a theme naming all twenty anyway.
+
+### 11d — rent that is not the classic ladder · done
+
+- [x] **`monopolyRent` and `majorityRent`** are rule values. The literal `* 2` in
+      `quoteRent` was the last hardcoded rent in the engine; Ultimate Monopoly
+      pays double for all-but-one of a group and triple for the set.
+- [x] **A railroad counts its own type**, not the literal `'railroad'`, so a game
+      can have a second railroad-shaped thing — four cab companies — without four
+      cabs raising the railroad rate.
+- [x] The eight-rung utility ladder needed **no engine change at all**: the game
+      registers its own tile over the built-in `utility` name, which is exactly
+      what the tile registry was for.
+
+### What M11 deliberately did not do
+
+Every one of these is the *same* gap, and it is the one worth naming: **a game
+cannot add state to a player.** `Player` has no extension point and `captureGame`
+would not know to save one. So travel vouchers, stock certificates and Roll Three
+cards — three things you *hold* — cannot exist, and each ships as the nearest
+rule that needs nothing held:
+
+| printed rule | what ships | why |
+|---|---|---|
+| Bus Ticket — keep it, play it later | spent at once: on to the next card tile | a held card is per-player state |
+| Stock Exchange — buy shares, draw dividends | the dividend only | shares are per-player state |
+| Roll Three — everybody holds a number | the roller plays against a drawn one | a held card again |
+| Reverse Direction — turn round *next* turn | straight back, now | a per-player facing is state |
+| Subway — go to *any* space | on to the next unowned property | needs a pick-a-tile prompt a bot can answer |
+| Auction — *you* pick the property | the dearest unowned one | the same missing prompt |
+| Pay Day — $300 odd, $400 even | $300 passing, $400 landing | `onPass` cannot see the dice |
+
+Two of those rows say "a prompt a bot can answer", which is the *second* thing
+worth naming and is already on the list: it is what stopped the speed die's
+triples rule in 8b, and it now has three customers.
+
+Skyscrapers, train depots and cab stands are not here either. They are a fifth
+building level and two more besides, and `rent` is fixed at six tiers with
+`houseCost` and `housesBeforeHotel` assuming a single ladder. That is a real
+generalisation rather than a reduction, and it belongs in its own slice.
+
+**All of it is planned as [M12](#m12--the-rules-ultimate-monopoly-could-not-have)**,
+which exists because of this list rather than ahead of it.
+
+---
+
+## M12 — the rules Ultimate Monopoly could not have
+
+M11 added the board. This is the four engine gaps that stopped six of its printed
+rules, written as a plan rather than a wish: each slice names **what it unlocks**,
+so none of them is built speculatively. Every one has at least three customers
+already in the tree, which is the bar for opening a seam at all.
+
+They are independent — none blocks another — so the order below is by cost, not
+by dependency.
+
+### 12a — a choice a bot can answer
+
+**Unlocks:** Subway ("travel to any space"), the Auction space ("pick an unowned
+property"), the speed die's triples rule (deferred since 8b), and turns the
+contested-house lot choice from deterministic into a real decision.
+
+The smallest of the four and the one with the most customers. There is no way to
+ask "which square?" and no bot policy that could answer, so three rules ship as
+deterministic reductions and a fourth was never written.
+
+```ts
+// game/Choice.ts
+export interface ChoiceOption { id: string; label: string; tileId?: number }
+export interface ChoiceRequest {
+  playerId: string;
+  prompt: string;
+  options: ChoiceOption[];
+  /** How a bot ranks them when nobody is at the keyboard. */
+  rank?: string;          // a registered policy name, not a function
+}
+```
+
+The shape is already in the tree twice over: the buy prompt has a human path and
+a bot path, and `TurnFlow`'s `hold()` / `resume()` is exactly "a turn parked
+waiting for an answer". So `choice:ask` holds the turn and `choice:answer`
+resumes it, `GameScene` shows a panel (highlighting tiles when an option carries
+a `tileId`), and `sim/Runner` asks `Bot`.
+
+- [ ] `ChoiceRequest` + a `CHOICE_POLICIES` registry, named by string so a rule
+      set naming one survives `JSON.stringify` — the same reason `turnOrder` is.
+- [ ] Both driver paths, and **a bot answer is not optional**: a modal that waits
+      for a click waits for ever on a bot's turn, which is the rule in CLAUDE.md
+      that every prompt has to pay.
+- [ ] Rewrite the four reductions to use it, and delete the "pick the dearest"
+      comments that apologise for them.
+- [ ] Saving is refused while a choice is open, as it already is mid-auction.
+
+### 12b — a player can hold something the engine has never heard of
+
+**Unlocks:** travel vouchers, stock certificates, Roll Three cards — and, past
+Ultimate Monopoly, anything a future game wants a player to *have*.
+
+The single gap behind four of the six reduced rules. `Player` has cash, a
+position, deeds and Get Out of Jail Free cards, and no room for a fifth kind of
+thing.
+
+```ts
+// game/Holdings.ts
+export interface HoldingKind {
+  label: string;
+  plural?: string;
+  /** Most a player may hold at once. */
+  limit?: number;
+  /** What one is worth in cash, so a bot can price it in a trade. */
+  value?(ctx: LandingContext, player: Player): number;
+}
+export const HOLDINGS = new Registry<HoldingKind>('holdings');
+
+// on Player
+holdings: Record<string, number>;   // countable, keyed by kind
+```
+
+Countable is enough for all three: a stock company is its own kind
+(`stock.acmeMotors`), not a bag of objects with identity.
+
+Four things it must not get wrong, three of which the engine has already been
+bitten by:
+
+- [ ] **The snapshot.** `captureGame` / `restoreGame` carry `holdings`, and
+      `validateSnapshot` refuses a save naming a kind this build has not
+      registered — the same rule a turn order gets.
+- [ ] **Bankruptcy.** `transferEstate` must move or forfeit them *explicitly*.
+      This is exactly where the deck census bug came from in M8d: a bankrupt
+      player's cards were destroyed and the deck quietly drained.
+- [ ] **An invariant.** `sim/Invariants.ts` gains a holdings census — counts
+      non-negative, every kind registered, a bankrupt player holding none.
+- [ ] **The bot.** Pricing one in a trade is `value()`. *Spending* one well is
+      not general, and should stay a per-game policy rather than being guessed
+      at in `Bot.ts`.
+
+The open question worth answering before writing any of it: **can a bot be taught
+to value a held thing it has never heard of?** `value()` is the cheap answer and
+may be enough. If it is not, holdings are tradeable but not playable by a bot,
+and that is worth knowing before the panel is built.
+
+### 12c — a tile can see the roll that took a player past it
+
+**Unlocks:** Pay Day's real rule, and anything else keyed off the dice rather
+than off stopping.
+
+The smallest item here. `Tile.onLand` reaches the dice through the `tile:effect`
+indirection; `Tile.onPass` cannot reach anything, because
+`Board.announcePassing` walks the path with an id and nothing else. So Pay Day
+pays "$300 passing, $400 landing" where the board says "$300 odd, $400 even".
+
+- [ ] `announcePassing(path, playerId, ctx)` and an optional second argument to
+      `onPass`, carrying the roll.
+- [ ] Decide deliberately whether *every* tile should get a context on every step
+      of every walk. That is the actual design question, and the reason this is
+      not a five-minute change.
+
+### 12d — buildings are a ladder, not houses-then-a-hotel
+
+**Unlocks:** skyscrapers (Ultimate Monopoly's fifth level), train depots on
+railroads, cab stands on cab companies.
+
+The largest, and last for that reason: it touches `BuildRules`, `Bank`,
+`PropertyPanel`, `Snapshot`, `Invariants`, `Bot` **and the `rent` tuple on every
+map**.
+
+```ts
+export interface BuildLevel {
+  id: string;              // 'house' | 'hotel' | 'skyscraper'
+  label: string;
+  /** How many of the level below one of these replaces. */
+  consumes: number;
+  supply: number;
+}
+rules.buildLadder: BuildLevel[]
+```
+
+Two consequences to face up front rather than discover:
+
+- **`TileDefinition.rent` stops being a six-tuple.** It becomes a `number[]` as
+  long as the ladder allows, and `validateMap`'s "needs six rent tiers" becomes
+  "needs one tier per level this game builds". Every map changes; the classic
+  ones change by having their length checked differently, not their contents.
+- **A railroad can hold a building.** Depots and cab stands are improvements on
+  something that is not a `PropertyTile`, so `buildingLevel` and the build rules
+  stop being about lots. `quoteRent` already counts by `tile.type`, which helps.
+
+Worth doing only when something wants it. Ultimate Monopoly does, and it is the
+only thing that does — so if this slips behind M10, nothing is blocked.
+
+### What M12 is not
+
+- **Not a second board.** Ultimate Monopoly is the customer for all four items,
+  and it already plays. This is about the rules it had to soften, not about
+  adding anything else.
+- **Not the printed rule at any cost.** Two reductions are staying: Squeeze
+  Play's dice table is fine as it is, and the Holland Tunnels' arrival guard is
+  the printed rule, not a compromise.
 
 ---
 

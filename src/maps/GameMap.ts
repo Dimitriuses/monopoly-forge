@@ -1,5 +1,6 @@
 import type { TileDefinition, TileType } from '@/tiles/Tile';
 import type { LayoutSpec } from '@/game/BoardLayout';
+import type { JunctionSpec, TrackSpec } from '@/game/Movement';
 import { isKnownTileType } from '@/tiles/registry';
 
 // ─── GameMap ──────────────────────────────────────────────────────────────────
@@ -24,6 +25,23 @@ export interface GameMap {
   blurb: string;
   tiles: TileDefinition[];
   layout: LayoutSpec;
+  /**
+   * The loops the tiles form, when they form more than one. Left out — as every
+   * board did before M11 — the whole tile list is a single circuit, which is
+   * what the `circuit` movement strategy assumes and what `layout: rings` has
+   * always drawn: three rings of *one* loop.
+   *
+   * Declaring tracks is a statement about **topology**, not about drawing. A
+   * board may have three tracks and be laid out as a square; it may be drawn as
+   * three rings and be one track. `rules.movement` is what decides which
+   * strategy walks them.
+   */
+  tracks?: TrackSpec[];
+  /**
+   * Pairs of tiles that are one space — a railroad and the transit station
+   * beside it. Only meaningful with `tracks`; see `game/Movement.ts`.
+   */
+  junctions?: JunctionSpec[];
 }
 
 export interface MapProblem {
@@ -101,6 +119,62 @@ export function validateMap(map: GameMap): MapProblem[] {
 
   // ── The shape has to fit the tiles ──────────────────────────────────────────
   problems.push(...validateLayout(map));
+  problems.push(...validateTracks(map));
+
+  return problems;
+}
+
+/**
+ * Tracks have to tile the board exactly — contiguous, in order, no gaps and no
+ * overlaps — because `trackOf` finds a tile's loop by range and a tile in no
+ * loop is a tile a player can walk onto and never leave.
+ *
+ * A junction has to join *different* tracks, for the same reason: one that
+ * joined a track to itself would be a step that silently teleports.
+ */
+function validateTracks(map: GameMap): MapProblem[] {
+  const tracks = map.tracks;
+  const problems: MapProblem[] = [];
+
+  if (!tracks?.length) {
+    if (map.junctions?.length) {
+      problems.push({ where: map.id, problem: 'has junctions but no tracks for them to join' });
+    }
+    return problems;
+  }
+
+  let expected = 0;
+  for (const track of tracks) {
+    if (track.count < 2) {
+      problems.push({ where: `track ${track.id}`, problem: 'needs at least two tiles' });
+    }
+    if (track.from !== expected) {
+      problems.push({
+        where: `track ${track.id}`,
+        problem: `starts at tile ${track.from}; tracks must run end to end, so it should start at ${expected}`,
+      });
+    }
+    expected = track.from + track.count;
+  }
+  if (expected !== map.tiles.length) {
+    problems.push({
+      where: map.id,
+      problem: `its tracks cover ${expected} tiles but it has ${map.tiles.length}`,
+    });
+  }
+
+  const trackAt = (id: number) => tracks.find((t) => id >= t.from && id < t.from + t.count);
+  for (const { a, b } of map.junctions ?? []) {
+    const [ta, tb] = [trackAt(a), trackAt(b)];
+    if (!ta || !tb) {
+      problems.push({ where: `junction ${a}–${b}`, problem: 'joins a tile that is on no track' });
+    } else if (ta === tb) {
+      problems.push({
+        where: `junction ${a}–${b}`,
+        problem: `joins track "${ta.id}" to itself — a junction crosses between loops`,
+      });
+    }
+  }
 
   return problems;
 }
@@ -116,6 +190,40 @@ function validateLayout(map: GameMap): MapProblem[] {
   }
   if (spec.kind === 'ring') {
     return count >= 3 ? [] : [{ where: map.id, problem: 'a ring needs at least three tiles' }];
+  }
+
+  if (spec.kind === 'squares') {
+    const problems: MapProblem[] = [];
+    const declared = spec.rings.reduce((n, ring) => n + ring.count, 0);
+    if (declared !== count) {
+      problems.push({
+        where: map.id, problem: `its squares hold ${declared} tiles but it has ${count}`,
+      });
+    }
+    const depth = spec.depth ?? 64;
+    spec.rings.forEach((ring, i) => {
+      if ((ring.count - 4) % 4 !== 0 || ring.count < 8) {
+        problems.push({
+          where: `square ${i}`,
+          problem: `needs 4n + 4 tiles with at least one a side, not ${ring.count}`,
+        });
+      }
+      if (ring.inset < 0) {
+        problems.push({ where: `square ${i}`, problem: 'cannot be inset past the board edge' });
+      }
+    });
+    // Nested squares closer together than a tile is deep would draw on top of
+    // each other, the same check the concentric circles get.
+    const insets = [...spec.rings].map((r) => r.inset).sort((a, b) => a - b);
+    for (let i = 1; i < insets.length; i++) {
+      if (insets[i] - insets[i - 1] < depth) {
+        problems.push({
+          where: map.id,
+          problem: `squares inset ${insets[i - 1]} and ${insets[i]} are closer than a tile is deep (${depth})`,
+        });
+      }
+    }
+    return problems;
   }
 
   const declared = spec.rings.reduce((n, ring) => n + ring.count, 0);

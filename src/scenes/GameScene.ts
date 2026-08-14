@@ -22,7 +22,7 @@ import {
   type PanelAction, type PanelActionKey, type PropertyView, type RentRow,
 } from '@/ui/PropertyPanel';
 import { type TokenType } from '@/config';
-import { theme } from '@/ui/Theme';
+import { groupColor, theme } from '@/ui/Theme';
 import { bakeTokenTextures, bakeBuildingTextures } from '@/ui/Textures';
 import { CLASSIC_RULES, type GameRules } from '@/game/Rules';
 import { PropertyTile } from '@/tiles/PropertyTile';
@@ -54,6 +54,9 @@ import { settleDebt, announceSettlement } from '@/game/Estate';
 import {
   payRent, payTax, drawCard, isSelfTerminating, applyLandingRules, type LandingContext,
 } from '@/game/Landing';
+import {
+  applyTileEffect, effectContext, type TileEffectPayload,
+} from '@/game/TileEffects';
 import { gameById, decksFor, rulesFor, GAMES } from '@/games';
 import { Auction, tileSubject, type AuctionSubject } from '@/game/Auction';
 import {
@@ -82,7 +85,9 @@ interface SceneData {
 }
 
 /** `direction: -1` walks the token backwards, for "Go Back 3 Spaces". */
-interface MovePayload    { playerId: string; from: number; to: number; steps: number; isDoubles: boolean; direction?: 1 | -1 }
+/** `path` is the route the model actually walked — the tokens follow it rather
+ *  than recomputing one, which is what keeps them on the model's track. */
+interface MovePayload    { playerId: string; from: number; to: number; path?: number[]; steps: number; isDoubles: boolean; direction?: 1 | -1 }
 interface RentPayload    { debtorId: string; creditorId: string; amount?: number; tileId: number; reason?: string }
 interface TaxPayload     { playerId: string; amount: number; tileId: number }
 interface AuctionPayload { tileId: number; playerId: string; price?: number }
@@ -354,6 +359,17 @@ export class GameScene extends Phaser.Scene {
         const layout = this.board.getLayout(tileId);
         return { x: layout.x, y: layout.y };
       },
+      // How big *this* board is, and the loops it is made of. The harness used
+      // to check `position <= 39`, which is the "never write 40 for the board"
+      // rule broken in the one place nothing was checking it — and it passed for
+      // four milestones because every board that shipped was 40 tiles or fewer.
+      board:       () => ({
+        size:   this.board.size,
+        tracks: this.board.tracks.map((t) => ({ ...t })),
+        // Which squares charge a tax, so the harness can tell "the jackpot rule
+        // is broken" from "nobody has met a tax square yet".
+        taxTiles: this.board.tiles.filter((t) => t.type === 'tax').map((t) => t.id),
+      }),
     };
   }
 
@@ -443,16 +459,28 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Animate token step-by-step, one tile at a time, forwards or backwards */
+  /** The route a plain walk takes, for a `player:move` that carried no path. */
+  private walkFrom(from: number, steps: number, direction: 1 | -1): number[] {
+    return this.board.move(from, steps * direction).path;
+  }
+
+  /**
+   * Animate a token one tile at a time along the route the model walked.
+   *
+   * The route is *given*, not recomputed. It used to be `board.move(from, s)`
+   * per step, which is the same answer only while a board is one loop — on a
+   * board with junctions the model may have ridden a transit station across and
+   * a token recomputing its own way would walk a different one, arriving
+   * somewhere the model never went.
+   */
   private async moveTokenStepByStep(
-    playerId: string, from: number, steps: number, direction: 1 | -1 = 1,
+    playerId: string, from: number, path: number[],
   ): Promise<void> {
     const token = this.tokens.get(playerId);
     if (!token) return;
 
-    for (let s = 1; s <= steps; s++) {
+    for (const next of path) {
       const left = this.tokenTile.get(playerId) ?? from;
-      const next = this.board.move(from, s * direction).to;
 
       // Book the new tile before working anything out, so both clusters are
       // computed against where the tokens will be. Passing *through* a busy
@@ -958,7 +986,7 @@ export class GameScene extends Phaser.Scene {
       .map((tile) => ({
         tileId: tile.id,
         name: tile.name + (tile.isMortgaged ? ' (mortgaged)' : ''),
-        color: tile instanceof PropertyTile ? theme().groups[tile.group] : null,
+        color: tile instanceof PropertyTile ? groupColor(tile.group) : null,
         selected: offered.includes(tile.id),
         // Buildings anywhere in the group freeze every lot in it.
         blocked: tile instanceof PropertyTile && groupBuildingCount(this.board, tile) > 0,
@@ -1084,7 +1112,7 @@ export class GameScene extends Phaser.Scene {
     return {
       tileName:   auction.subject.label,
       subtitle:   tile ? this.subtitleFor(tile) : this.subjectSubtitle(auction.subject),
-      groupColor: property ? theme().groups[property.group] : null,
+      groupColor: property ? groupColor(property.group) : null,
       price:      tile && isOwnable(tile) ? tile.price : 0,
       bidderName: bidder.name,
       bidderColor: this.ownerStyle(bidder.id)?.color ?? 0xffffff,
@@ -1458,7 +1486,7 @@ export class GameScene extends Phaser.Scene {
       tileId,
       name: tile.name,
       subtitle: this.subtitleFor(tile),
-      groupColor: property ? theme().groups[property.group] : null,
+      groupColor: property ? groupColor(property.group) : null,
       ownerLabel: owner ? `Owned by ${owner.name}` : isOwnable(tile) ? 'Unowned' : '—',
       ownerColor: owner ? (this.ownerStyle(owner.id)?.color ?? null) : null,
       facts,
@@ -1607,7 +1635,7 @@ export class GameScene extends Phaser.Scene {
   private registerBusListeners(): void {
 
     // ── Movement ──────────────────────────────────────────────────────────────
-    bus.on<MovePayload>('player:move', ({ playerId, from, to, steps, direction }) => {
+    bus.on<MovePayload>('player:move', ({ playerId, from, to, path, steps, direction }) => {
       const mover = this.players.find((p) => p.id === playerId);
       const moverName = mover?.name ?? playerId;
       dlog(
@@ -1623,7 +1651,10 @@ export class GameScene extends Phaser.Scene {
       this.isAnimating = true;
       this.setRollEnabled(false);
 
-      this.moveTokenStepByStep(playerId, from, steps, direction ?? 1)
+      // A payload with no path is a straight walk on a single circuit; work one
+      // out so an emitter that predates the path still animates.
+      const route = path ?? this.walkFrom(from, steps, direction ?? 1);
+      this.moveTokenStepByStep(playerId, from, route)
         .then(() => {
           const currentTurnPlayer = this.turnManager.currentPlayer;
           const movedPlayer       = this.players.find((p) => p.id === playerId);
@@ -1749,6 +1780,14 @@ export class GameScene extends Phaser.Scene {
     });
 
     // ── Tax ───────────────────────────────────────────────────────────────────
+    // A tile asking for a rule it cannot resolve alone. The effect finishes the
+    // landing the way any other tile does — `player:landed`, or a move whose walk
+    // resolves it — so there is deliberately no `safeEndTurn` here.
+    bus.on<TileEffectPayload>('tile:effect', (payload) => {
+      applyTileEffect(effectContext(this.landingContext()), payload);
+      this.pushUIUpdate();
+    });
+
     bus.on<TaxPayload>('tax:pay', ({ playerId, amount }) => {
       const paid = payTax(this.landingContext(), playerId, amount);
       if (!paid) return;

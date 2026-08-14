@@ -66,6 +66,33 @@ how many lots a colour group holds comes from `board.groupTiles(group).length`.
 well as the square — run `npm run playtest -- --bots --game roundabout` before
 believing a board change is safe.
 
+**6c. A board is not necessarily one loop, and `move` reports the route.**
+`Board.move(from, steps, ctx)` returns `{ to, path, passedGo }`, and `path` is
+every tile stepped *onto*, `to` last. What one step means is a named strategy in
+`game/Movement.ts` resolved from `rules.movement`: `circuit` is one loop,
+`tracks` walks the loops a map declares in `GameMap.tracks` and crosses at its
+`junctions` when `ctx.crossing` is set (which `TurnManager` sets from the parity
+of the roll). Three things follow and all three have already been got wrong:
+
+- **Never recompute a route somebody else walked.** `player:move` carries `path`
+  and the tokens follow it. A token that recomputed with `board.move(from, s)`
+  would pick its own way across a junction and arrive where the model never went.
+- **Distance is a search, not a subtraction.** `board.pathTo(from, to)` and
+  `board.scan(from, predicate)` are breadth-first and topology-agnostic; on one
+  circuit they return exactly what `stepsBetween` did. Anything counting steps in
+  a loop of its own is wrong on a board with junctions — that is why `CardDeck`'s
+  `nearest` and `SpeedDie`'s `scanForward` are gone.
+- **`move(from, 0)` still normalises `from`.** The walk loop never runs, so the
+  normalisation is done up front; removing it puts an out-of-range index back.
+
+**6d. `onPass` fires for every tile underfoot, the landing tile included.**
+`board.announcePassing(path, playerId)` is the only caller. So **`onPass` is what
+a tile charges you for being there and `onLand` is what else happens** — a pay
+corner that pays more for stopping pays the *difference* in `onLand`, and one
+that pays the same pays nothing extra. Writing the full landing amount in
+`onLand` makes every pass pay twice. Forward walks only: going back three spaces
+over GO has never paid, which is why `goBack` moves without calling it.
+
 **6b. Tiles are drawn in their own frame.** Every tile is a rectangle whose local
 top edge faces the middle of the board, positioned at `layout.x/y` and turned by
 `layout.rotation`. Anything drawn on a tile — a stripe, a house, an owner band, a
@@ -86,8 +113,12 @@ subject, or it will sit there being asked forever.
 
 **11. A game is the unit, and `gameById` is how you get one.** `src/games/<id>/`
 holds a board, the economy it is balanced for, the deck it deals, the variants it
-is played with, the palette it prefers and any artwork it brings. Five ship, and
-[docs/authoring-a-game.md](docs/authoring-a-game.md) is how to add one. **A map has no economy** —
+is played with, the palette it prefers and any artwork it brings. Six ship, and
+[docs/authoring-a-game.md](docs/authoring-a-game.md) is how to add one.
+**Ultimate Monopoly is the stress test** — 120 tiles, three loops, twenty colour
+groups, fourteen tile types the engine had never heard of — and four of the
+invariants above exist because of it. When something new has to be expressible,
+try it there first. **A map has no economy** —
 `GameMap` is tiles and a shape, and anything that reaches for `map.rules` is
 reaching for something that moved in M9a.
 
@@ -149,7 +180,12 @@ when a button is dead.
 cash, the GO salary, the jail fine and term, the doubles-to-jail count, the house
 supply and how many houses a hotel is worth are all in `game/Rules.ts`, resolved
 as classic → the game's → the player's switches. Writing `50` for the jail fine or
-`>= 3` for doubles puts the classic board back into the engine. The rule set is
+`>= 3` for doubles puts the classic board back into the engine, and so does a
+literal rent multiplier — `monopolyRent` and `majorityRent` are what an
+unimproved group charges, because Ultimate Monopoly pays two tiers where the
+classic game pays one. A railroad counts **its own `tile.type`**, not the literal
+`'railroad'`, so a game may have a second railroad-shaped thing without it
+raising the first one's rate. The rule set is
 saved with the game, so anything added to it belongs in the snapshot too.
 
 **7c. Tile types and card effects are registries, not switches.** A new tile kind
@@ -158,6 +194,20 @@ is `registerTileType(name, factory)` in `tiles/registry.ts`; a new card effect i
 `CardEffects` should ever grow a `switch` over kinds again — that is what closed
 the set in the first place. A card effect gets a small context, not the
 `CardEffects` instance: keep what an effect may touch visible in one place.
+
+**7f. A tile's rule may mention somebody else, and then it is an effect.**
+`Tile.onLand(playerId)` gets an id and nothing else. That is enough for every
+built-in — a lot knows its own rent — and useless for "collect $50 from every
+other player" or "auction any unowned property", because a tile can see neither
+the players nor the board. Those are `registerTileEffect(name, handler)` in
+`game/TileEffects.ts`: the tile emits `tile:effect` and **both** drivers resolve
+it through `applyTileEffect` with `effectContext(landingContext())`. Build that
+context in a driver and it will drift; it is assembled in one place for the same
+reason `Landing.ts` exists. An effect finishes the landing the way any tile does
+— `player:landed`, or a move whose walk resolves it — so neither driver calls
+`safeEndTurn` for one. **An effect that moves a player to a tile of its own kind
+must guard against arriving there**: Ultimate Monopoly's two Holland Tunnels each
+send you to the other, and the first run of that game died in a stack overflow.
 
 **7d. A turn is a list of phases, and `TurnManager` does not decide who plays
 next.** `game/TurnFlow.ts` holds the phase list, the turn order and the win
@@ -346,6 +396,14 @@ decoration — it is the test: a token or a colour group that only one theme has
 colour for fails `tests/theme.test.ts`. A theme is **not** game state, so it is
 not in `GameRules` and not in the snapshot.
 
+**10e. Ask `groupColor(group)`, never `theme().groups[group]`.** `ColorGroup` is
+an open union and a theme's `groups` is not a total map — it cannot be, when a
+board may bring twenty groups and Ultimate Monopoly does. A group the theme has
+no colour for is **derived from its name**, in that theme's own average
+saturation and lightness, so it belongs to the palette instead of shouting over
+it. The derivation is stable on purpose: a colour is how a player learns a group,
+so the same name must give the same colour in every build.
+
 **10b. How a tile type draws is `registerTileDecoration`, not a branch.** The
 handler gets the tile's own frame (origin at its centre, already rotated, the
 board's interior past its top edge) plus a `label()` that places text in that
@@ -439,6 +497,12 @@ update that table**, or the harness clicks empty space and fails with a vague
 `isAnimating`, whether a prompt, card or property panel is open) so the harness can
 assert on real model state rather than pixels. It is gated on the same switch as
 debug logging, so a plain production load exposes nothing.
+
+**Nothing in the harness may assume the board's size.** `__forge.board()` reports
+the size, the tracks and which squares charge a tax. It exists because the
+harness checked `position <= 39` for four milestones and failed Ultimate
+Monopoly's 120-tile board with it — the "never write 40" rule broken in the one
+file nothing type-checks.
 
 Board *tiles* are the exception to the hotspot table: `__forge.tileCentre(id)`
 returns a tile's centre, so the harness clicks tiles without keeping its own copy

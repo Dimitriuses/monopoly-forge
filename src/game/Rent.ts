@@ -1,7 +1,7 @@
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { RailroadTile, UtilityTile } from '@/tiles/SpecialTiles';
 import type { Tile, TileType } from '@/tiles/Tile';
-import { buildingLevel, ownsWholeGroup } from './BuildRules';
+import { buildingLevel } from './BuildRules';
 import type { Board } from './Board';
 import type { Player } from './Player';
 
@@ -38,7 +38,10 @@ export function quoteRent(
   const notes: string[] = [];
 
   if (tile instanceof RailroadTile) {
-    const base = tile.rentFor(countOwnedOfType(board, creditor, 'railroad'));
+    // Counted by the tile's *own* type, not the literal 'railroad': a game may
+    // have a second railroad-shaped thing — Ultimate Monopoly's cab companies —
+    // and four cabs must not make a railroad charge the four-railroad rate.
+    const base = tile.rentFor(countOwnedOfType(board, creditor, tile.type));
     if (ctx.arrival === 'railroadDouble' && base > 0) {
       notes.push(BY_CARD);
       return { amount: base * 2, notes };
@@ -58,10 +61,24 @@ export function quoteRent(
 
   if (tile instanceof PropertyTile) {
     const base = ctx.declared ?? tile.currentRent;
-    // A complete colour group with nothing built on it charges double.
-    if (base > 0 && buildingLevel(tile) === 0 && ownsWholeGroup(board, creditor, tile)) {
-      notes.push('double — full colour group');
-      return { amount: base * 2, notes };
+    // What an unimproved lot charges when its owner has the set. Two rule values
+    // rather than a literal `* 2`, because a game may want a second tier: hold
+    // all but one lot of a big group and Ultimate Monopoly already pays you for
+    // it — a "majority ownership" doubles, a full "monopoly" triples.
+    const rules = board.rules;
+    if (base > 0 && buildingLevel(tile) === 0) {
+      const group = board.groupTiles(tile.group);
+      const held  = group.filter((t) => t.ownerId === creditor.id).length;
+      if (held === group.length && group.length > 0) {
+        notes.push(`×${rules.monopolyRent} — full colour group`);
+        return { amount: base * rules.monopolyRent, notes };
+      }
+      // A majority is only a thing in groups big enough for one to mean anything,
+      // which is why it is `> 2` and not `>= held`.
+      if (rules.majorityRent > 1 && group.length > 2 && held === group.length - 1) {
+        notes.push(`×${rules.majorityRent} — majority ownership`);
+        return { amount: base * rules.majorityRent, notes };
+      }
     }
     return { amount: base, notes };
   }

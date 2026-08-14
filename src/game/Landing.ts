@@ -1,3 +1,4 @@
+import { bus } from '@/utils/EventBus';
 import { quoteRent, type ArrivalRent } from './Rent';
 import { settleDebt, announceSettlement, type Settlement } from './Estate';
 import type { Board } from './Board';
@@ -124,6 +125,29 @@ export function applyLandingRules(
   }
 
   return { jackpot, doubleSalary };
+}
+
+/**
+ * Walk a player to a tile and announce it, the way a card's "advance to" does:
+ * fire `onPass` for every tile the route sets foot on, move the model, then let
+ * the driver's animation resolve the landing. **Never call `onLand` after this**
+ * — the walk does it, and doing both lands the next player on the tile.
+ *
+ * Shared because a card is no longer the only thing that moves somebody: a
+ * tunnel, a subway and a bus ticket all do, and a second copy of this is exactly
+ * the drift `Landing.ts` exists to prevent.
+ */
+export function walkTo(board: Board, player: Player, tileId: number): boolean {
+  const from = player.position;
+  const path = board.pathTo(from, tileId);
+  if (path === null || path.length === 0) return false;
+
+  board.announcePassing(path, player.id);
+  player.position = tileId;
+  bus.emit('player:move', {
+    playerId: player.id, from, to: tileId, path, steps: path.length, isDoubles: false,
+  });
+  return true;
 }
 
 // ─── Cards ────────────────────────────────────────────────────────────────────

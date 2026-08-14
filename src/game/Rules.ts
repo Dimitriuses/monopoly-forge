@@ -11,6 +11,7 @@
 // Type-only, and it has to stay that way: `TurnFlow` imports `Board`, which
 // imports this file. Erased at compile time, there is no cycle at runtime.
 import type { BuiltInTurnOrder, BuiltInWinCondition } from './TurnFlow';
+import type { BuiltInMovement } from './Movement';
 
 export interface GameRules {
   /** What each player starts with. */
@@ -27,6 +28,18 @@ export interface GameRules {
   hotelLimit: number;
   /** Houses a lot needs before it can take a hotel. */
   housesBeforeHotel: number;
+  /**
+   * What an unimproved lot charges when its owner holds the whole colour group.
+   * Two in the classic rules, and the literal `* 2` it replaced was the last
+   * hardcoded rent in the engine.
+   */
+  monopolyRent: number;
+  /**
+   * What it charges when the owner holds all *but one* lot of a group of three
+   * or more. Off (1) in the classic rules, because a majority is worth nothing
+   * there; Ultimate Monopoly pays double for one and triple for the full set.
+   */
+  majorityRent: number;
   /**
    * Sell a house at auction when more players could buy one than the bank has
    * left. On in the classic rules, because it *is* the classic rule — see
@@ -49,6 +62,12 @@ export interface GameRules {
   // registries in `game/TurnFlow.ts`, the same way a tile type is.
   /** Who plays next — `'seat'` is round the table, doubles rolling again. */
   turnOrder: BuiltInTurnOrder | (string & {});
+  /**
+   * What one step forward means — `'circuit'` is one loop, which is every board
+   * that shipped before M11. `'tracks'` walks the loops a map declares and
+   * crosses at its junctions; see `game/Movement.ts`.
+   */
+  movement: BuiltInMovement | (string & {});
   /** When the game is over — `'lastSolvent'` is the classic. */
   winCondition: BuiltInWinCondition | (string & {});
   /** Rounds the `roundLimit` win condition allows. 0 means no limit. */
@@ -78,12 +97,15 @@ export const CLASSIC_RULES: GameRules = {
   houseLimit: 32,
   hotelLimit: 12,
   housesBeforeHotel: 4,
+  monopolyRent: 2,
+  majorityRent: 1,
   houseAuctions: true,
   auctionSeconds: 15,
   bidIncrement: 10,
   bidSteps: [0, 40, 90],
 
   turnOrder: 'seat',
+  movement: 'circuit',
   winCondition: 'lastSolvent',
   roundLimit: 0,
   variants: [],

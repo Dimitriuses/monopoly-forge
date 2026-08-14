@@ -85,7 +85,7 @@ registerCardEffect('goToJail', (ctx, _action, player) => {
 registerCardEffect('goBack', (ctx, action, player) => {
   const spaces = (action as { spaces: number }).spaces;
   const from = player.position;
-  const to   = ctx.board.move(from, -spaces).to;
+  const { to, path } = ctx.board.move(from, -spaces);
   dlog(
     `[CardEffects] goBack ${spaces} spaces: ${player.name} pos ${from} → ${to} ` +
     `(tile: "${ctx.board.getTile(to).name}")`,
@@ -93,9 +93,10 @@ registerCardEffect('goBack', (ctx, action, player) => {
   player.position = to;
   // direction: -1 makes the animation walk the tiles backwards. Without it the
   // token used to travel forwards and then snap back. Going back past the start
-  // does NOT pay the salary, so no onPass here.
+  // does NOT pay the salary, so `announcePassing` is deliberately not called —
+  // it is for forward walks, and this is the one caller that goes the other way.
   bus.emit('player:move', {
-    playerId: player.id, from, to, steps: spaces, isDoubles: false, direction: -1,
+    playerId: player.id, from, to, path, steps: spaces, isDoubles: false, direction: -1,
   });
   // resolveLanding() fires after the animation — do NOT call onLand here.
 });

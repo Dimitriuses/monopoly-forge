@@ -30,7 +30,7 @@ Everything is mouse-driven — there is no keyboard input.
 
 | Action | How |
 |---|---|
-| Choose a game | **Classic**, **Roundabout**, **Speed Die**, **Orbits** or **Pocket** at the top of the menu, or `?game=pocket` in the URL. A game brings its board, its economy, its deck, the palette it prefers and any artwork of its own |
+| Choose a game | **Classic**, **Roundabout**, **Speed Die**, **Orbits**, **Pocket** or **Ultimate** at the top of the menu, or `?game=ultimate` in the URL. A game brings its board, its economy, its deck, the palette it prefers and any artwork of its own |
 | Choose 2–6 players | Click a number on the menu |
 | Change a player's token | Click the token name next to `P1`, `P2`, … to cycle |
 | Play against the computer | Each seat says **🙋 Human** or **🤖 Bot** — click to swap. Seats 2+ are bots by default |
@@ -70,7 +70,11 @@ is unit-tested in bare Node with no jsdom and no canvas shim.
 ### Implemented
 
 - **Turn engine** — a turn is a *list* of named phases (`WAITING_FOR_ROLL → ROLLING → MOVING → LANDING → AWAITING_BUY_DECISION → END_TURN`) that a rule set can add to, and who plays next and when the game ends are strategies it names rather than decisions the engine makes. Doubles grant another roll, three in a row send you to jail
-- **Five games, and a game is a folder** — a board, the economy it is balanced for, the deck it deals, the variants it is played with, the palette it prefers and any artwork it brings, all in one place and picked as one choice. **Classic** (40 tiles in a square), **Roundabout** (24 on a circle), **Speed Die** (the classic board with the third die), **Orbits** (30 across three concentric rings) and **Pocket** (the classic board with no utilities, over in forty rounds). A game can be *composed* from one that already exists, and one that does not add up is refused with a reason rather than half-loaded — see [authoring a game](docs/authoring-a-game.md)
+- **Six games, and a game is a folder** — a board, the economy it is balanced for, the deck it deals, the variants it is played with, the palette it prefers and any artwork it brings, all in one place and picked as one choice. **Classic** (40 tiles in a square), **Roundabout** (24 on a circle), **Speed Die** (the classic board with the third die), **Orbits** (30 across three concentric rings), **Pocket** (the classic board with no utilities, over in forty rounds) and **Ultimate** (120 tiles on three nested squares that are three *separate loops*, joined by transit stations you ride across on an even roll). A game can be *composed* from one that already exists, and one that does not add up is refused with a reason rather than half-loaded — see [authoring a game](docs/authoring-a-game.md)
+
+- **A shape is not a topology.** A board declares how it is *drawn* (`square`, `ring`, `rings`, `squares`) and, separately, the loops it is *walked* as. Orbits is three rings of one loop; Ultimate is three nested squares of three loops
+
+- **A board need not be one loop.** What "one step forward" means is a named strategy (`game/Movement.ts`), so a map can declare `tracks` and `junctions` and `Board.move` walks them, reporting the route it took so the tokens follow it rather than guessing their own. Distance becomes a breadth-first search, which is how "advance to Boardwalk" still works when Boardwalk is on another loop
 - **Rules are data, and kinds are registries** — starting cash, the GO salary, the jail fine and term, the doubles-to-jail count and the house supply are a rule set a game overrides and a player switches on top of. New tile types and card effects are registered by name, so a game adds one without editing the engine
 - **Movement** — tile-by-tile animated walk, GO salary paid on passing (and on landing exactly)
 - **Property** — buy prompt for streets, railroads and utilities; rent from the tier table, doubled on an unimproved complete colour group; railroad rent by how many the owner holds; utility rent at 4× or 10× the dice
@@ -128,8 +132,8 @@ headless browser — see [tools/playtest.mjs](tools/playtest.mjs).
 | **Trade** — build an offer from either side's deeds and cash | **…then accept, decline or counter it** |
 | ![Bots](screenshots/12-bots.png) | ![Round board](screenshots/13-round-board.png) |
 | **Bots** — every seat handed to the computer, playing itself | **Roundabout** — 24 tiles on a circle, no corners |
-| ![Orbit board](screenshots/14-orbit-board.png) | |
-| **Orbits** — 30 tiles across three concentric rings | |
+| ![Orbit board](screenshots/14-orbit-board.png) | ![Ultimate board](screenshots/15-ultimate-board.png) |
+| **Orbits** — 30 tiles across three concentric rings, one loop | **Ultimate** — 120 tiles on three nested squares that are three *separate* loops |
 
 ---
 
@@ -149,7 +153,7 @@ Three axes of customisation, none of which should require editing engine code:
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 423 unit tests pin down.
+it is what the 462 unit tests pin down.
 
 ### What already supports it
 
@@ -225,7 +229,7 @@ Three consequences worth the trouble:
 **The model runs in Node.** `src/config.ts` deliberately contains no Phaser
 import — the `Phaser.Game` options live in `main.ts` instead — so everything under
 `game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 423 unit tests run in ~8 s with no jsdom, and it is the seam a
+That is what lets 462 unit tests run in ~8 s with no jsdom, and it is the seam a
 headless AI opponent would plug into.
 
 **Games are reproducible.** Every dice roll and both deck shuffles draw from one
@@ -245,7 +249,7 @@ src/
 ├── main.ts               Phaser bootstrap, debug-logging switch
 ├── config.ts             Tile sizes, economy constants, house rules  [no Phaser]
 ├── games/                **A game is a folder**: board + economy + deck + theme
-│                         classic, roundabout, speed, orbits, pocket
+│                         classic, roundabout, speed, orbits, pocket, ultimate
 │                         Game + validateGame · compose.ts — derive one from another
 │                         scope.ts — whose registrations are in force
 ├── maps/                 GameMap + validateMap; classic, round and orbit boards
@@ -325,7 +329,7 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test                # 423 unit tests, plain Node, ~8 s
+npm test                # 462 unit tests, plain Node, ~8 s
 npm run typecheck       # tsc --noEmit
 npm run playtest        # build first: plays 30 seeded turns in a headless browser
 npm run playtest -- --bots   # hand every seat to a bot and watch them play it out

@@ -57,16 +57,38 @@ describe('Board.move — positive modulo', () => {
   const board = new Board();
 
   it('moves forward without wrapping', () => {
-    expect(board.move(0, 5)).toEqual({ to: 5, passedGo: false });
-    expect(board.move(12, 7)).toEqual({ to: 19, passedGo: false });
+    expect(board.move(0, 5)).toEqual({ to: 5, path: [1, 2, 3, 4, 5], passedGo: false });
+    expect(board.move(12, 7).to).toBe(19);
   });
 
   it('wraps past 39 and reports passing GO', () => {
-    expect(board.move(38, 5)).toEqual({ to: 3, passedGo: true });
+    expect(board.move(38, 5)).toEqual({ to: 3, path: [39, 0, 1, 2, 3], passedGo: true });
   });
 
   it('treats landing exactly on GO as passing GO', () => {
-    expect(board.move(35, 5)).toEqual({ to: 0, passedGo: true });
+    expect(board.move(35, 5)).toEqual({ to: 0, path: [36, 37, 38, 39, 0], passedGo: true });
+  });
+
+  // The path is every tile stepped *onto*, never the one stepped off, so its
+  // length is always the number of steps — that is what the tokens walk.
+  it('reports a path of exactly `steps` tiles, ending where it says', () => {
+    for (const steps of [1, 2, 7, 12, 40, 41]) {
+      const { to, path } = board.move(17, steps);
+      expect(path).toHaveLength(steps);
+      expect(path.at(-1)).toBe(to);
+    }
+    // Excluding the tile stepped off only means the *first* step is not it — a
+    // walk of a full lap or more comes back round through it, as it should.
+    expect(board.move(17, 12).path).not.toContain(17 as never);
+    expect(board.move(17, 40).path).toContain(17 as never);
+  });
+
+  // Going back past GO has never paid the salary and must not start now.
+  it('never reports passing GO on a backwards walk', () => {
+    const { to, path, passedGo } = board.move(2, -5);
+    expect(to).toBe(37);
+    expect(path).toEqual([1, 0, 39, 38, 37]);
+    expect(passedGo).toBe(false);
   });
 
   // Regression: JS `%` preserves sign, so `(-1 + steps) % 40` could return a
@@ -178,7 +200,7 @@ describe('Board — a map that is not the classic 40 tiles', () => {
   });
 
   it('wraps at the map’s length, not at 40', () => {
-    expect(tiny.move(10, 5)).toEqual({ to: 3, passedGo: true });
+    expect(tiny.move(10, 5)).toEqual({ to: 3, path: [11, 0, 1, 2, 3], passedGo: true });
     expect(tiny.move(0, -1).to).toBe(11);
     expect(tiny.stepsBetween(10, 2)).toBe(4);
   });

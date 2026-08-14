@@ -44,7 +44,7 @@ describe('quoteRent — properties', () => {
     const med = board.getTile(MEDITERRANEAN) as PropertyTile;
     const single = quoteRent(board, med, owner, { diceTotal: 7, declared: med.currentRent });
     expect(single.amount).toBe(4);                       // rentTiers[0] is 2
-    expect(single.notes).toContain('double — full colour group');
+    expect(single.notes).toContain('×2 — full colour group');
   });
 
   it('does not double once a house is standing', () => {

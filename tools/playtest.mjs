@@ -445,6 +445,9 @@ async function main() {
     let capturedAuction = false;
     /** The most the Free Parking pot ever held — 0 means the rule did nothing. */
     let biggestPot = 0;
+    let taxLandings = 0;
+    // Asked of the board, not listed here — see the position check below.
+    const TAX_TILES = (await page.evaluate(() => window.__forge.board())).taxTiles;
 
     for (let turn = 0; turn < TURNS; turn++) {
       await waitFor(page, idle, { timeout: 10000 });
@@ -469,6 +472,11 @@ async function main() {
         state: window.__forge.state(),
       }));
       biggestPot = Math.max(biggestPot, view.state.bank.pot ?? 0);
+      // Whether anything *should* have pooled. The pot assertion below is only
+      // meaningful once a tax has actually been charged, and on a 120-tile board
+      // eleven rounds can pass without anybody meeting one of the two tax
+      // squares — which failed a perfectly good Ultimate run.
+      if (view.state.players.some((p) => TAX_TILES.includes(p.position))) taxLandings++;
 
       if (view.card) {
         cards++;
@@ -657,9 +665,13 @@ async function main() {
     const cash = end.players.map((p) => p.cash);
     const owned = end.players.reduce((n, p) => n + p.ownedTileIds.length, 0);
 
+    // Asked of the board rather than assumed: Ultimate Monopoly is 120 tiles,
+    // and a hardcoded 39 here failed a perfectly good game for using the engine.
+    const board = await page.evaluate(() => window.__forge.board());
+
     const problems = [];
     for (const p of end.players) {
-      if (!Number.isInteger(p.position) || p.position < 0 || p.position > 39) {
+      if (!Number.isInteger(p.position) || p.position < 0 || p.position >= board.size) {
         problems.push(`${p.name} has an invalid position: ${p.position}`);
       }
       if (!Number.isFinite(p.cash) || p.cash < 0) {
@@ -686,8 +698,8 @@ async function main() {
     if (GAME === 'pocket' && supplied.length !== 2) {
       problems.push(`pocket brings two textures and ${supplied.length} arrived`);
     }
-    if (jackpot && biggestPot === 0) {
-      problems.push('the Free Parking jackpot was on and the pot never took a penny');
+    if (jackpot && taxLandings > 0 && biggestPot === 0) {
+      problems.push('a tax was charged with the Free Parking jackpot on and the pot stayed empty');
     }
     if (!jackpot && biggestPot > 0) {
       problems.push(`the pot filled with the jackpot rule off: $${biggestPot}`);

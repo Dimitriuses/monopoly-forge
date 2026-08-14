@@ -118,6 +118,7 @@ built. Of the games that ship:
 | | limit | decided by bankruptcy | what the limit is |
 |---|---|---|---|
 | Roundabout | 80 rounds | 97% | a **safety net** — it fires in 3% of games, and only on the ones that would otherwise run for ever |
+| Ultimate | 120 rounds | 98% | a safety net on a much longer board |
 | Pocket | 40 rounds | 22% | the **rule of the game** — a timed race that a knockout sometimes ends early |
 
 Neither is wrong. What would be wrong is not knowing which you had.
@@ -170,6 +171,93 @@ only thing it is for.
 This is serial isolation: one game live at a time. It is what lets the simulator
 load one game after another in a single process without their registrations
 mixing.
+
+## 5b. A board that is not one loop
+
+`layout` is how a board is *drawn* — `square`, `ring`, `rings` (concentric
+circles) or `squares` (concentric squares). `tracks` is how it is *walked*, and
+the two are independent: Orbits is three rings of one circuit, Ultimate Monopoly
+is three nested squares that really are three loops, and nothing stops you
+drawing three loops as one square.
+
+```ts
+tracks: [
+  { id: 'middle', from: 0,  count: 40 },
+  { id: 'outer',  from: 40, count: 56 },
+  { id: 'inner',  from: 96, count: 24 },
+],
+junctions: [
+  { a: 47, b: 5 },     // a railroad and the transit station beside it
+],
+rules: { movement: 'tracks' },
+```
+
+A **junction is two tiles that are one space.** Stepping off either of them with
+`crossing` set continues from the *other*, and `TurnManager` sets `crossing` from
+the parity of the roll — so an even roll that takes you past a transit station
+rides it to the next track and an odd one does not. That is one rule, and it is
+the whole of Ultimate Monopoly's movement.
+
+Three things to know before you use it:
+
+- **Tracks must tile the board end to end**, in order, no gaps. A tile on no
+  track is a tile a player can walk onto and never leave, so `validateMap`
+  refuses it — as it refuses a junction joining a track to itself, and a game
+  that declares tracks while naming `movement: 'circuit'`.
+- **GO should be tile 0.** `Player` starts there and `TurnManager` sanitises a
+  corrupt position to it. Ultimate Monopoly lists its middle track first for
+  exactly this reason, even though it is drawn second.
+- **Distance stops being subtraction.** Use `board.pathTo(from, to)` and
+  `board.scan(from, predicate)`; both are breadth-first and both return what the
+  arithmetic did on a single circuit.
+
+## 5c. A tile whose rule mentions somebody else
+
+`Tile.onLand(playerId)` gets an id. That is enough for a lot, a tax or a card
+tile, and not enough for "collect $50 from every other player" — a tile can see
+neither the players nor the board.
+
+Those are **tile effects**, and they are the same shape as card effects:
+
+```ts
+registerTileEffect('squeezePlay', (ctx, player, { tileId }) => {
+  for (const other of ctx.players) {
+    if (other.id === player.id || other.isBankrupt) continue;
+    ctx.charge(other, player, 50);
+  }
+  bus.emit('player:landed', { playerId: player.id, tileId });
+});
+```
+
+The tile itself just asks: `bus.emit('tile:effect', { playerId, tileId, effect })`.
+Both drivers resolve it with the context they already build for a landing, so the
+rule cannot behave one way animated and another way headless.
+
+An effect **finishes the landing the way any tile does** — `player:landed`, or a
+move whose walk resolves it. Do not call `onLand` yourself, and if your effect
+moves a player onto a tile of the same kind, guard against it: two Holland
+Tunnels each sending you to the other is an infinite loop, and it is how Ultimate
+Monopoly's first run ended.
+
+## 5d. More than eight colour groups
+
+`ColorGroup` is open, so `group: 'saltLake'` is a colour group. You do not have to
+register anything: a group no theme names is drawn in a colour **derived from its
+name**, in the current theme's own saturation and lightness, and the same name
+always gives the same colour.
+
+If you want particular colours, ship a theme:
+
+```ts
+export const MY_THEME: Theme = {
+  ...CLASSIC_THEME, id: 'mine', name: 'Mine',
+  groups: { ...CLASSIC_THEME.groups, saltLake: 0xc99a2e },
+};
+registerTheme(MY_THEME);
+```
+
+Register it at module scope, not from `Game.register` — a theme is not scoped to
+a game, and the menu resolves `Game.theme` by id before anything is loaded.
 
 ## 6. Check it before anybody plays it
 
