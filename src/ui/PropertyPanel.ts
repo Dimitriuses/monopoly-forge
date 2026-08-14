@@ -83,6 +83,15 @@ export class PropertyPanel {
     this.container.setVisible(false);
   }
 
+  /**
+   * Forget what was last drawn, so the next `show` really redraws. The
+   * unchanged-view guard below is what makes a theme change invisible otherwise:
+   * the *view model* is identical, only the palette moved.
+   */
+  invalidate(): void {
+    this.lastRendered = null;
+  }
+
   show(view: PropertyView): void {
     // GameScene refreshes this panel on every turn change, but since the buttons
     // belong to the tile's *owner* rather than to whoever is rolling, the view is

@@ -13,6 +13,13 @@ export class UIScene extends Phaser.Scene {
   private phaseLabel!:   Phaser.GameObjects.Text;
   private turnBanner!:   Phaser.GameObjects.Text;
 
+  /** What the HUD is currently showing, so a rebuild can put it back. */
+  private seated: Player[] = [];
+  private activeId: string | null = null;
+  private banner = "Player 1's turn";
+  private phaseText = 'Roll the dice…';
+  private lastDice: { die1: number; die2: number; isDoubles: boolean } | null = null;
+
   private readonly PX = 1055;        // left edge
   private readonly PW = 225;         // panel width
   private readonly CX = 1055 + 112; // centre
@@ -20,7 +27,32 @@ export class UIScene extends Phaser.Scene {
   constructor() { super({ key: 'UIScene' }); }
 
   create(data: SceneData): void {
+    this.seated = data?.players ?? [];
+    this.build();
+
+    // Registered once, and outside `build` — they live on the scene's own
+    // emitter, which a rebuild of the drawn objects does not touch.
+    this.events.on('dice:result',    this.onDiceResult,    this);
+    this.events.on('turn:start',     this.onTurnStart,     this);
+    this.events.on('players:update', this.onPlayersUpdate, this);
+  }
+
+  /**
+   * Draw the HUD in whatever palette is current, and put back what it was
+   * showing. Called again when the theme changes mid-game — the alternative,
+   * restarting the scene, loses the dice and the banner *and* cannot be followed
+   * by a `delayedCall` from `GameScene`, whose clock is paused while the menu
+   * that changed the theme is open.
+   */
+  restyle(): void {
+    this.build();
+  }
+
+  private build(): void {
     const t = theme();
+    // A HUD is chrome and nothing else, so the cheapest correct rebuild is to
+    // clear the lot. The event listeners are on the scene, not on these objects.
+    this.children.removeAll(true);
 
     // ── Background ────────────────────────────────────────────────────────────
     this.add.rectangle(this.PX, 0, this.PW, 800, t.panel.background).setOrigin(0, 0);
@@ -69,33 +101,47 @@ export class UIScene extends Phaser.Scene {
 
     this.playerPanel = new PlayerPanel(this, this.PX, 252, this.PW);
 
-    if (data?.players?.length) {
-      this.playerPanel.init(data.players);
-      this.playerPanel.update(data.players, data.players[0].id);
+    // Whatever was on screen before goes back on it — a change of colour must
+    // not blank the dice or forget whose turn it is.
+    if (this.seated.length) {
+      this.playerPanel.init(this.seated);
+      this.playerPanel.update(this.seated, this.activeId ?? this.seated[0].id);
     }
-
-    // ── Event listeners ───────────────────────────────────────────────────────
-    this.events.on('dice:result',    this.onDiceResult,    this);
-    this.events.on('turn:start',     this.onTurnStart,     this);
-    this.events.on('players:update', this.onPlayersUpdate, this);
+    this.turnBanner.setText(this.banner);
+    this.phaseLabel.setText(this.phaseText);
+    if (this.lastDice) {
+      this.diceView.roll(this.lastDice.die1, this.lastDice.die2);
+      this.doublesLabel.setText(this.lastDice.isDoubles ? '⚡ DOUBLES — roll again!' : '');
+    }
   }
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
   private onDiceResult({ die1, die2, isDoubles }: { die1: number; die2: number; isDoubles: boolean }): void {
+    this.lastDice = { die1, die2, isDoubles };
     this.diceView.roll(die1, die2);
     this.doublesLabel.setText(isDoubles ? '⚡ DOUBLES — roll again!' : '');
-    this.phaseLabel.setText(`Rolled ${die1 + die2} — moving…`);
+    this.phaseText = `Rolled ${die1 + die2} — moving…`;
+    this.phaseLabel.setText(this.phaseText);
   }
 
   private onTurnStart({ player, players }: { player: Player; players?: Player[] }): void {
-    this.turnBanner.setText(`${player.name}'s turn`);
-    this.phaseLabel.setText(player.inJail ? '🔒 In jail — roll or act' : 'Roll the dice…');
+    this.banner    = `${player.name}'s turn`;
+    this.phaseText = player.inJail ? '🔒 In jail — roll or act' : 'Roll the dice…';
+    this.activeId  = player.id;
+    this.lastDice  = null;
+    this.turnBanner.setText(this.banner);
+    this.phaseLabel.setText(this.phaseText);
     this.doublesLabel.setText('');
-    if (players) this.playerPanel.update(players, player.id);
+    if (players) {
+      this.seated = players;
+      this.playerPanel.update(players, player.id);
+    }
   }
 
   private onPlayersUpdate({ players, activeId }: { players: Player[]; activeId: string }): void {
+    this.seated   = players;
+    this.activeId = activeId;
     this.playerPanel.update(players, activeId);
   }
 }

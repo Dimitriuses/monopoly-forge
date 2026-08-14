@@ -136,6 +136,11 @@ export class TradePanel {
     this.container.setVisible(false);
   }
 
+  /** See `PropertyPanel.invalidate` — a palette change moves no view model. */
+  invalidate(): void {
+    this.lastRendered = null;
+  }
+
   show(view: TradeView): void {
     const rendered = JSON.stringify(view);
     if (rendered === this.lastRendered && this.container.visible) return;

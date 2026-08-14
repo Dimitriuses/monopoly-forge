@@ -306,7 +306,7 @@ src/
 | M8d — A simulation platform | ✅ A headless runner, six invariants after every turn, a batch CLI, a second policy measured, and a balance pass driven by the numbers |
 | **M9 — A game is a folder** (board + economy + deck + theme) | ✅ **Complete.** Six games ship, registration is scoped to the loaded one, a game can be composed from another and bring its own artwork, and [authoring a game](docs/authoring-a-game.md) is written down |
 | **M11 — A board that is not a circuit** | ✅ **Complete.** Ultimate Monopoly: 120 tiles across three loops. Movement became a named strategy, `move` reports its route, a tile's rule may mention somebody else, colour groups opened, and group rent stopped being a literal |
-| **M10 — Refinement** | 🟡 Under way — **10a and 10d done**, 10b down to one item. All four printed-rule corners closed, both menus are a tree, the turn log comes out, a save may be taken mid-turn and mid-auction, and bots offer *you* trades |
+| **M10 — Refinement** | 🟡 **10a, 10b and 10d done**; 10c (a better bot) untouched. All four printed-rule corners closed, both menus are a tree, the turn log comes out, a save may be taken mid-turn and mid-auction, bots offer *you* trades, and the palette changes without restarting |
 
 ---
 
@@ -2332,3 +2332,60 @@ the temptation with this one was to inject an offer and call it tested.
 `npm run playtest -- --bot-trades` runs a table of one person and two bots, plays
 the person's turns until a bot asks, checks the bot waits, accepts, and then
 checks the deed moved and the game went on.
+
+## M10b — a theme that changes mid-game — 2026-08-14
+
+The last item in 10b, and the one whose description was already the design: *the
+HUD, the buttons and the board's static layer are drawn once at `create()`, and
+the pieces are baked textures.* Four things drawn once. The work was making each
+of them drawable twice.
+
+I considered the cheap route first — capture a snapshot, `setTheme`, restart the
+scene, restore. It would have worked and reused everything M10b had just built,
+and I did not do it for one reason: the turn log is not in the snapshot, so
+changing colour would have thrown away the record of the game. A hammer that
+loses the log to repaint a border is the wrong tool.
+
+### One list, not an event
+
+`applyThemeLive` is a numbered list of everything that has to be drawn again. The
+tempting shape is a `theme:change` event each component subscribes to, and I
+avoided it deliberately: a component that forgot to subscribe would simply keep
+its old colours, and a *half*-repainted screen is the failure hardest to notice
+and the easiest to ship. A list is greppable and wrong in an obvious way.
+
+Order matters in exactly one place, and it is worth stating: the textures are
+re-baked **first**, because the board's `refresh` draws houses out of them and
+every token holds one by key.
+
+### Three things that would have been bugs
+
+**Re-texture the piece; never rebuild the token.** A token is a container, and a
+walk in progress is a tween targeting it. Destroying one would leave the promise
+`moveTokenStepByStep` awaits unresolved — the turn would park for ever, and only
+if you changed theme at the wrong moment.
+
+**A panel has to be told its colours moved.** `PropertyPanel` and `TradePanel`
+have skipped rendering an unchanged view model since M6, and a palette change
+moves no view model at all — so both would have sat there in the old colours,
+looking exactly like a bug in the theme rather than in the guard. `invalidate()`
+is the fix and it is one line each.
+
+**The HUD restyles rather than restarting.** `scene.restart()` was my first
+instinct and it is wrong twice: it blanks the dice and the banner, and the
+obvious repair — `delayedCall` to push the state back — cannot fire, because
+`GameScene`'s clock is *paused* the whole time the pause menu is open. `UIScene`
+now remembers what it is showing so `build()` can put it back.
+
+`BoardRenderer` keeps everything its static layer drew, click zones included. A
+zone that survived a redraw would sit underneath the new one and fire the tile
+handler twice — silent, and only on a board somebody had re-themed.
+
+### Proving a colour changed
+
+There is nothing in the model to assert on: a palette is not game state, which is
+the whole point of it not being in the snapshot. So the harness proves it in
+pixels — screenshot the canvas, change the theme, screenshot again, and fail if
+the two buffers are identical. Then it rolls the dice, because a redraw that
+destroyed the click zones or left the roll button dead would pass every other
+check in the file.

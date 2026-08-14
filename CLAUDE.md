@@ -537,6 +537,31 @@ the surface rewrites; only the hover colours are re-bound per render.
 instead of keeping coordinates in `HOTSPOTS`. Any panel whose layout stops being
 fixed owes the harness the same.
 
+### A palette can change while a game is running
+
+**16. `GameScene.applyThemeLive` is the list of everything drawn in a colour**,
+and it is a list on purpose — an event each component subscribed to would let one
+that forgot keep its old palette, which is the failure hardest to see. Order
+matters once: **the textures are re-baked first**, because the board's `refresh`
+draws houses from them and each token holds one by key.
+
+Three rules it follows, each of which cost something to learn:
+
+- **Re-texture the piece, never rebuild the token.** A container is what a walk's
+  tween targets; destroying one leaves the promise the walk awaits unresolved and
+  the turn parked for ever.
+- **A panel has to be told.** `PropertyPanel` and `TradePanel` skip a render when
+  the view model is unchanged, and a palette change moves no view model —
+  `invalidate()` is what makes the next `show` real.
+- **The HUD restyles; it does not restart.** A restart blanks the dice and the
+  banner, and cannot be followed by a `delayedCall` to put them back: this
+  scene's clock is paused whenever the pause menu that changed the theme is open.
+  `UIScene` keeps what it is showing so `build()` can put it back.
+
+`BoardRenderer` keeps every object its static layer drew (`staticObjects`) so
+`redraw()` can take it down — **including the click zones**, because one that
+survived would sit under the new one and fire the handler twice.
+
 ### The board is drawn once, its state many times
 
 `ui/BoardRenderer.ts` holds everything inside the board square. `draw()` lays down

@@ -33,7 +33,7 @@ Everything is mouse-driven — there is no keyboard input.
 | Choose a game | **Play → Game** on the menu, or `?game=ultimate` in the URL. Six ship: **Classic**, **Roundabout**, **Speed Die**, **Orbits**, **Pocket**, **Ultimate**. A game brings its board, its economy, its deck, the palette it prefers and any artwork of its own |
 | Change the rules | **Play → Game Settings.** Starting cash, the salary, the jail fine and term, the house supply, how a full colour group is charged, how the game ends — about twenty of them, in sections, each showing what this game would have played |
 | Trade with a bot | Bots offer *you* trades on their own turn, in the same panel you build one in. Rationed so it is not every turn, and switchable off in **Play → Game Settings → House rules** |
-| Pause | **Escape**, or the MENU button. Resume, save to one of three slots, copy or download the turn log, change the sound or the theme, or quit to the title. A save may be taken **mid-turn** — a walking token, an open buy prompt and a live auction all survive a reload |
+| Pause | **Escape**, or the MENU button. Resume, save to one of three slots, copy or download the turn log, change the sound, switch the palette **without restarting**, or quit to the title. A save may be taken **mid-turn** — a walking token, an open buy prompt and a live auction all survive a reload |
 | Choose 2–6 players | Click a number on the menu |
 | Change a player's token | Click the token name next to `P1`, `P2`, … to cycle |
 | Play against the computer | Each seat says **🙋 Human** or **🤖 Bot** — click to swap. Seats 2+ are bots by default |
@@ -137,8 +137,10 @@ headless browser — see [tools/playtest.mjs](tools/playtest.mjs).
 | **Game Settings** — generated from the rules themselves, saying what changed | **The board** — the classic 40 |
 | ![Bots](screenshots/12-bots.png) | ![Round board](screenshots/13-round-board.png) |
 | **Bots** — every seat handed to the computer, playing itself | **Roundabout** — 24 tiles on a circle, no corners |
-| ![Orbit board](screenshots/14-orbit-board.png) | ![Ultimate board](screenshots/15-ultimate-board.png) |
-| **Orbits** — 30 tiles across three concentric rings, one loop | **Ultimate** — 120 tiles on three nested squares that are three *separate* loops |
+| ![Live theme](screenshots/16-theme-live.png) | ![Orbit board](screenshots/14-orbit-board.png) |
+| **A palette changed mid-game** — board, pieces, chrome and HUD all repainted without restarting | **Orbits** — 30 tiles across three concentric rings, one loop |
+| ![Ultimate board](screenshots/15-ultimate-board.png) | |
+| **Ultimate** — 120 tiles on three nested squares that are three *separate* loops | |
 
 ---
 

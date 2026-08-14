@@ -5,6 +5,7 @@ import { Dice } from '@/game/Dice';
 import { diceFor } from '@/game/Variants';
 import { Bank } from '@/game/Bank';
 import { TurnManager } from '@/game/TurnManager';
+import type { UIScene } from './UIScene';
 import type { TurnPhase } from '@/game/TurnFlow';
 import { CardDeck, CardEffects, type Card } from '@/cards/CardDeck';
 import { bus } from '@/utils/EventBus';
@@ -23,7 +24,7 @@ import {
   type PanelAction, type PanelActionKey, type PropertyView, type RentRow,
 } from '@/ui/PropertyPanel';
 import { type TokenType } from '@/config';
-import { groupColor, theme } from '@/ui/Theme';
+import { groupColor, setTheme, theme } from '@/ui/Theme';
 import { bakeTokenTextures, bakeBuildingTextures } from '@/ui/Textures';
 import { CLASSIC_RULES, type GameRules } from '@/game/Rules';
 import { PropertyTile } from '@/tiles/PropertyTile';
@@ -264,6 +265,71 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
+   * Put the whole game into a different palette, without restarting it.
+   *
+   * A theme could only be chosen before a game started, because the pieces are
+   * baked textures and the board's static layer, the buttons and the HUD were
+   * each drawn once in `create`. Every one of those can now be drawn again, so
+   * this is the list of them — and it is a *list*, deliberately, rather than a
+   * `theme:change` event each component subscribes to: a component that forgot
+   * to subscribe would simply keep its old colours, which is the failure mode
+   * that is hardest to notice.
+   *
+   * Order matters in one place. The textures are re-baked *first*, because the
+   * board's `refresh` draws houses from them and the tokens hold them by key.
+   */
+  applyThemeLive(id: string): void {
+    if (id === theme().id) return;
+    setTheme(id);
+    const t = theme();
+
+    // 1 — the baked pieces. A game's own artwork is skipped, or a palette change
+    // would paint over the picture the loader fetched (see CLAUDE.md 11d).
+    const supplied = new Set(Object.keys(GAMES[this.gameId]?.assets ?? {}));
+    bakeTokenTextures(this, supplied);
+    bakeBuildingTextures(this, supplied);
+    // The texture behind each key was removed and remade, so the piece inside
+    // each token container is pointed at it again rather than left holding a
+    // frame that no longer exists. The containers themselves are *not* rebuilt:
+    // a walk in progress is a tween on one of them, and destroying it would
+    // leave the promise the walk awaits unresolved and the turn parked for ever.
+    for (const [playerId, token] of this.tokens) {
+      const player = this.players.find((p) => p.id === playerId);
+      const piece  = token.list[0];
+      if (player && piece instanceof Phaser.GameObjects.Image) {
+        piece.setTexture(`token_${player.token}`).setDisplaySize(22, 22);
+      }
+    }
+
+    // 2 — the page and the board.
+    this.cameras.main.setBackgroundColor(t.chrome.page);
+    this.boardView.redraw();
+
+    // 3 — the chrome under it.
+    this.buildButtons();
+    this.setRollEnabled(
+      !this.turnManager.currentPlayer.isBot
+      && this.turnManager.phase === 'WAITING_FOR_ROLL' && !this.isAnimating,
+    );
+
+    // 4 — the panels. Their view models have not moved, so each is told to
+    // forget what it last drew or the guard would skip the redraw entirely.
+    this.notif.restyle();
+    this.panel.invalidate();
+    this.tradePanel.invalidate();
+    this.refreshPanel();
+    if (this.tradePanel.isOpen) this.tradePanel.show(this.tradeView());
+    if (this.auction) this.auctionPanel.show(this.auctionView(this.auction));
+
+    // 5 — the HUD, which is a scene of its own. Told to restyle rather than
+    // restarted: a restart blanks the dice and the banner, and could not be
+    // followed by a `delayedCall` to put them back — this scene's clock is
+    // paused whenever the menu that changed the theme is open.
+    const hud = this.scene.get('UIScene') as UIScene | null;
+    hud?.restyle();
+  }
+
+  /**
    * Pick a saved turn up where it was put down.
    *
    * A restore has always called `startTurn()`, which threw away the middle of a
@@ -327,6 +393,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** What the model needs to resolve a landing — see `game/Landing.ts`. */
+  /** Everything `buildButtons` drew, so a palette change can rebuild the row. */
+  private chrome: Phaser.GameObjects.GameObject[] = [];
+
   /** Where a restored game left off, or null for a new one. */
   private resumedPhase: TurnPhase | null = null;
   /** What was under the hammer when the save was taken, or null. */
@@ -469,6 +538,8 @@ export class GameScene extends Phaser.Scene {
             : 'missing']),
       ),
       gameOver:    () => this.gameOver,
+      /** Which palette is in force. */
+      themeId:     () => theme().id,
       /** Everything the turn log has recorded, newest first. */
       log:         () => this.notif.log.map((e) => `${e.type}: ${e.message}`),
       // The trade panel measures its deed list now, so its buttons are wherever
@@ -671,7 +742,15 @@ export class GameScene extends Phaser.Scene {
 
   // ── Buttons ───────────────────────────────────────────────────────────────────
 
+  /**
+   * The buttons under the board. Rebuilt rather than restyled when the palette
+   * changes: a `Text` carries its colours in a style object, and re-deriving one
+   * button at a time is more code and more to forget than making the whole row
+   * again. Anything created here goes in `chrome` so it can be taken down.
+   */
   private buildButtons(): void {
+    for (const object of this.chrome) object.destroy();
+    this.chrome = [];
     // Buttons sit below the board, inside the game area (x < 1055 = UIScene boundary)
     this.rollBtn = this.add.text(512, 738, '🎲  ROLL DICE', {
       fontFamily: theme().font.display, fontSize: '22px', color: '#ffffff',
@@ -1176,6 +1255,7 @@ export class GameScene extends Phaser.Scene {
       gameId: this.gameId,
       round: this.turnManager.round,
       transcript: () => this.notif.transcript(),
+      onTheme: (id: string) => this.applyThemeLive(id),
       onSave: (slot: number) => this.saveGame(slot),
       onQuit: () => {
         this.scene.stop('PauseScene');

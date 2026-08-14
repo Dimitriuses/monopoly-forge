@@ -53,6 +53,10 @@ export class BoardRenderer {
   private selectedId: number | null = null;
   /** Tiles a board-style choice will accept — see `setChoosable`. */
   private choosable: number[] = [];
+  /** Everything the static layer put on screen, so `redraw` can take it down. */
+  private staticObjects: Phaser.GameObjects.GameObject[] = [];
+  /** Kept so a redraw can re-register the click zones it destroys. */
+  private onTileSelected: ((tileId: number) => void) | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -66,10 +70,17 @@ export class BoardRenderer {
 
   // ── Static layer ────────────────────────────────────────────────────────────
 
-  /** Draw the board itself. Call once; nothing here changes during a game. */
+  /**
+   * Draw the board itself. Nothing here changes *during* a game — but the
+   * palette can, so everything this creates is kept and `redraw` takes it down
+   * again. None of it was tracked before M10b, which is the whole reason a theme
+   * could only be chosen before a game started.
+   */
   draw(onTileSelected: (tileId: number) => void): void {
     const t = theme();
+    this.onTileSelected = onTileSelected;
     const g = this.scene.add.graphics();
+    this.staticObjects.push(g);
     this.drawBackdrop(g);
     g.lineStyle(1, t.board.tileOutline, 1);
 
@@ -89,31 +100,68 @@ export class BoardRenderer {
       // colour band, a railroad's glyph, whatever a game registered. See TileDecor.
       decorationFor(tile.type)({
         scene: this.scene, g, tile, layout, theme: t,
-        label: (lx, ly, text, style) => this.label(layout, lx, ly, text, style),
+        // Tracked like everything else static: a decoration that writes on a
+        // tile has to come down with the rest when the palette changes.
+        label: (lx, ly, text, style) => {
+          const drawn = this.label(layout, lx, ly, text, style);
+          this.staticObjects.push(drawn);
+          return drawn;
+        },
       });
       g.restore();
 
       // Text cannot be drawn into that frame, so it is placed and turned to match.
-      this.label(layout, 0, BAND / 2, tile.name, {
+      this.staticObjects.push(this.label(layout, 0, BAND / 2, tile.name, {
         fontFamily: t.font.body, fontSize: '6px', color: t.board.tileLabel,
         wordWrap: { width: layout.w - 4 }, align: 'center',
-      });
+      }));
 
-      this.scene.add.zone(layout.x, layout.y, layout.w, layout.h)
-        .setRotation(Phaser.Math.DegToRad(layout.rotation))
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => onTileSelected(i));
+      this.staticObjects.push(
+        this.scene.add.zone(layout.x, layout.y, layout.w, layout.h)
+          .setRotation(Phaser.Math.DegToRad(layout.rotation))
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => onTileSelected(i)),
+      );
     }
 
     const { x: cx, y: cy } = this.board.centre;
-    this.scene.add.text(cx, cy - 20, t.board.emblem, { fontSize: '48px' }).setOrigin(0.5);
-    this.scene.add.text(cx, cy + 30, 'MONOPOLY\nFORGE', {
-      fontFamily: t.font.display, fontSize: '20px', color: t.board.centreTitle,
-      align: 'center', fontStyle: 'bold',
-    }).setOrigin(0.5);
+    this.staticObjects.push(
+      this.scene.add.text(cx, cy - 20, t.board.emblem, { fontSize: '48px' }).setOrigin(0.5),
+      this.scene.add.text(cx, cy + 30, 'MONOPOLY\nFORGE', {
+        fontFamily: t.font.display, fontSize: '20px', color: t.board.centreTitle,
+        align: 'center', fontStyle: 'bold',
+      }).setOrigin(0.5),
+    );
 
     this.stateLayer = this.scene.add.graphics().setDepth(2);
     this.selection  = this.scene.add.graphics().setDepth(4);
+  }
+
+  /**
+   * Draw it all again in whatever palette is current — the board's half of a
+   * theme changed mid-game.
+   *
+   * Everything static goes, the click zones included, and is rebuilt: a zone
+   * that survived would sit under the new one and fire the handler twice. The
+   * selection and the choosable ring are re-applied rather than dropped,
+   * because a change of colour is not a reason to lose what was highlighted.
+   */
+  redraw(): void {
+    if (!this.onTileSelected) return;
+    const selected  = this.selectedId;
+    const choosable = [...this.choosable];
+
+    for (const object of this.staticObjects) object.destroy();
+    this.staticObjects = [];
+    for (const object of this.stateObjects) object.destroy();
+    this.stateObjects = [];
+    this.stateLayer?.destroy();
+    this.selection?.destroy();
+
+    this.draw(this.onTileSelected);
+    this.refresh();
+    this.choosable = choosable;
+    this.setSelected(selected);
   }
 
   /**

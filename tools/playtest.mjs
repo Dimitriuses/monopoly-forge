@@ -796,6 +796,72 @@ async function main() {
       console.log(`  ✓ traded tile ${tradedTile} to ${recipient}`);
     }
 
+    // ── Changing the palette mid-game ─────────────────────────────────────────
+    // The board's static layer, the pieces, the chrome and the HUD were each
+    // drawn once at `create` until M10b, which is why a theme could only be
+    // picked before a game started. Proving it changed means proving *pixels*
+    // changed: the model has no colour in it to assert on.
+    if (!BOTS) {
+      await waitFor(page, idle, { timeout: 9000 });
+      const before = await page.screenshot({ clip: box });
+      const wasTheme = await page.evaluate(() => window.__forge.themeId());
+
+      await clickGame(page, box, HOTSPOTS.pause);
+      await sleep(400);
+      await menuPress(page, box, 'settings');
+      const wasName = (await menuSpots(page)).find((r) => r.id === 'theme').value;
+      await menuPress(page, box, 'theme', { adjust: 1 });
+      await sleep(500);
+
+      const nowTheme = await page.evaluate(() => window.__forge.themeId());
+      if (nowTheme === wasTheme) {
+        throw new Error(`the theme did not change: still ${nowTheme}`);
+      }
+
+      // Back to the board, and compare what is actually on screen.
+      await menuPress(page, box, 'back');
+      await page.keyboard.press('Escape');
+      await sleep(700);
+
+      if (await page.evaluate(() => window.__forge.themeId()) !== nowTheme) {
+        throw new Error('the theme reverted on leaving the menu');
+      }
+      const after = await page.screenshot({ clip: box });
+      if (Buffer.compare(before, after) === 0) {
+        throw new Error(
+          `the palette changed to ${nowTheme} and not one pixel of the board moved`,
+        );
+      }
+
+      // …and the game still plays. A redraw that destroyed the click zones or
+      // left the roll button dead would pass every check above.
+      const playable = await waitFor(page, ready, { timeout: 12000 });
+      if (!playable) {
+        const stuck = await page.evaluate(() => window.__forge.phase());
+        throw new Error(`the game was not playable after a theme change (${stuck})`);
+      }
+      await clickGame(page, box, HOTSPOTS.roll);
+      if (!(await waitFor(page, () => window.__forge.isAnimating(), { timeout: 6000 }))) {
+        throw new Error('the roll button was dead after a theme change');
+      }
+      await waitFor(page, idle, { timeout: 9000 });
+      await shot(page, box, '16-theme-live');
+      console.log(`  ✓ switched to the ${nowTheme} palette mid-game, and it still plays`);
+
+      // Put it back, so the rest of the run — and every screenshot after this
+      // one — is in the palette the run started with.
+      await clickGame(page, box, HOTSPOTS.pause);
+      await sleep(400);
+      await menuPress(page, box, 'settings');
+      await menuSet(page, box, 'theme', wasName);
+      await menuPress(page, box, 'back');
+      await page.keyboard.press('Escape');
+      await sleep(500);
+      if (await page.evaluate(() => window.__forge.themeId()) !== wasTheme) {
+        throw new Error('could not put the original palette back');
+      }
+    }
+
     // ── Saving in the middle of a turn ────────────────────────────────────────
     // The case M10b opened. Roll, catch the token *while it is walking*, and save
     // there: the model is already at the destination and its landing is still

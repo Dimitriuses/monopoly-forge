@@ -118,6 +118,14 @@ export class Notification {
   // ─── Drawing ────────────────────────────────────────────────────────────────
 
   /**
+   * Draw the log again in whatever palette is current. The entries have not
+   * changed — only their colours moved — so nothing is added and nothing fades.
+   */
+  restyle(): void {
+    this.render(false);
+  }
+
+  /**
    * Redraw the window. The whole strip is rebuilt rather than diffed: it is a
    * dozen entries, it happens once per logged event, and holding drawn objects
    * per entry is what made the old version lose anything that scrolled off.

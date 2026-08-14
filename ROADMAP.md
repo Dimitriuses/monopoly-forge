@@ -46,8 +46,7 @@ than by what it generalises. Not started.
 
 **M10 is refinement**, and it is under way — the corners this implementation
 knowingly cuts, the things a player asks for, and a bot worth playing against.
-**10a and 10d are done**, and 10b has one item left: a theme that can change
-mid-game. 10c, a bot worth playing against, is untouched.
+**10a, 10b and 10d are done.** 10c, a bot worth playing against, is untouched.
 
 **Why the classic game came first.** A configurable engine whose only consumer is
 a toy proves nothing. M1–M7 build the game the engine has to be able to express;
@@ -664,9 +663,16 @@ it twice more, so it landed here. M12a is struck through accordingly.
       `botTradeCooldown` are on the generated settings screen. Exercised by
       `npm run playtest -- --bot-trades`, which rigs the board with a third
       write-hook and lets the real `proposeTrade` find the swap.
-- [ ] **A theme that can change mid-game.** Picked at boot or on the menu today.
-      The HUD, the buttons and the board's static layer are drawn once at
-      `create()`, and the pieces are baked textures.
+- [x] **A theme that can change mid-game.** Pause → Settings → Theme, and the
+      board behind the menu repaints. `BoardRenderer` keeps what its static layer
+      drew so it can take it down again, the panels are told to forget what they
+      last drew, and the HUD restyles rather than restarting — a restart blanks
+      the dice and cannot be followed by a `delayedCall`, because the scene's
+      clock is paused while the menu is open. `GameScene.applyThemeLive` is the
+      list of everything that has to be drawn again, deliberately a list rather
+      than an event each component subscribes to: a component that forgot to
+      subscribe would keep its old colours, which is the failure hardest to
+      notice.
 - [x] **Test the `noAuction` house rule.** `npm run playtest -- --no-auction` is
       that second pass, and it *inverts* the assertion rather than skipping it: a
       run must decline at least one property and hold no auction at all. Skipping

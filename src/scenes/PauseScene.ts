@@ -1,8 +1,7 @@
 import Phaser from 'phaser';
 import { SaveLoad, type SlotSummary } from '@/utils/SaveLoad';
 import { GAMES } from '@/games';
-import { theme, setTheme, knownThemes } from '@/ui/Theme';
-import { bakeTokenTextures, bakeBuildingTextures } from '@/ui/Textures';
+import { theme, knownThemes } from '@/ui/Theme';
 import { Menu, backItem, type MenuItem, type MenuScreen } from '@/ui/Menu';
 import { sfx } from '@/ui/Sfx';
 import { copyText, downloadText, transcriptFilename } from '@/ui/Download';
@@ -29,6 +28,8 @@ export interface PauseData {
   onQuit(): void;
   /** The whole game as text, for copying or saving. */
   transcript(): string;
+  /** Repaint the running game in a different palette. */
+  onTheme(id: string): void;
   /** Which game is being played, for the slot list. */
   gameId: string;
   round: number;
@@ -47,6 +48,9 @@ export class PauseScene extends Phaser.Scene {
   private savedTo: number | null = null;
   /** What happened to the last log export, shown on the row. */
   private logNote: string | null = null;
+  /** This scene's own chrome — it is drawn in the palette it is changing. */
+  private scrim!: Phaser.GameObjects.Rectangle;
+  private title!: Phaser.GameObjects.Text;
 
   constructor() {
     super({ key: 'PauseScene' });
@@ -63,10 +67,10 @@ export class PauseScene extends Phaser.Scene {
 
     // A scrim rather than an opaque page: the board stays visible behind, which
     // is what makes this read as *paused* instead of as having left the game.
-    this.add.rectangle(0, 0, width, height, t.chrome.page, 0.88).setOrigin(0)
+    this.scrim = this.add.rectangle(0, 0, width, height, t.chrome.page, 0.88).setOrigin(0)
       .setInteractive();   // swallows clicks so the board underneath is inert
 
-    this.add.text(width / 2, 90, '⏸  PAUSED', {
+    this.title = this.add.text(width / 2, 90, '⏸  PAUSED', {
       fontFamily: t.font.display, fontSize: '32px', color: t.chrome.heading,
     }).setOrigin(0.5);
 
@@ -156,10 +160,7 @@ export class PauseScene extends Phaser.Scene {
           onAdjust: (d) => { sfx.setVolume(sfx.volume + d * 0.1); this.menu.render(); },
           onPress: () => { sfx.toggleMute(); this.menu.render(); } },
         { id: 'theme', label: 'Theme', kind: 'value', value: theme().name,
-          // Honest rather than hidden: the board's static layer and the pieces
-          // are drawn once at `create()`, so a palette switched here lands on the
-          // next game. Making it live is its own M10 item.
-          hint: 'Applies to the next game — the board is drawn once',
+          hint: 'Applies at once, to the game behind this menu',
           onAdjust: (d) => { this.cycleTheme(d); this.menu.render(); } },
         backItem(this.menu),
       ],
@@ -179,12 +180,24 @@ export class PauseScene extends Phaser.Scene {
     };
   }
 
+  /**
+   * Hand the change to the game rather than making it here. This scene draws a
+   * menu over a paused board; the board, its pieces, the chrome and the HUD all
+   * belong to `GameScene`, and it is the one that knows what has to be drawn
+   * again — including which textures a *game* supplied and must not be baked
+   * over.
+   */
   private cycleTheme(delta: 1 | -1): void {
     const ids = knownThemes().map((t) => t.id);
     const at = ids.indexOf(theme().id);
-    setTheme(ids[((at < 0 ? 0 : at) + delta + ids.length) % ids.length]);
-    bakeTokenTextures(this);
-    bakeBuildingTextures(this);
+    const next = ids[((at < 0 ? 0 : at) + delta + ids.length) % ids.length];
+    this.paused.onTheme(next);
+
+    // This scene is drawn in the palette it just changed, so it repaints too.
+    const t = theme();
+    this.scrim.setFillStyle(t.chrome.page, 0.88);
+    this.title.setColor(t.chrome.heading).setFontFamily(t.font.display);
+    this.menu.render();
   }
 
   private resume(): void {
