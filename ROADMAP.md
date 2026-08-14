@@ -601,29 +601,42 @@ any earlier point: the rules are registries, presentation is a theme, a game is 
 folder, and there is a simulator to say whether a change to the bots or the
 economy actually did anything.
 
-### 10a — the corners the rules still cut
+### 10a — the corners the rules still cut · done
 
-Four places where this implementation knowingly departs from the printed rules.
-None is hidden; each is a KNOWNISSUES entry with its reason.
+Four places where this implementation knowingly departed from the printed rules.
+All four are closed, and the one that unblocked two of them was not on this list
+at all — see the note below.
 
-- [ ] **Mortgage interest.** A mortgaged deed changes hands mortgaged — through a
-      trade, an auction, or a bankrupt estate — and the new owner inherits the
-      debt without paying the 10%. Both routes agree with each other, which is
-      why it has never looked wrong; neither agrees with the rules.
-- [ ] **The speed die's triples rule**, and with it **what a repeated dice face
-      means**. Three doubles → jail is still an `if` inside `rollDice`, so no rule
-      set can say a *triple* means anything. KNOWNISSUES states the open question
-      — a fifth registered strategy, or the `ROLLING` phase handler taking the
-      roll over — and this is where it gets answered, because triples is the
-      variant that needs it. It also needs a pick-a-tile prompt, which 10b brings.
-- [ ] **A bid of any amount.** The auction offers three buttons; the clock and
-      the raises are rule-set values since M8b, but a player who wants to raise by
-      something else cannot. Needs the stepper the trade panel already has for
-      cash — and the panel reports its own button positions now, so this no longer
-      costs a hand-recomputed hotspot table.
-- [ ] **The contested-house winner does not choose the lot.** Deterministic today
-      (whoever asked gets what they asked for; anyone else gets their cheapest
-      legal lot). A prompt would close it — the same prompt triples needs.
+- [x] **Mortgage interest.** Charged now on *both* sides: the 10% for taking on a
+      mortgaged deed, through a trade, an auction or a bankrupt estate, and the
+      10% for lifting one. `chargeMortgageInterest` is written once and called
+      from all three transfer paths, and the rate is `rules.mortgageInterest`
+      rather than a literal `1.1` — one number governs both halves, and a game
+      that sets it to zero turns the whole rule off. It goes through `settleDebt`
+      like every other charge, so a creditor who cannot cover the interest on an
+      estate they have just inherited mortgages it, or goes under.
+- [x] **The speed die's triples rule**, and with it **what a repeated dice face
+      means**. The open question is answered the first way KNOWNISSUES offered:
+      **a fifth registered strategy.** `game/RollRules.ts` holds `rules.rollRule`
+      — a rule returns *what should happen* (`move` / `jail` / `handled`) and
+      `TurnManager` does it, so nothing but the turn manager ever moves anybody.
+      A variant may now bring rule values with it (`Variant.rules`), which is
+      what lets the speed die *select* the triples rule instead of registering
+      one nobody uses.
+- [x] **A bid of any amount.** A stepper beside the three quick buttons, clamped
+      to the minimum and to what the bidder can cover, so a nudge cannot produce
+      an illegal bid. `AuctionPanel.spots()` reports where its controls are, the
+      way the trade panel does.
+- [x] **The contested-house winner chooses the lot.** Asked, when there is more
+      than one legal lot and the winner is not the player who nominated it. A bot
+      takes the lot where a house earns most, which is a better answer than the
+      cheapest-first ordering it replaced — that was never a strategy, just an
+      order.
+
+**What actually unblocked two of these** was a piece neither 10a nor 10b listed:
+**`game/Choice.ts`**, a question a person and a bot can both answer. It was
+planned as M12a on the strength of Ultimate Monopoly needing it twice; 10a needed
+it twice more, so it landed here. M12a is struck through accordingly.
 
 ### 10b — what a player asks for
 
@@ -631,13 +644,17 @@ None is hidden; each is a KNOWNISSUES entry with its reason.
       menu's Save screen and the title screen's Load screen. A pre-slot save is
       migrated into slot 1 rather than lost, and never over a slot somebody wrote
       deliberately.
-- [ ] **A save mid-turn.** Still refused mid-animation, mid-auction and mid-trade,
+- [ ] **A save mid-turn.** Still refused mid-animation, mid-auction, mid-trade and
+      now mid-choice,
       because a restore resumes at the start of a turn — but the pause menu now
       says *which* of those is in the way instead of showing a toast after the
       press. The real work is the same problem as making a landing resumable,
       which `TurnFlow`'s `hold()` / `resume()` has a shape for.
-- [ ] **Get the turn log out.** It keeps the whole game since M8c and scrolls,
-      but there is no copy, no download, and nothing survives closing the tab.
+- [x] **Get the turn log out.** Pause → Turn log copies it to the clipboard or
+      saves it as a text file. Two routes because neither works everywhere: the
+      clipboard is what somebody usually wants and browsers refuse it outside a
+      secure context, and a file always works but is heavier. Each row says what
+      happened rather than failing quietly.
 - [ ] **A bot that offers *you* a trade.** `proposeTrade` exists and bots use it
       on each other; a bot will not interrupt a person with one. That is a
       question about the game's manners, and answering it means a modal that
@@ -645,9 +662,10 @@ None is hidden; each is a KNOWNISSUES entry with its reason.
 - [ ] **A theme that can change mid-game.** Picked at boot or on the menu today.
       The HUD, the buttons and the board's static layer are drawn once at
       `create()`, and the pieces are baked textures.
-- [ ] **Test the `noAuction` house rule.** The playtest exercises the other two;
-      this one is left out because it would switch off the auction step the same
-      run depends on, so it needs a second pass with different assertions.
+- [x] **Test the `noAuction` house rule.** `npm run playtest -- --no-auction` is
+      that second pass, and it *inverts* the assertion rather than skipping it: a
+      run must decline at least one property and hold no auction at all. Skipping
+      would have been how the rule went untested for another four milestones.
 
 ### 10d — the menus · done
 
@@ -821,15 +839,17 @@ already in the tree, which is the bar for opening a seam at all.
 They are independent — none blocks another — so the order below is by cost, not
 by dependency.
 
-### 12a — a choice a bot can answer
+### 12a — a choice a bot can answer · ~~planned~~ **done early, in 10a**
 
 **Unlocks:** Subway ("travel to any space"), the Auction space ("pick an unowned
 property"), the speed die's triples rule (deferred since 8b), and turns the
 contested-house lot choice from deterministic into a real decision.
 
-The smallest of the four and the one with the most customers. There is no way to
-ask "which square?" and no bot policy that could answer, so three rules ship as
-deterministic reductions and a fourth was never written.
+Pulled forward, because 10a turned out to need it twice as well — the speed
+die's triples and the contested-house lot — which took it from three customers to
+five. `game/Choice.ts` is the module; Ultimate Monopoly's Subway and Auction
+square still use their deterministic reductions and are the two left to rewrite
+onto it.
 
 ```ts
 // game/Choice.ts

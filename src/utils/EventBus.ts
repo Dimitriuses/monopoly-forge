@@ -68,6 +68,10 @@ export type GameEvent =
   | 'tax:pay'
   /** A tile asking for a rule it cannot resolve alone — see game/TileEffects.ts. */
   | 'tile:effect'
+  /** "Which one?", answered by a person or a bot — see game/Choice.ts. */
+  | 'choice:ask'
+  /** A roll rule picked a square — see game/RollRules.ts. */
+  | 'roll:chosen'
   | 'card:draw'
   | 'card:execute'
   /** Cards leaving a bankrupt estate, for whoever holds the decks to put back. */

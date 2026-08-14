@@ -306,7 +306,7 @@ src/
 | M8d — A simulation platform | ✅ A headless runner, six invariants after every turn, a batch CLI, a second policy measured, and a balance pass driven by the numbers |
 | **M9 — A game is a folder** (board + economy + deck + theme) | ✅ **Complete.** Six games ship, registration is scoped to the loaded one, a game can be composed from another and bring its own artwork, and [authoring a game](docs/authoring-a-game.md) is written down |
 | **M11 — A board that is not a circuit** | ✅ **Complete.** Ultimate Monopoly: 120 tiles across three loops. Movement became a named strategy, `move` reports its route, a tile's rule may mention somebody else, colour groups opened, and group rent stopped being a literal |
-| **M10 — Refinement** | 🟡 Under way — **10d done**: both menus are a tree from one component, saving moved into a pause screen that says why it cannot, and Game Settings is generated from metadata beside the rules |
+| **M10 — Refinement** | 🟡 Under way — **10a and 10d done**, 10b part done. All four printed-rule corners closed (mortgage interest, triples, free-form bids, the contested-house lot), both menus are a tree, and the turn log comes out |
 
 ---
 
@@ -2061,3 +2061,92 @@ It bought something beyond not breaking. The run now walks into Game Settings,
 nudges the jail fine, starts the game and asserts `__forge.rules().jailFine` is
 what the menu said — which is precisely the check that would have caught the M9b
 house-rule bug the day it was written, rather than a milestone later.
+
+## M10a — the four corners, and the piece that was not on the list — 2026-08-14
+
+Four places the implementation knowingly departed from the printed rules, each
+one a KNOWNISSUES entry with its reason. Two of them turned out to need the same
+missing thing, and that thing was not in 10a or 10b — it was M12a, planned on the
+strength of Ultimate Monopoly needing it twice. 10a needed it twice more, so it
+came forward.
+
+### A question a bot can answer
+
+`game/Choice.ts`: options with weights, a callback for the answer, and both
+drivers obliged to supply one. `GameScene` draws a list, or — when the options
+*are* tiles and there are 120 of them — highlights the board and takes a click,
+because clicking through 120 rows is not a prompt. `sim/Runner` takes the
+heaviest option immediately.
+
+It cost me a batch to learn that both halves of a driver's obligation matter. The
+first simulator run after triples landed reported **69 of 80 Speed Die games
+unfinished**, and Ultimate 76 of 80 — up from 10 and 0. The runner answered
+`choice:ask` perfectly well and had no handler for the `roll:chosen` that the
+answer replied with, so every triple parked its turn for ever. Answering a
+question is not the same as doing what the answer says.
+
+### What a roll means
+
+The open question KNOWNISSUES recorded — a fifth registered strategy, or the
+`ROLLING` phase handler taking the roll over — is answered the first way.
+`rules.rollRule` names a rule that returns *what should happen*: `move`, `jail`,
+or `handled` when it has a prompt in flight. `TurnManager` does it. A rule that
+moved the player itself would be a second mover, and the phase pipeline would
+have two things deciding when a turn ends.
+
+That left one gap I had not seen: a variant could *register* a roll rule and had
+no way to **select** it, so the speed die would have shipped a triples rule
+nobody used. `Variant.rules` fixes it — rule values a variant implies, layered
+under the game's and the player's, so a variant brings a default and never
+overrules a choice. `rulesFor` settles which variants are on first, then layers.
+
+### Mortgage interest, and why it never looked wrong
+
+A mortgaged deed changed hands mortgaged through three paths — trade, auction,
+bankrupt estate — and the new owner inherited the debt for nothing. All three
+agreed with each other, which is exactly why nobody noticed; none agreed with the
+rules.
+
+`chargeMortgageInterest` is written once and called from all three, and it goes
+through `settleDebt` rather than `player.pay` — so a creditor who cannot cover
+the interest on an estate they have just inherited mortgages that estate, and can
+go under doing it. Charged *after* the deeds have moved, deliberately: a player
+raising the money must not be able to sell something the transfer is still in the
+middle of handing over.
+
+The rate became `rules.mortgageInterest` and now governs the *lift* charge too,
+which had been a literal `1.1` in two places. One number, both halves, and a game
+that sets it to zero turns the rule off entirely.
+
+An existing test caught the change immediately — a creditor's cash was $1,564
+where the test said $1,570. That is the new rule, and the assertion now says so
+in as many words rather than being loosened.
+
+### Two smaller ones
+
+The auction got a stepper beside its three quick buttons, clamped to the minimum
+and to what the bidder holds so a nudge cannot make an illegal bid. And the
+contested-house winner is asked where the house goes, when there is more than one
+legal lot and they are not the player who nominated it — a bot takes the lot
+where a house earns most, which is a better answer than the cheapest-first
+ordering it replaced. That was never a strategy, just an order.
+
+## M10b — getting things out — 2026-08-14
+
+Two of the five, and the two that were cheap now that the pause menu exists.
+
+**The turn log comes out.** It has kept the whole game since M8c with no way to
+read one afterwards. Pause → Turn log copies it or saves it as a file — two
+routes because neither works everywhere, and each row reports what actually
+happened rather than failing quietly. The clipboard is what somebody wants nine
+times in ten and browsers refuse it outside a secure context.
+
+**`noAuction` is finally tested.** It had gone four milestones untested because
+switching it on removes the auction step the ordinary run depends on. The answer
+was not to skip the assertion but to **invert** it: `--no-auction` must decline
+at least one property and hold no auction at all. A run that quietly checks
+nothing is how a rule goes untested for four milestones.
+
+Three items are left and all three are the same size — real work rather than
+oversights: a save mid-turn, a bot that offers *you* a trade, and a theme that
+changes without restarting. Each is written up in the ROADMAP with what it needs.

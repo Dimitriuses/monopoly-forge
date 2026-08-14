@@ -4,6 +4,7 @@ import { dlog } from '@/utils/log';
 import { isOwnable } from '@/tiles/Tile';
 import { Dice, type DiceResult } from './Dice';
 import { registerVariant } from './Variants';
+import { registerRollRule, rollRuleNamed } from './RollRules';
 import type { Board } from './Board';
 import type { Player } from './Player';
 import type { PhaseContext, TurnFlow } from './TurnFlow';
@@ -48,6 +49,8 @@ export class SpeedDice extends Dice {
    * the walk it started resumes the turn through it.
    */
   lastFace: SpeedFace | null = null;
+  /** The number the third die showed, or null on a picture face. Triples need it. */
+  lastNumber: number | null = null;
 
   override roll(): DiceResult {
     const white = super.roll();
@@ -56,7 +59,8 @@ export class SpeedDice extends Dice {
     const index = Math.min(SPEED_FACES.length - 1, Math.floor(rng.next() * SPEED_FACES.length));
     const face  = SPEED_FACES[index];
 
-    this.lastFace = typeof face === 'number' ? null : face;
+    this.lastFace   = typeof face === 'number' ? null : face;
+    this.lastNumber = typeof face === 'number' ? face : null;
     // `isDoubles` stays the two white dice: the third die is not part of a pair,
     // so three doubles still means jail and nothing about that rule changes.
     this.lastResult = {
@@ -140,10 +144,57 @@ function bonusMove(ctx: PhaseContext): void {
 
 // ─── Registration ─────────────────────────────────────────────────────────────
 
+// ─── Triples ──────────────────────────────────────────────────────────────────
+
+export const TRIPLES_RULE = 'speedDieTriples';
+
+/**
+ * "If you roll TRIPLE 1's, 2's, or 3's, move ahead to any space on the board. Do
+ * not roll again. You do not go to jail if you've rolled DOUBLES twice before
+ * rolling TRIPLES."
+ *
+ * Deferred from 8b for two missing pieces, both of which exist now: a rule set
+ * could not say what a *triple* meant (`game/RollRules.ts`), and nothing could
+ * ask a player to pick a square that a bot could also answer
+ * (`game/Choice.ts`). The weight offered to a bot is the tile's price, so a bot
+ * takes the dearest thing it can reach — which is what a person does with the
+ * same prompt.
+ */
+registerRollRule(TRIPLES_RULE, (ctx) => {
+  const { result, player, board, dice } = ctx;
+  const face = dice instanceof SpeedDice ? dice.lastNumber : null;
+
+  // A triple is the two white dice matching *and* the speed die showing the same
+  // number. The speed die only numbers 1–3, so only those can ever be tripled.
+  const triple = face !== null && result.isDoubles && result.die1 === face;
+
+  if (triple) {
+    // Explicitly *before* the doubles streak is consulted: a triple after two
+    // doubles is not a third pair, and the printed rule says so in as many words.
+    player.doublesStreak = 0;
+    const asked = ctx.choose(
+      `Triple ${face}s — move to any space`,
+      board.tiles.map((tile, id) => ({
+        id: String(id),
+        label: tile.name,
+        tileId: id,
+        weight: 'price' in tile ? (tile as { price: number }).price : 0,
+      })),
+      (optionId) => bus.emit('roll:chosen', { playerId: player.id, tileId: Number(optionId) }),
+    );
+    // Nobody listening means no prompt and no answer coming, so fall through to
+    // an ordinary move rather than parking the turn for ever.
+    if (asked) return { kind: 'handled' };
+  }
+
+  return rollRuleNamed('classic')(ctx);
+});
+
 registerVariant('speedDie', {
   label: 'Speed die',
   blurb: 'A third die: 1–3 add to your roll, Mr. Monopoly and the bus move you again',
   dice: () => new SpeedDice(),
+  rules: { rollRule: TRIPLES_RULE },
   apply: (flow: TurnFlow) => {
     if (flow.has(SPEED_BONUS_PHASE)) return;
     flow.insertAfter('AWAITING_BUY_DECISION', { name: SPEED_BONUS_PHASE, onEnter: bonusMove });

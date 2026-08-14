@@ -1,4 +1,6 @@
 import { bus } from '@/utils/EventBus';
+import { askChoice } from './Choice';
+import { rollRuleNamed } from './RollRules';
 import { dlog, dwarn } from '@/utils/log';
 import { TurnFlow, type TurnPhase } from './TurnFlow';
 import type { Player } from './Player';
@@ -91,18 +93,47 @@ export class TurnManager {
       return;
     }
 
-    if (result.isDoubles) {
-      player.doublesStreak++;
-      if (player.doublesStreak >= this.board.rules.doublesToJail) {
-        player.doublesStreak = 0;
+    // What the roll *means* is a named strategy now — see `game/RollRules.ts`.
+    // The doubles-to-jail `if` that used to be here was the last rule about the
+    // dice a rule set could not replace, and it is why the speed die's triples
+    // rule sat deferred from 8b to 10a.
+    const outcome = rollRuleNamed(this.board.rules.rollRule)({
+      dice: this.dice, result, player, board: this.board, rules: this.board.rules,
+      choose: (prompt, options, then) => askChoice({
+        id: 'roll', playerId: player.id, prompt, options, style: 'board',
+        answer: then,
+      }),
+    });
+
+    switch (outcome.kind) {
+      case 'jail':
         this.sendToJail(player);
         return;
-      }
-    } else {
-      player.doublesStreak = 0;
+      case 'handled':
+        // The rule has something in flight and will finish the turn itself.
+        return;
+      case 'move':
+        this.movePlayer(player, outcome.steps, outcome.again);
     }
+  }
 
-    this.movePlayer(player, result.total, result.isDoubles);
+  /**
+   * Move a player somewhere a *rule* chose rather than somewhere the dice sent
+   * them — the speed die's triples, and anything else that picks a square. The
+   * walk resolves the landing, so the turn ends the way every other one does.
+   */
+  moveChosen(player: Player, tileId: number): void {
+    const path = this.board.pathTo(player.position, tileId);
+    if (path === null || path.length === 0) {
+      this.endTurn();
+      return;
+    }
+    this.board.announcePassing(path, player.id);
+    const from = player.position;
+    player.position = tileId;
+    bus.emit('player:move', {
+      playerId: player.id, from, to: tileId, path, steps: path.length, isDoubles: false,
+    });
   }
 
   /** Called by GameScene after the move tween completes */

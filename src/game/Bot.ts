@@ -214,7 +214,8 @@ export function redeemPlan(ctx: BotContext): number[] {
     .map((id) => board.getTile(id))
     .filter((t): t is Tile & Ownable => isOwnable(t) && t.isMortgaged)
     .filter((t) => canUnmortgage(player, t).ok
-                && player.cash - unmortgageCost(t) >= profile.reserve + profile.buildBuffer)
+                && player.cash - unmortgageCost(t, ctx.board.rules.mortgageInterest)
+                   >= profile.reserve + profile.buildBuffer)
     .sort((a, b) => b.mortgage - a.mortgage)
     .map((t) => t.id);
 }

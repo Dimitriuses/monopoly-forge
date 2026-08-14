@@ -53,7 +53,13 @@ const VARIANTS = value('variants', null);
  * on it. `noAuction` is left out on purpose: it would turn off the auction step
  * this run depends on.
  */
-const HOUSE_RULES = flag('house-rules') ? 'freeParkingJackpot,doubleGoSalary' : null;
+// `--house-rules` exercises the two that add something; `--no-auction` is its
+// own pass because it *removes* the auction step the ordinary run depends on, so
+// it needs the opposite assertion rather than the same ones.
+const NO_AUCTION  = flag('no-auction');
+const HOUSE_RULES = NO_AUCTION ? 'noAuction'
+  : flag('house-rules') ? 'freeParkingJackpot,doubleGoSalary'
+  : null;
 /** Which palette to draw in — `--theme parchment` is the one that is not default. */
 const THEME = value('theme', null);
 
@@ -509,6 +515,7 @@ async function main() {
     let capturedAuction = false;
     /** The most the Free Parking pot ever held — 0 means the rule did nothing. */
     let biggestPot = 0;
+    let declined = 0;      // buy prompts passed on — what noAuction acts upon
     let taxLandings = 0;
     // Asked of the board, not listed here — see the position check below.
     const TAX_TILES = (await page.evaluate(() => window.__forge.board())).taxTiles;
@@ -558,6 +565,7 @@ async function main() {
         // Buy roughly two thirds of what we land on, so the HUD shows spending
         // and later turns start charging rent.
         const declining = buys % 3 === 2;
+        if (declining) declined++;
         await clickGame(page, box, declining ? HOTSPOTS.pass : HOTSPOTS.buy);
         buys++;
         await sleep(450);
@@ -749,7 +757,19 @@ async function main() {
     if (positions.every((p) => p === 0)) problems.push('no token ever left GO');
     if (owned === 0) problems.push('no property was bought in the whole run');
     if (panelTileId === null) problems.push('no owned tile to inspect — the panel was never exercised');
-    if (auctions === 0) problems.push('no property was ever declined into an auction');
+    // With `noAuction` on, a declined property stays unowned — so the assertion
+    // is inverted rather than skipped. A run that quietly checked nothing is how
+    // this rule went untested for four milestones.
+    if (NO_AUCTION) {
+      if (auctions > 0) {
+        problems.push(`the noAuction rule was on and ${auctions} auction(s) still ran`);
+      }
+      if (declined === 0) {
+        problems.push('nothing was declined, so the noAuction rule was never exercised');
+      }
+    } else if (auctions === 0) {
+      problems.push('no property was ever declined into an auction');
+    }
     if (!phases.includes(end.turn.phase)) {
       problems.push(
         `turn manager left in a phase this game's turn does not contain: ` +

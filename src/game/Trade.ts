@@ -1,6 +1,8 @@
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable, type Ownable, type Tile } from '@/tiles/Tile';
 import { groupBuildingCount } from './BuildRules';
+import { chargeMortgageInterest } from './Estate';
+import type { Bank } from './Bank';
 import type { Board } from './Board';
 import type { Player } from './Player';
 
@@ -93,15 +95,23 @@ export function validateTrade(board: Board, players: Player[], offer: TradeOffer
   return ALLOWED;
 }
 
-/** Apply a validated offer. Returns false and changes nothing if it is illegal. */
-export function executeTrade(board: Board, players: Player[], offer: TradeOffer): boolean {
+/**
+ * Apply a validated offer. Returns false and changes nothing if it is illegal.
+ *
+ * `bank` is optional only because a handful of tests trade without one; supply
+ * it and mortgaged deeds cost their new owner the 10% the rules charge for
+ * taking on the debt.
+ */
+export function executeTrade(
+  board: Board, players: Player[], offer: TradeOffer, bank?: Bank,
+): boolean {
   if (!validateTrade(board, players, offer).ok) return false;
 
   const from = players.find((p) => p.id === offer.fromId)!;
   const to   = players.find((p) => p.id === offer.toId)!;
 
-  moveTiles(board, offer.fromTileIds, from, to);
-  moveTiles(board, offer.toTileIds,   to,   from);
+  const toReceives   = moveTiles(board, offer.fromTileIds, from, to);
+  const fromReceives = moveTiles(board, offer.toTileIds,   to,   from);
 
   // Net the cash so neither side needs to be able to front the gross amount.
   const net = offer.fromCash - offer.toCash;
@@ -110,6 +120,15 @@ export function executeTrade(board: Board, players: Player[], offer: TradeOffer)
 
   moveJailCards(from, to, offer.fromJailCards);
   moveJailCards(to, from, offer.toJailCards);
+
+  // After everything has moved and the cash has settled: a player raising money
+  // for the interest must not be able to sell something this trade is still in
+  // the middle of handing over.
+  if (bank) {
+    const rate = board.rules.mortgageInterest;
+    chargeMortgageInterest(board, bank, to, toReceives, rate);
+    chargeMortgageInterest(board, bank, from, fromReceives, rate);
+  }
   return true;
 }
 
@@ -130,13 +149,24 @@ export function describeOffer(board: Board, players: Player[], offer: TradeOffer
 
 // ─── Internals ────────────────────────────────────────────────────────────────
 
-function moveTiles(board: Board, tileIds: number[], from: Player, to: Player): void {
+/**
+ * Move deeds, and return the mortgaged ones so the receiver can be charged the
+ * 10% for taking them on. Both sides of a trade may carry mortgaged deeds, so
+ * both sides may owe — the charge happens after *all* the deeds have moved, or a
+ * player mortgaging to pay could be selling something the trade is about to take.
+ */
+function moveTiles(
+  board: Board, tileIds: number[], from: Player, to: Player,
+): Array<Tile & Ownable> {
+  const mortgaged: Array<Tile & Ownable> = [];
   for (const id of tileIds) {
     const tile = board.getTile(id) as Tile & Ownable;
     tile.ownerId = to.id;
     from.ownedTileIds.delete(id);
     to.ownedTileIds.add(id);
+    if (tile.isMortgaged) mortgaged.push(tile);
   }
+  return mortgaged;
 }
 
 function moveJailCards(from: Player, to: Player, count: number): void {

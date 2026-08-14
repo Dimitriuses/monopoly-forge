@@ -1,5 +1,6 @@
 import { CHANCE_CARDS, COMMUNITY_CHEST_CARDS, type Card } from '@/cards/CardDeck';
 import { resolveRules, type GameRules } from '@/game/Rules';
+import { variantRules } from '@/game/Variants';
 import { validateGame, type Game } from './Game';
 import { loadGame } from './scope';
 import { CLASSIC_GAME } from './classic';
@@ -45,7 +46,13 @@ export const DEFAULT_GAME = CLASSIC_GAME;
 export function rulesFor(game: Game, ...overrides: Array<Partial<GameRules> | undefined>): GameRules {
   const own: Partial<GameRules> = { ...game.rules };
   if (game.variants?.length) own.variants = game.variants;
-  return resolveRules(own, ...overrides);
+
+  // Which variants are on has to be settled *first*, because a variant may bring
+  // rule values with it — the speed die selects its own triples rule — and those
+  // have to be in place before the game's and the player's layer over them. A
+  // variant brings a default; it never overrules a choice.
+  const chosen = resolveRules(own, ...overrides).variants;
+  return resolveRules(variantRules(chosen), own, ...overrides);
 }
 
 /** The decks a game deals from; the classic ones for a game that does not care. */

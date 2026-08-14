@@ -21,6 +21,10 @@ export interface AuctionView {
   highBidderName: string | null;
   /** Bid amounts to offer; any the bidder cannot cover are drawn dead. */
   options: number[];
+  /** The least this bidder may bid — the high bid plus one increment. */
+  minimum: number;
+  /** What one press of the stepper moves the free-form bid by. */
+  increment: number;
   /** Everyone still in the running, in seat order. */
   remaining: string[];
   secondsPerBid: number;
@@ -37,6 +41,12 @@ export class AuctionPanel {
   private onPass: () => void;
   private timer: Phaser.Time.TimerEvent | null = null;
   private clockBar: Phaser.GameObjects.Rectangle | null = null;
+  /**
+   * The free-form bid, kept across renders — the panel redraws on every tick of
+   * the clock, and a value reset by that would be unusable. Clamped to the
+   * current bidder's means each render, so it is always a bid they could make.
+   */
+  private custom = 0;
 
   constructor(
     scene: Phaser.Scene,
@@ -121,6 +131,52 @@ export class AuctionPanel {
       .setOrigin(0, 0);
     this.container.add(this.clockBar);
 
+    // ── A bid of any amount ───────────────────────────────────────────────────
+    // The three quick buttons are the common raises; this is the one a player
+    // actually wants when the room is close. Clamped to what they can cover and
+    // to the minimum, so a nudge can never produce an illegal bid.
+    this.custom = Math.max(view.minimum, Math.min(this.custom, view.bidderCash));
+
+    for (const [key, delta, x] of [['minus', -1, -W / 2 + 20], ['plus', 1, -W / 2 + 96]] as const) {
+      s.button(`custom:${key}`, x, 122, {
+        label: delta < 0 ? '−' : '+',
+        style: {
+          fontFamily: t.font.display, fontSize: '15px', color: t.panel.button.text,
+          backgroundColor: t.panel.button.on, padding: { x: 12, y: 6 },
+          fixedWidth: 42, align: 'center',
+        },
+        hover: { on: t.panel.button.hover, off: t.panel.button.on },
+        origin: [0, 0.5],
+        onPress: () => {
+          this.custom = Math.max(
+            view.minimum,
+            Math.min(view.bidderCash, this.custom + delta * view.increment),
+          );
+          this.show(view);
+        },
+      });
+    }
+
+    const canBidCustom = this.custom <= view.bidderCash && this.custom >= view.minimum;
+    s.button('custom:bid', -W / 2 + 146, 122, {
+      label: `Bid $${this.custom.toLocaleString()}`,
+      style: {
+        fontFamily: t.font.display, fontSize: '14px',
+        color: canBidCustom ? t.panel.button.text : t.panel.button.textOff,
+        backgroundColor: canBidCustom ? t.panel.button.on : t.panel.button.off,
+        padding: { x: 10, y: 6 }, fixedWidth: 234, align: 'center',
+      },
+      hover: canBidCustom
+        ? { on: t.panel.button.hover, off: t.panel.button.on }
+        : undefined,
+      origin: [0, 0.5],
+      onPress: () => {
+        if (!canBidCustom) return;
+        this.stopClock();
+        this.onBid(this.custom);
+      },
+    });
+
     // ── Bid buttons ───────────────────────────────────────────────────────────
     view.options.forEach((amount, i) => {
       const affordable = amount <= view.bidderCash;
@@ -164,6 +220,22 @@ export class AuctionPanel {
     s.end();
     this.container.setVisible(true);
     this.startClock(view.secondsPerBid);
+  }
+
+  /**
+   * Where the free-form controls are, for the harness. The same bargain
+   * `TradePanel.spots()` makes: a panel that decides its own layout reports it,
+   * rather than a table of coordinates being recomputed by hand.
+   */
+  spots(): Record<string, { x: number; y: number }> {
+    const at = (x: number, y: number) => ({
+      x: this.container.x + x, y: this.container.y + y,
+    });
+    return {
+      bidMinus:  at(-210 + 20 + 21, 122),
+      bidPlus:   at(-210 + 96 + 21, 122),
+      bidCustom: at(-210 + 146 + 117, 122),
+    };
   }
 
   // ── Clock ───────────────────────────────────────────────────────────────────

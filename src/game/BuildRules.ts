@@ -3,6 +3,7 @@ import type { Ownable, Tile } from '@/tiles/Tile';
 import type { Board } from './Board';
 import type { Bank } from './Bank';
 import type { Player } from './Player';
+import { CLASSIC_RULES } from './Rules';
 
 // ─── Build rules ──────────────────────────────────────────────────────────────
 // The legality half of development. `Bank` moves cash and inventory and asks no
@@ -115,17 +116,25 @@ export function canMortgage(board: Board, player: Player, tile: Tile & Ownable):
   return ALLOWED;
 }
 
-export function canUnmortgage(player: Player, tile: Ownable): RuleCheck {
+/** `rate` is `board.rules.mortgageInterest`; the default is the classic 10%. */
+export function canUnmortgage(
+  player: Player, tile: Ownable, rate = CLASSIC_RULES.mortgageInterest,
+): RuleCheck {
   if (tile.ownerId !== player.id) return denied(`${tile.name} is not yours.`);
   if (!tile.isMortgaged)          return denied(`${tile.name} is not mortgaged.`);
-  const cost = unmortgageCost(tile);
+  const cost = unmortgageCost(tile, rate);
   if (!player.canAfford(cost))    return denied(`Lifting the mortgage costs $${cost}.`);
   return ALLOWED;
 }
 
-/** 110% of the mortgage value, matching Bank.unmortgage. */
-export function unmortgageCost(tile: Ownable): number {
-  return Math.floor(tile.mortgage * 1.1);
+/**
+ * The mortgage back, plus interest — the *second* of the two charges the printed
+ * rules make. The rate is a rule value rather than a literal `1.1`, so the one
+ * number governs both halves: a game that turns interest off turns off the
+ * transfer fee and this together.
+ */
+export function unmortgageCost(tile: Ownable, rate = CLASSIC_RULES.mortgageInterest): number {
+  return Math.floor(tile.mortgage * (1 + rate));
 }
 
 // ─── Shared preconditions ─────────────────────────────────────────────────────

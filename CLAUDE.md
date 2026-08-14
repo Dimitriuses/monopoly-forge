@@ -195,6 +195,26 @@ is `registerTileType(name, factory)` in `tiles/registry.ts`; a new card effect i
 the set in the first place. A card effect gets a small context, not the
 `CardEffects` instance: keep what an effect may touch visible in one place.
 
+**7g. "Which one?" is `askChoice`, and it owes a bot an answer.**
+`game/Choice.ts`. A choice is data — options with weights — and both drivers
+answer it: `GameScene` shows a list, or highlights tiles and takes a board click
+when the options *are* tiles; `sim/Runner` hands it straight to the heaviest
+option. **Both halves are needed, and the answer needs a home too**: the first
+batch after triples landed hung 69 of 80 Speed Die games because `choice:ask` was
+answered and the `roll:chosen` it replied with had no handler in the runner. A
+rule that asks must also survive nobody listening — `askChoice` returns false and
+the caller falls back rather than parking the turn for ever.
+
+**7h. What a roll *means* is `rules.rollRule`.** `game/RollRules.ts`, the fifth
+registered strategy. A rule returns **what should happen** — `move`, `jail`, or
+`handled` when it has a prompt in flight — and `TurnManager` does it. A rule that
+moved a player itself would be a second mover and the phase pipeline would have
+two things deciding when a turn ends. Never put an `if` about the dice back into
+`rollDice`; that `if` is why the triples rule sat deferred from 8b to 10a.
+**A variant may bring rule values** (`Variant.rules`), layered under the game's
+and the player's — without it the speed die could register a roll rule and had no
+way to select it.
+
 **7f. A tile's rule may mention somebody else, and then it is an effect.**
 `Tile.onLand(playerId)` gets an id and nothing else. That is enough for every
 built-in — a lot knows its own rent — and useless for "collect $50 from every
@@ -234,6 +254,14 @@ and nothing more. What is actually charged — doubled for an unimproved colour
 group, scaled by how many railroads the owner holds, ten times the dice when a
 card sent the player there — comes from `quoteRent` in `game/Rent.ts`. Resolve
 rent there, not in a scene handler, so it stays testable in Node.
+
+**9b. A mortgaged deed costs its new owner 10% to receive.** Charged on all
+three transfer paths — trade, auction, bankrupt estate — from one place,
+`chargeMortgageInterest` in `game/Estate.ts`, and *after* the deeds have moved so
+a player raising the money cannot sell what the transfer is still handing over.
+The rate is `rules.mortgageInterest` and governs the lift charge too, so one
+number turns the whole rule off. Add a fourth way for a deed to change hands and
+it owes this call.
 
 **9. Nobody pays a debt with `player.pay`.** `pay` clamps at zero, so using it
 directly makes a debt the player cannot cover silently disappear. Every charge —

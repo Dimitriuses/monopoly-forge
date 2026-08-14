@@ -149,6 +149,18 @@ swap, so four players who are never simultaneously one-lot-short of two differen
 groups will never complete one. A stronger trading policy would shrink this, and
 the simulator is now the thing that could measure whether it did.
 
+### Three things a bot still cannot be asked
+
+*Narrowed in M10a.* `game/Choice.ts` closed the "nothing can ask a player to pick
+a tile" gap — triples, the contested-house lot, Ultimate Monopoly's Subway and
+its Auction square all ask a real question now, and a bot answers by weight.
+
+What is left is narrower and worth stating separately: a bot's answer is only as
+good as the weight the *asker* supplies. Triples weights every tile by price, so
+a bot always jumps to Boardwalk — correct often and not always, because it takes
+no account of what the bot already owns or of what it would have to pay to land
+there. The weights are a first pass, not a policy.
+
 ### The menu can set a rule that the game it is set for refuses
 
 *Added in M10d.*

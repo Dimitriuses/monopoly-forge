@@ -50,13 +50,15 @@ const MAX_BOT_BUILDS = 6;
 const BOT_CARD_LINGER = 1600;
 /** How quickly the tokens already on a tile shuffle over to make room. */
 const CLUSTER_SHUFFLE = 140;
-import { settleDebt, announceSettlement } from '@/game/Estate';
+import { settleDebt, announceSettlement, chargeMortgageInterest } from '@/game/Estate';
 import {
   payRent, payTax, drawCard, isSelfTerminating, applyLandingRules, type LandingContext,
 } from '@/game/Landing';
 import {
   applyTileEffect, effectContext, type TileEffectPayload,
 } from '@/game/TileEffects';
+import { askChoice, preferredOption, type ChoiceRequest } from '@/game/Choice';
+import { Menu } from '@/ui/Menu';
 import { gameById, decksFor, rulesFor, GAMES } from '@/games';
 import { Auction, tileSubject, type AuctionSubject } from '@/game/Auction';
 import {
@@ -194,6 +196,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** What the model needs to resolve a landing — see `game/Landing.ts`. */
+  /** The question on screen, or null. Saving is refused while one is open. */
+  private pendingChoice: ChoiceRequest | null = null;
+  private choiceMenu: Menu | null = null;
+
   private landingContext(): LandingContext {
     return {
       board: this.board, bank: this.bank, players: this.players,
@@ -765,7 +771,7 @@ export class GameScene extends Phaser.Scene {
     // Asked again rather than assumed: `proposeTrade` searched with the same
     // policy, and if the two ever disagree the trade should simply not happen.
     if (!acceptTrade(this.botContext(partner), offer)) return;
-    if (!executeTrade(this.board, this.players, offer)) return;
+    if (!executeTrade(this.board, this.players, offer, this.bank)) return;
 
     this.notif.show(`🤝 ${describeOffer(this.board, this.players, offer)}.`, 'success');
     dlog(`[Bot] ${describeOffer(this.board, this.players, offer)}`);
@@ -937,6 +943,7 @@ export class GameScene extends Phaser.Scene {
     if (this.auction)            return 'Something is under the hammer';
     if (this.auctionQueue.length) return 'An estate is waiting to be auctioned';
     if (this.tradePanel.isOpen)  return 'A trade is half built';
+    if (this.pendingChoice)      return 'Something is waiting to be chosen';
     return null;
   }
 
@@ -973,6 +980,7 @@ export class GameScene extends Phaser.Scene {
       saveReason: blocked ?? undefined,
       gameId: this.gameId,
       round: this.turnManager.round,
+      transcript: () => this.notif.transcript(),
       onSave: (slot: number) => this.saveGame(slot),
       onQuit: () => {
         this.scene.stop('PauseScene');
@@ -1104,7 +1112,7 @@ export class GameScene extends Phaser.Scene {
         break;
       case 'accept': {
         const summary = describeOffer(this.board, this.players, offer);
-        if (executeTrade(this.board, this.players, offer)) {
+        if (executeTrade(this.board, this.players, offer, this.bank)) {
           this.notif.show(`Trade agreed — ${summary}.`, 'success');
           this.boardView.refresh();
           this.pushUIUpdate();
@@ -1169,6 +1177,8 @@ export class GameScene extends Phaser.Scene {
       // The minimum plus whatever jumps the rule set offers, so bidding does not
       // take twenty clicks — and so a map or a variant can offer different ones.
       options: this.rules.bidSteps.map((step) => auction.minimumBid + step),
+      minimum: auction.minimumBid,
+      increment: this.rules.bidIncrement,
       remaining: auction.bidders.map((p) => p.name),
       secondsPerBid: this.rules.auctionSeconds,
     };
@@ -1241,7 +1251,14 @@ export class GameScene extends Phaser.Scene {
   private awardAuction(subject: AuctionSubject, winner: Player, amount: number): void {
     if (subject.kind === 'tile') {
       const tile = this.board.getTile(subject.id);
-      if (isOwnable(tile)) this.bank.sellPropertyToPlayer(winner, tile, amount);
+      if (isOwnable(tile)) {
+        this.bank.sellPropertyToPlayer(winner, tile, amount);
+        // A deed can come to auction still mortgaged — out of a bankrupt estate,
+        // most often — and taking it on costs the same 10% a trade does.
+        chargeMortgageInterest(
+          this.board, this.bank, winner, [tile], this.rules.mortgageInterest,
+        );
+      }
       return;
     }
     if (subject.kind === 'house') {
@@ -1327,16 +1344,52 @@ export class GameScene extends Phaser.Scene {
     const contention = this.houseContention;
     if (!contention) return;
 
-    // Whoever asked for it gets the lot they asked for; anyone else gets the
-    // cheapest they could legally build on. See `game/Contention.ts`.
+    // Whoever asked for it gets the lot they asked for; anyone else is *asked*
+    // where it goes rather than given the cheapest — the winner choosing was the
+    // last of 10a's four corners, and it needed the prompt triples needed.
     const requested = contention.requestedBy === winner.id ? contention.lot : null;
+    const claim = contention.claims.find((c) => c.player.id === winner.id);
+    const legal = (claim?.lots ?? []).filter(
+      (lot) => canBuildHouse(this.board, this.bank, winner, lot).ok,
+    );
+
+    if (!requested && legal.length > 1) {
+      const asked = askChoice({
+        id: 'houseLot',
+        playerId: winner.id,
+        prompt: `Where does ${winner.name}'s house go?`,
+        style: 'list',
+        // A bot takes the dearest lot it may build on, which is where a house is
+        // worth most — the cheapest-first fallback was never a strategy, just an
+        // order.
+        options: legal.map((lot) => ({
+          id: String(lot.id), label: `${lot.name} — $${lot.houseCost}`,
+          tileId: lot.id, weight: lot.rentTiers[1],
+        })),
+        answer: (optionId) => this.placeContestedHouse(winner, Number(optionId), amount),
+      });
+      if (asked) return;
+    }
+
     const lot = nominateLot(contention.claims, winner, requested);
-    if (!lot || !canBuildHouse(this.board, this.bank, winner, lot).ok) {
+    if (!lot) {
+      dwarn(`[GameScene] ${winner.name} won a house with nowhere left to put it`);
+      return;
+    }
+    this.placeContestedHouse(winner, lot.id, amount);
+  }
+
+  /** Put a contested house on a lot, wherever the choice landed. */
+  private placeContestedHouse(winner: Player, tileId: number, amount: number): void {
+    const lot = this.board.getTile(tileId);
+    if (!(lot instanceof PropertyTile) || !canBuildHouse(this.board, this.bank, winner, lot).ok) {
       dwarn(`[GameScene] ${winner.name} won a house with nowhere left to put it`);
       return;
     }
     this.bank.buyHouse(winner, lot, amount);
     this.notif.show(`${winner.name} put the house on ${lot.name}.`, 'success');
+    this.boardView.refresh();
+    this.pushUIUpdate();
   }
 
   /**
@@ -1400,10 +1453,64 @@ export class GameScene extends Phaser.Scene {
     return victim.id;
   }
 
+  // ── Choices ───────────────────────────────────────────────────────────────────
+  // "Which one?", from the model, answered by whoever is sitting here. Two
+  // shapes, because two shapes are genuinely needed: a list when the options are
+  // few, and the board itself when they are tiles and there are many — clicking
+  // through 120 rows is not a prompt.
+
+  private askChoiceOnScreen(request: ChoiceRequest): void {
+    const player = this.players.find((p) => p.id === request.playerId);
+
+    // A bot's choice is answered, never shown — the rule every prompt has owed
+    // since M7, and the reason a modal cannot simply wait for a click.
+    if (!player || player.isBot) {
+      request.answer(preferredOption(request).id);
+      return;
+    }
+
+    this.pendingChoice = request;
+    this.setRollEnabled(false);
+
+    if (request.style === 'board') {
+      this.boardView.setChoosable(request.options.map((o) => o.tileId!).filter(Number.isFinite));
+      this.notif.show(request.prompt, 'info');
+      return;
+    }
+
+    this.choiceMenu?.destroy();
+    this.choiceMenu = new Menu(this, () => ({
+      title: request.prompt,
+      items: request.options.map((option) => ({
+        id: option.id,
+        label: option.label,
+        onPress: () => this.answerChoice(option.id),
+      })),
+    }), 400);
+    this.choiceMenu.render();
+  }
+
+  private answerChoice(optionId: string): void {
+    const request = this.pendingChoice;
+    if (!request) return;
+    this.pendingChoice = null;
+    this.choiceMenu?.destroy();
+    this.choiceMenu = null;
+    this.boardView.setChoosable([]);
+    request.answer(optionId);
+  }
+
   // ── Property panel ────────────────────────────────────────────────────────────
 
   /** Board click: inspect a tile, or close the panel by clicking it again. */
   private selectTile(tileId: number): void {
+    // A board-style choice takes the click first: while one is open the board is
+    // the prompt, not the inspector.
+    if (this.pendingChoice?.style === 'board') {
+      const option = this.pendingChoice.options.find((o) => o.tileId === tileId);
+      if (option) this.answerChoice(option.id);
+      return;
+    }
     if (this.auction) return;   // the board is not up for inspection mid-auction
     if (this.panel.isOpen && this.panel.tileId === tileId) {
       this.panel.hide();
@@ -1518,7 +1625,7 @@ export class GameScene extends Phaser.Scene {
       facts.push(`Price  $${tile.price}`);
       if (property) facts.push(`House / hotel  $${property.houseCost} each`);
       facts.push(`Mortgage value  $${tile.mortgage}`);
-      facts.push(`Lift mortgage  $${unmortgageCost(tile)}`);
+      facts.push(`Lift mortgage  $${unmortgageCost(tile, this.rules.mortgageInterest)}`);
     } else {
       facts.push(this.describeTile(tile));
     }
@@ -1633,7 +1740,8 @@ export class GameScene extends Phaser.Scene {
     }
     actions.push(
       button('mortgage', `Mortgage  +$${tile.mortgage}`, canMortgage(this.board, player, tile)),
-      button('unmortgage', `Redeem  −$${unmortgageCost(tile)}`, canUnmortgage(player, tile)),
+      button('unmortgage', `Redeem  −$${unmortgageCost(tile, this.rules.mortgageInterest)}`,
+             canUnmortgage(player, tile, this.rules.mortgageInterest)),
     );
     return actions;
   }
@@ -1830,6 +1938,17 @@ export class GameScene extends Phaser.Scene {
     // A tile asking for a rule it cannot resolve alone. The effect finishes the
     // landing the way any other tile does — `player:landed`, or a move whose walk
     // resolves it — so there is deliberately no `safeEndTurn` here.
+    bus.on<ChoiceRequest>('choice:ask', (request) => this.askChoiceOnScreen(request));
+
+    // A roll rule chose a square — the speed die's triples. The walk resolves the
+    // landing, so this must not also end the turn.
+    bus.on<{ playerId: string; tileId: number }>('roll:chosen', ({ playerId, tileId }) => {
+      const player = this.players.find((p) => p.id === playerId);
+      if (!player) return;
+      this.notif.show(`${player.name} moves to ${this.board.getTile(tileId).name}.`, 'info');
+      this.turnManager.moveChosen(player, tileId);
+    });
+
     bus.on<TileEffectPayload>('tile:effect', (payload) => {
       applyTileEffect(effectContext(this.landingContext()), payload);
       this.pushUIUpdate();

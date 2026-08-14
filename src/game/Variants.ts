@@ -26,6 +26,14 @@ export interface Variant {
   apply?(flow: TurnFlow): void;
   /** Supply the dice the variant is played with. */
   dice?(rules: GameRules): Dice;
+  /**
+   * Rule values the variant implies. A variant that registers a roll rule has to
+   * be able to *select* it, or turning the variant on would leave the rule
+   * registered and unused — which is exactly what happened to the speed die's
+   * triples between 8b and 10a. Layered under the game's own and the player's,
+   * so neither is overridden by switching a variant on.
+   */
+  rules?: Partial<GameRules>;
 }
 
 export const VARIANTS = new Registry<Variant>('variants');
@@ -47,6 +55,20 @@ export function variantNamed(name: string): Variant {
     );
   }
   return variant;
+}
+
+/**
+ * The rule values every switched-on variant implies, in the order named. Layered
+ * *under* the game's rules and the player's overrides — a variant may bring a
+ * default, never overrule a choice.
+ */
+export function variantRules(names: string[]): Partial<GameRules> {
+  let merged: Partial<GameRules> = {};
+  for (const name of names) {
+    const variant = VARIANTS.get(name);
+    if (variant?.rules) merged = { ...merged, ...variant.rules };
+  }
+  return merged;
 }
 
 /** Every variant a rule set switched on, in the order it named them. */

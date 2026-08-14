@@ -5,6 +5,7 @@ import { theme, setTheme, knownThemes } from '@/ui/Theme';
 import { bakeTokenTextures, bakeBuildingTextures } from '@/ui/Textures';
 import { Menu, backItem, type MenuItem, type MenuScreen } from '@/ui/Menu';
 import { sfx } from '@/ui/Sfx';
+import { copyText, downloadText, transcriptFilename } from '@/ui/Download';
 
 // ─── PauseScene ───────────────────────────────────────────────────────────────
 // The same menu as the title screen, over a game in progress.
@@ -26,6 +27,8 @@ export interface PauseData {
   /** Called with the chosen slot; the scene stays open so a failure is visible. */
   onSave(slot: number): void;
   onQuit(): void;
+  /** The whole game as text, for copying or saving. */
+  transcript(): string;
   /** Which game is being played, for the slot list. */
   gameId: string;
   round: number;
@@ -42,6 +45,8 @@ export class PauseScene extends Phaser.Scene {
   private paused!: PauseData;
   /** Set after a save, so the row can say so rather than looking inert. */
   private savedTo: number | null = null;
+  /** What happened to the last log export, shown on the row. */
+  private logNote: string | null = null;
 
   constructor() {
     super({ key: 'PauseScene' });
@@ -80,6 +85,9 @@ export class PauseScene extends Phaser.Scene {
         enabled: this.paused.canSave,
         reason: this.paused.saveReason ?? 'Finish what you are doing first',
         onPress: () => this.menu.open(() => this.saveScreen()) },
+      { id: 'log', label: 'Turn log', kind: 'submenu',
+        value: this.logNote ?? undefined,
+        onPress: () => this.menu.open(() => this.logScreen()) },
       { id: 'settings', label: 'Settings', kind: 'submenu',
         onPress: () => this.menu.open(() => this.settingsScreen()) },
       { id: 'quit', label: 'Quit to menu', kind: 'submenu',
@@ -103,6 +111,40 @@ export class PauseScene extends Phaser.Scene {
     }));
     items.push(backItem(this.menu));
     return { title: 'Save', subtitle: 'Choose a slot', items };
+  }
+
+  /**
+   * The log has kept the whole game since M8c with no way to read one
+   * afterwards. Two rows because neither route works everywhere: the clipboard
+   * is what somebody usually wants and browsers refuse it outside a secure
+   * context, and a file always works but is heavier. Each says what happened
+   * rather than failing quietly.
+   */
+  private logScreen(): MenuScreen {
+    const lines = this.paused.transcript().split('\n').filter(Boolean).length;
+    return {
+      title: 'Turn log',
+      subtitle: lines ? `${lines} entries this game` : 'Nothing logged yet',
+      items: [
+        { id: 'log.copy', label: 'Copy to the clipboard',
+          enabled: lines > 0, reason: 'There is nothing to copy yet',
+          onPress: () => {
+            void copyText(this.paused.transcript()).then((ok) => {
+              this.logNote = ok ? 'copied' : 'the browser refused — try Save instead';
+              this.menu.render();
+            });
+          } },
+        { id: 'log.save', label: 'Save as a text file',
+          enabled: lines > 0, reason: 'There is nothing to save yet',
+          onPress: () => {
+            const ok = downloadText(transcriptFilename(this.paused.gameId),
+                                    this.paused.transcript());
+            this.logNote = ok ? 'saved' : 'the browser refused';
+            this.menu.render();
+          } },
+        backItem(this.menu),
+      ],
+    };
   }
 
   private settingsScreen(): MenuScreen {

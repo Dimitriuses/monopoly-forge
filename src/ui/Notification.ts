@@ -74,6 +74,16 @@ export class Notification {
     });
   }
 
+  /**
+   * The whole game as plain text, oldest first — the order somebody reading it
+   * expects, which is the reverse of how it is drawn.
+   */
+  transcript(): string {
+    return [...this.log].reverse()
+      .map((entry) => `[${entry.type}] ${entry.message}`)
+      .join('\n');
+  }
+
   /** Everything logged, newest first. Read-only — `show` is the way in. */
   get log(): readonly LogEntry[] {
     return this.history;

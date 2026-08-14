@@ -2,6 +2,7 @@ import { validateMap, type GameMap, type MapProblem } from '@/maps';
 import { knownTurnOrders, knownWinConditions } from '@/game/TurnFlow';
 import { knownVariants } from '@/game/Variants';
 import { knownMovements } from '@/game/Movement';
+import { knownRollRules } from '@/game/RollRules';
 import type { GameRules } from '@/game/Rules';
 import type { Card } from '@/cards/CardDeck';
 
@@ -101,6 +102,9 @@ export function validateGame(game: Game): GameProblem[] {
   }
   if (rules?.winCondition && !knownWinConditions().includes(rules.winCondition)) {
     complain(game.id, `asks for win condition "${rules.winCondition}", which is not registered`);
+  }
+  if (rules?.rollRule && !knownRollRules().includes(rules.rollRule)) {
+    complain(game.id, `asks for roll rule "${rules.rollRule}", which is not registered`);
   }
   if (rules?.movement && !knownMovements().includes(rules.movement)) {
     complain(game.id, `asks for movement "${rules.movement}", which is not registered`);

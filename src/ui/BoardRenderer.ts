@@ -51,6 +51,8 @@ export class BoardRenderer {
   /** Building sprites and mortgage marks, rebuilt on every refresh. */
   private stateObjects: Phaser.GameObjects.GameObject[] = [];
   private selectedId: number | null = null;
+  /** Tiles a board-style choice will accept — see `setChoosable`. */
+  private choosable: number[] = [];
 
   constructor(
     scene: Phaser.Scene,
@@ -189,9 +191,32 @@ export class BoardRenderer {
   }
 
   /** Ring the given tile, or clear the ring when passed null. */
+  /**
+   * Ring the tiles a board-style choice will accept. Drawn on the same layer as
+   * the selection, and cleared by it — the two are never wanted at once, because
+   * while a choice is open the board *is* the prompt rather than the inspector.
+   */
+  setChoosable(tileIds: number[]): void {
+    this.choosable = tileIds;
+    this.setSelected(this.selectedId);
+  }
+
   setSelected(tileId: number | null): void {
     this.selectedId = tileId;
     this.selection.clear();
+
+    for (const id of this.choosable) {
+      const layout = this.board.getLayout(id);
+      this.selection.save();
+      this.selection.translateCanvas(layout.x, layout.y);
+      this.selection.rotateCanvas(Phaser.Math.DegToRad(layout.rotation));
+      this.selection.lineStyle(3, theme().board.selection, 0.9);
+      this.selection.strokeRect(
+        -layout.w / 2 + 1, -layout.h / 2 + 1, layout.w - 2, layout.h - 2,
+      );
+      this.selection.restore();
+    }
+
     if (tileId === null) return;
 
     const layout = this.board.getLayout(tileId);

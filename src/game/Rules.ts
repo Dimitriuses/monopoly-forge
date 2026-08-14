@@ -12,6 +12,7 @@
 // imports this file. Erased at compile time, there is no cycle at runtime.
 import type { BuiltInTurnOrder, BuiltInWinCondition } from './TurnFlow';
 import type { BuiltInMovement } from './Movement';
+import type { BuiltInRollRule } from './RollRules';
 
 export interface GameRules {
   /** What each player starts with. */
@@ -23,11 +24,24 @@ export interface GameRules {
   jailTerm: number;
   /** Consecutive doubles that send a player to jail. */
   doublesToJail: number;
+  /**
+   * What a roll *means* — `'classic'` is doubles roll again, three go to jail.
+   * A named strategy so a rule set can say what a *triple* means; see
+   * `game/RollRules.ts`.
+   */
+  rollRule: BuiltInRollRule | (string & {});
   /** How many houses the bank owns. The supply is deliberately finite. */
   houseLimit: number;
   hotelLimit: number;
   /** Houses a lot needs before it can take a hotel. */
   housesBeforeHotel: number;
+  /**
+   * Interest on a mortgage, as a fraction. Charged **twice** in the printed
+   * game and both are now honoured: once when a mortgaged deed changes hands,
+   * and once when it is lifted. Zero turns the whole rule off, which is what the
+   * engine did until M10a.
+   */
+  mortgageInterest: number;
   /**
    * What an unimproved lot charges when its owner holds the whole colour group.
    * Two in the classic rules, and the literal `* 2` it replaced was the last
@@ -94,9 +108,11 @@ export const CLASSIC_RULES: GameRules = {
   jailFine: 50,
   jailTerm: 3,
   doublesToJail: 3,
+  rollRule: 'classic',
   houseLimit: 32,
   hotelLimit: 12,
   housesBeforeHotel: 4,
+  mortgageInterest: 0.1,
   monopolyRent: 2,
   majorityRent: 1,
   houseAuctions: true,

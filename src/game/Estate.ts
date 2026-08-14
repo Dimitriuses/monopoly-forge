@@ -145,9 +145,50 @@ export function settleDebt(
 }
 
 /**
+ * What a player owes for *receiving* mortgaged deeds — the 10% the printed rules
+ * charge the moment a mortgaged property changes hands, whether by trade, by
+ * auction or out of a bankrupt estate.
+ *
+ * Written once and called from all three, because until M10a none of them
+ * charged it: the deeds moved still mortgaged and the new owner inherited the
+ * debt for nothing. All three agreed with each other, which is exactly why it
+ * never looked wrong, and none agreed with the rules.
+ *
+ * The *second* charge — 10% again when the mortgage is actually lifted — has
+ * always been in `BuildRules.unmortgageCost`, so this is the half that was
+ * missing rather than the whole rule.
+ */
+export function mortgageTransferFee(tiles: Array<Tile & Ownable>, rate: number): number {
+  if (rate <= 0) return 0;
+  return tiles
+    .filter((tile) => tile.isMortgaged)
+    .reduce((owed, tile) => owed + Math.round(tile.mortgage * rate), 0);
+}
+
+/**
+ * Charge it, through `settleDebt` like every other charge — a player who cannot
+ * cover the interest on an estate they have just inherited sells, mortgages and
+ * if necessary goes under, which is the same chain everything else uses. Never
+ * `player.pay`, which clamps at zero and would make the debt vanish.
+ */
+export function chargeMortgageInterest(
+  board: Board, bank: Bank, player: Player, tiles: Array<Tile & Ownable>, rate: number,
+): number {
+  const owed = mortgageTransferFee(tiles, rate);
+  if (owed <= 0) return 0;
+  const settlement = settleDebt(board, bank, player, null, owed);
+  announceSettlement(player, null, settlement);
+  bus.emit('ui:notification', {
+    message: `${player.name} paid $${owed} interest on mortgaged deeds.`,
+    type: 'warning',
+  });
+  return owed;
+}
+
+/**
  * Hand a bankrupt player's holdings to their creditor, or back to the bank when
  * there isn't one. Mortgaged deeds stay mortgaged — the new owner inherits the
- * debt, which is what the rules say and what keeps the board's total consistent.
+ * debt, and now also the 10% interest the rules charge for taking it on.
  */
 export function transferEstate(
   board: Board, bank: Bank, debtor: Player, creditor: Player | null,
@@ -176,6 +217,18 @@ export function transferEstate(
         ? `${tiles.length} deed(s) passed to ${creditor.name}`
         : `${tiles.length} deed(s) returned to the bank`,
     );
+  }
+
+  // Interest on whatever came over mortgaged. Charged *after* the deeds have
+  // moved, so a creditor who cannot cover it can mortgage the very estate they
+  // have just inherited — which is what `settleDebt` will reach for, and what
+  // the printed rules leave you to do.
+  if (creditor) {
+    const owed = chargeMortgageInterest(
+      board, bank, creditor,
+      tiles.filter((t) => t.isMortgaged), board.rules.mortgageInterest,
+    );
+    if (owed > 0) actions.push(`${creditor.name} paid $${owed} mortgage interest`);
   }
 
   if (debtor.jailCards.length) {

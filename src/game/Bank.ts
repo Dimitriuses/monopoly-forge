@@ -1,7 +1,8 @@
 import { CLASSIC_RULES, type GameRules } from './Rules';
 
 /** The slice of the rule set the bank actually needs. */
-type BankRules = Pick<GameRules, 'houseLimit' | 'hotelLimit' | 'housesBeforeHotel'>;
+type BankRules = Pick<GameRules,
+  'houseLimit' | 'hotelLimit' | 'housesBeforeHotel' | 'mortgageInterest'>;
 import type { Player } from './Player';
 import type { PropertyTile } from '@/tiles/PropertyTile';
 import type { Ownable } from '@/tiles/Tile';
@@ -17,10 +18,15 @@ export class Bank {
   readonly housesPerHotel: number;
 
   /** The building supply is finite, and how finite is a rule. */
+  /** What lifting a mortgage costs over the mortgage itself. */
+  readonly mortgageInterest: number;
+
+  /** The building supply is finite, and how finite is a rule. */
   constructor(rules: BankRules = CLASSIC_RULES) {
     this.houses = rules.houseLimit;
     this.hotels = rules.hotelLimit;
     this.housesPerHotel = rules.housesBeforeHotel;
+    this.mortgageInterest = rules.mortgageInterest;
   }
 
   // ─── Cash transfers ──────────────────────────────────────────────────────────
@@ -68,7 +74,10 @@ export class Bank {
   }
 
   unmortgage(player: Player, tile: Ownable): boolean {
-    const cost = Math.floor(tile.mortgage * 1.1); // 110% of mortgage value
+    // The rate is the rule set's, not a literal — `mortgageInterest` governs both
+    // this and the fee for *receiving* a mortgaged deed, so one number turns the
+    // whole rule off.
+    const cost = Math.floor(tile.mortgage * (1 + this.mortgageInterest));
     if (tile.ownerId !== player.id || !tile.isMortgaged || !player.canAfford(cost)) return false;
     tile.isMortgaged = false;
     player.pay(cost);

@@ -167,7 +167,11 @@ describe('Estate — settling a debt', () => {
     expect(ann.isBankrupt).toBe(true);
     expect(ann.ownedTileIds.size).toBe(0);
 
-    expect(bo.cash).toBe(1570);
+    // 1500 + 70 raised, less 10% interest on the two mortgaged deeds ($3 each)
+    // that came over with the estate. Inheriting a mortgage is not free — see
+    // `chargeMortgageInterest`.
+    expect(bo.cash).toBe(1564);
+    expect(settlement.actions.join()).toMatch(/paid \$6 mortgage interest/);
     expect(bo.ownedTileIds.has(MEDITERRANEAN)).toBe(true);
     expect(bo.ownedTileIds.has(BALTIC)).toBe(true);
     expect((board.getTile(MEDITERRANEAN) as PropertyTile).ownerId).toBe('p2');

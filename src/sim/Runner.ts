@@ -26,6 +26,8 @@ import { gameById, decksFor, rulesFor, type Game } from '@/games';
 import {
   applyTileEffect, effectContext, type TileEffectPayload,
 } from '@/game/TileEffects';
+import { preferredOption, type ChoiceRequest } from '@/game/Choice';
+import { chargeMortgageInterest } from '@/game/Estate';
 import { checkInvariants, type Violation } from './Invariants';
 import type { ArrivalRent } from '@/game/Rent';
 
@@ -251,6 +253,21 @@ class Simulation {
       applyTileEffect(effectContext(this.context()), payload);
     });
 
+    // A prompt with no bot path waits for ever on a bot's turn, and every seat
+    // here is a bot. Answered synchronously: there is no panel to open and no
+    // clock to wait on, which is the whole difference between the two drivers.
+    bus.on('choice:ask', (request: ChoiceRequest) => {
+      request.answer(preferredOption(request).id);
+    });
+
+    // …and the *answer* has to go somewhere too. Both halves are needed: the
+    // first batch after triples landed hung 69 of 80 Speed Die games, because
+    // the question was answered and the move it asked for was never made.
+    bus.on('roll:chosen', ({ playerId, tileId }: { playerId: string; tileId: number }) => {
+      const player = this.players.find((p) => p.id === playerId);
+      if (player) this.turns.moveChosen(player, tileId);
+    });
+
     bus.on('property:auction', (p: { tileId: number; playerId: string; price?: number }) => {
       this.decideBuy(p.tileId, p.playerId, p.price);
     });
@@ -383,7 +400,14 @@ class Simulation {
   private award(subject: AuctionSubject, winner: Player, amount: number): void {
     if (subject.kind === 'tile') {
       const tile = this.board.getTile(subject.id);
-      if (isOwnable(tile)) this.bank.sellPropertyToPlayer(winner, tile, amount);
+      if (isOwnable(tile)) {
+        this.bank.sellPropertyToPlayer(winner, tile, amount);
+        // The same 10% the animated driver charges — a deed out of a bankrupt
+        // estate comes to auction still mortgaged.
+        chargeMortgageInterest(
+          this.board, this.bank, winner, [tile], this.rules.mortgageInterest,
+        );
+      }
       return;
     }
     if (subject.kind !== 'house' || !this.contention) return;
@@ -421,14 +445,16 @@ class Simulation {
     if (!offer) return;
     const partner = this.players.find((p) => p.id === offer.toId);
     if (!partner || !acceptTrade(this.botContext(partner), offer)) return;
-    if (executeTrade(this.board, this.players, offer)) this.tradesMade++;
+    if (executeTrade(this.board, this.players, offer, this.bank)) this.tradesMade++;
   }
 
   /** Redeem what it can, then build what the plan asks for. */
   private developFor(player: Player): void {
     for (const tileId of redeemPlan(this.botContext(player))) {
       const tile = this.board.getTile(tileId);
-      if (isOwnable(tile) && canUnmortgage(player, tile).ok) this.bank.unmortgage(player, tile);
+      if (isOwnable(tile) && canUnmortgage(player, tile, this.rules.mortgageInterest).ok) {
+        this.bank.unmortgage(player, tile);
+      }
     }
 
     for (let step = 0; step < 12; step++) {
