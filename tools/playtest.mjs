@@ -191,6 +191,9 @@ async function waitFor(page, fn, { timeout = 8000, interval = 60 } = {}) {
 
 const forgeReady = () => typeof window.__forge !== 'undefined';
 const idle = () => window.__forge && !window.__forge.isAnimating();
+/** Ready to take a turn: nothing moving, and the dice on offer. */
+const ready = () => window.__forge && !window.__forge.isAnimating()
+  && window.__forge.phase() === 'WAITING_FOR_ROLL';
 
 /**
  * Tokens sharing a square must be clustered, not stacked. Returns a complaint
@@ -690,6 +693,108 @@ async function main() {
         throw new Error(`traded tile ${tradedTile} went to ${newOwner}, expected ${recipient}`);
       }
       console.log(`  ✓ traded tile ${tradedTile} to ${recipient}`);
+    }
+
+    // ── Saving in the middle of a turn ────────────────────────────────────────
+    // The case M10b opened. Roll, catch the token *while it is walking*, and save
+    // there: the model is already at the destination and its landing is still
+    // owed, so a restore has to resolve the landing rather than replay the walk
+    // or rewind to the start of the turn.
+    if (!BOTS) {
+      await waitFor(page, ready, { timeout: 8000 });
+      await clickGame(page, box, HOTSPOTS.roll);
+
+      const walking = await waitFor(page, () => window.__forge.isAnimating(), { timeout: 6000 });
+      if (!walking) {
+        console.log('  · never caught a token mid-walk; skipping the mid-turn save');
+      } else {
+        const midWalk = await page.evaluate(() => ({
+          positions: window.__forge.state().players.map((p) => p.position),
+          player:    window.__forge.activeId(),
+        }));
+
+        await clickGame(page, box, HOTSPOTS.pause);
+        await sleep(400);
+        const saveRow = (await menuSpots(page)).find((r) => r.id === 'save');
+        if (!saveRow || !saveRow.enabled) {
+          throw new Error(
+            `saving mid-walk was refused: ${saveRow ? saveRow.label : 'no Save row'}`,
+          );
+        }
+        await menuPress(page, box, 'save');
+        await menuPress(page, box, 'slot2');
+        await sleep(400);
+
+        await page.reload({ waitUntil: 'load' });
+        await page.waitForSelector('canvas');
+        await sleep(900);
+        await menuPress(page, box, 'load');
+        await menuPress(page, box, 'slot2');
+
+        if (!(await waitFor(page, forgeReady, { timeout: 12000 }))) {
+          throw new Error('loading a mid-walk save did not start the game');
+        }
+        await sleep(900);
+
+        const back = await page.evaluate(() => ({
+          positions: window.__forge.state().players.map((p) => p.position),
+          player:    window.__forge.activeId(),
+        }));
+        if (JSON.stringify(back.positions) !== JSON.stringify(midWalk.positions)) {
+          throw new Error(
+            `mid-walk restore moved somebody: ${midWalk.positions} became ${back.positions}`,
+          );
+        }
+        if (back.player !== midWalk.player) {
+          throw new Error(
+            `mid-walk restore changed whose turn it is: ${midWalk.player} became ${back.player}`,
+          );
+        }
+
+        // A resolved landing can produce any of the things a landing normally
+        // produces — a card, a buy prompt, an auction. Each of those *is* the
+        // turn resuming correctly, so settle them rather than calling them stuck.
+        for (let guard = 0; guard < 12; guard++) {
+          const open = await page.evaluate(() => ({
+            card: window.__forge.cardOpen(),
+            buy:  window.__forge.buyPromptOpen(),
+            auction: window.__forge.auctionOpen(),
+            phase: window.__forge.phase(),
+          }));
+          if (open.card) {
+            await clickGame(page, box, HOTSPOTS.cardOk);
+          } else if (open.buy) {
+            // The phase has to say what the turn is waiting on. This is the
+            // assertion that caught `AWAITING_BUY_DECISION` never being entered.
+            if (open.phase !== 'AWAITING_BUY_DECISION') {
+              throw new Error(`a buy prompt is open and the turn says ${open.phase}`);
+            }
+            await clickGame(page, box, HOTSPOTS.pass);
+          } else if (open.auction) {
+            await clickGame(page, box, HOTSPOTS.auctionPass);
+          } else {
+            break;
+          }
+          await sleep(500);
+        }
+
+        // …and the turn has to be *playable* again, not merely restored. This is
+        // the assertion that would catch a resume parked in a phase nothing can
+        // leave.
+        const playable = await waitFor(page, ready, { timeout: 15000 });
+        if (!playable) {
+          const stuck = await page.evaluate(() => ({
+            phase: window.__forge.phase(),
+            animating: window.__forge.isAnimating(),
+            buy: window.__forge.buyPromptOpen(),
+            card: window.__forge.cardOpen(),
+            auction: window.__forge.auctionOpen(),
+            tile: window.__forge.state().players[0].position,
+          }));
+          throw new Error(`a mid-walk restore never became playable again: ${JSON.stringify(stuck)}`);
+        }
+        console.log('  ✓ saved mid-walk, reloaded, and the landing resolved on the far side');
+      }
     }
 
     // ── Save and restore ──────────────────────────────────────────────────────

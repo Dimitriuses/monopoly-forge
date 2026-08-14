@@ -306,7 +306,7 @@ src/
 | M8d — A simulation platform | ✅ A headless runner, six invariants after every turn, a batch CLI, a second policy measured, and a balance pass driven by the numbers |
 | **M9 — A game is a folder** (board + economy + deck + theme) | ✅ **Complete.** Six games ship, registration is scoped to the loaded one, a game can be composed from another and bring its own artwork, and [authoring a game](docs/authoring-a-game.md) is written down |
 | **M11 — A board that is not a circuit** | ✅ **Complete.** Ultimate Monopoly: 120 tiles across three loops. Movement became a named strategy, `move` reports its route, a tile's rule may mention somebody else, colour groups opened, and group rent stopped being a literal |
-| **M10 — Refinement** | 🟡 Under way — **10a and 10d done**, 10b part done. All four printed-rule corners closed (mortgage interest, triples, free-form bids, the contested-house lot), both menus are a tree, and the turn log comes out |
+| **M10 — Refinement** | 🟡 Under way — **10a and 10d done**, 10b all but one item. All four printed-rule corners closed, both menus are a tree, the turn log comes out, and a save may now be taken mid-turn |
 
 ---
 
@@ -2150,3 +2150,73 @@ nothing is how a rule goes untested for four milestones.
 Three items are left and all three are the same size — real work rather than
 oversights: a save mid-turn, a bot that offers *you* a trade, and a theme that
 changes without restarting. Each is written up in the ROADMAP with what it needs.
+
+## M10b — a save taken mid-turn — 2026-08-14
+
+Saving was refused any time a turn was in progress, and the reason was never the
+save. `captureGame` wrote everything it needed to; `restoreGame` then called
+`startTurn()` whatever had been saved, so the middle of a turn was thrown away on
+the way back in. The guard existed to stop you noticing.
+
+So the snapshot gained three fields — `turn.phase`, `turn.held`,
+`turn.pendingLanding` — and version 8. Saving while a token walks and while the
+buy prompt is open both work now, and between them that is where a game spends
+most of its waiting.
+
+### Picking a turn up without replaying it
+
+The trap I expected and wrote the test for first: **a restore must not
+`enterPhase` the phase it saved.** A phase's `onEnter` is what *happens* when you
+arrive, so arriving a second time would run a variant's extra move again — the
+speed die's bonus walk twice over, from a save taken while the first one was on
+screen. `restorePhase` sets the phase and holds the flag; what to do next is the
+driver's.
+
+And there are only three answers, which surprised me — I had expected one per
+phase:
+
+- **a landing is owed** — a token was walking. The model is already at the
+  destination and any salary already paid, so the walk is never replayed: the
+  tokens snap to where the model says and the landing resolves.
+- **an answer is owed** — the buy prompt was open. The tile is wherever the
+  player is standing, so it can simply be asked again.
+- **nothing is owed** — offer the dice.
+
+`pendingLanding` is the one field the model cannot supply: only the scene knows a
+tween is in flight, so `captureGame` takes it as a parameter.
+
+### The phase that had been lying since 8b
+
+The harness caught this, and it is the better find of the two. A mid-walk restore
+came back reporting `LANDING` with a buy prompt open — correct behaviour, wrong
+label. `AWAITING_BUY_DECISION` had been in the phase list since 8b and **nothing
+ever entered it**: a turn waiting on the buy prompt reported the phase it had
+already left.
+
+That mattered here rather than staying cosmetic, because `resumeSavedTurn`
+branches on the phase — the "re-offer the prompt" branch would have been dead
+code, and a save taken with a prompt open would have come back offering the dice
+instead, letting the player roll twice. Both drivers call `offerBuy()` now. A
+`driven` phase still needs *something* to drive it, or it is documentation
+pretending to be state.
+
+### Where the line is now
+
+The remaining refusals are worth a sentence because it is the sentence that makes
+them principled rather than arbitrary: **you may save whenever the game is making
+you wait, and not in the middle of your own half-finished input.** A walk is the
+game making you wait. A half-built trade, an unanswered question and a live
+auction are not.
+
+Of those three, the auction is the one that is only *work* rather than a
+different kind of problem — it is plain data, and what makes it more than an
+afternoon is `auctionEndsTurn`, the queue a bankruptcy fills and the
+house-contention claims, which is the most delicate machinery in the turn and has
+a documented bug behind it. It is scheduled with that reasoning. Pausing already
+stops the clock, because the clock is a `scene.time` event on a scene that
+pauses, so the refusal costs a player nothing but the save.
+
+A question in flight is different in kind and will stay refused until somebody
+wants it: a `ChoiceRequest` carries an `answer` **callback**, and a closure does
+not go into localStorage. Saving one means the *asker* being able to ask again
+from saved state, which is per-asker work rather than one mechanism.

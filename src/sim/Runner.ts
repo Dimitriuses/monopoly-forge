@@ -347,6 +347,7 @@ class Simulation {
   // ── Decisions ───────────────────────────────────────────────────────────────
 
   private decideBuy(tileId: number, playerId: string, price?: number): void {
+    this.turns.offerBuy();
     const player = this.players.find((p) => p.id === playerId)!;
     const tile   = this.board.getTile(tileId);
     if (!isOwnable(tile)) { this.endTurn(); return; }

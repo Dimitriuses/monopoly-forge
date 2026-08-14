@@ -16,3 +16,5 @@ playwright-report/
 dist-sim/
 
 references/
+
+__pycache__

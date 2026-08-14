@@ -149,6 +149,24 @@ swap, so four players who are never simultaneously one-lot-short of two differen
 groups will never complete one. A stronger trading policy would shrink this, and
 the simulator is now the thing that could measure whether it did.
 
+### Three things cannot be saved, and one of them is only a callback
+
+*Narrowed in M10b.* A save taken mid-turn now works: the snapshot carries the
+phase, whether the turn was held, and whether a landing is owed, so a walk in
+progress and an open buy prompt both survive a reload. What is left refused:
+
+- **An auction.** Plain data, and the only reason it is not done is what
+  surrounds it — the turn-ending flag, the queue a bankruptcy fills, the
+  house-contention claims. Scheduled, with that reasoning, in the ROADMAP.
+  Pausing stops the clock, so nothing is lost by finishing the auction first.
+- **A half-built trade.** The offer is serialisable; re-opening the panel on the
+  far side is the work, and a draft is the one thing here a player can rebuild in
+  seconds.
+- **A question in flight.** This one is different in kind: a `ChoiceRequest`
+  carries an `answer` **callback**, and a closure cannot be written to
+  localStorage. Saving it would mean the *asker* being re-entrant — able to ask
+  again from saved state — which is per-asker work rather than one mechanism.
+
 ### Three things a bot still cannot be asked
 
 *Narrowed in M10a.* `game/Choice.ts` closed the "nothing can ask a player to pick

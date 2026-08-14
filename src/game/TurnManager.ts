@@ -160,6 +160,18 @@ export class TurnManager {
     tile.onLand(player.id);
   }
 
+  /**
+   * The buy prompt is on screen. `AWAITING_BUY_DECISION` has been in the phase
+   * list since 8b and nothing ever entered it — a turn waiting for a buy
+   * decision reported `LANDING`, which is a phase it had already left. It is
+   * `driven`, so `endTurn`'s walk still skips it; what it is *for* is telling
+   * anything that asks what the turn is actually waiting on. A save taken here
+   * is why it started to matter.
+   */
+  offerBuy(): void {
+    this.enterPhase('AWAITING_BUY_DECISION');
+  }
+
   confirmBuy(): void {
     this.endTurn();
   }
@@ -426,4 +438,24 @@ export class TurnManager {
     this.round = saved.round;
     this.seatsThisRound = new Set(saved.seatsThisRound);
   }
+
+  /**
+   * Put the turn back *where it was* rather than at the beginning of it.
+   *
+   * A restore has always called `startTurn()`, which is why saving was refused
+   * any time a turn was part-way through: the save was fine, the resume threw
+   * the middle of the turn away. This sets the phase directly and does **not**
+   * run `enterPhase` — a phase's `onEnter` is what *happens* when you arrive,
+   * and arriving twice would run a variant's extra move a second time.
+   *
+   * The driver decides what to do from here; see `GameScene.resumeSavedTurn`.
+   */
+  restorePhase(saved: { phase: TurnPhase; held: boolean }): void {
+    this.phase = saved.phase;
+    this._held = saved.held;
+    this._turnEndedThisRound = false;
+    this.seatsThisRound.add(this.currentPlayer.id);
+    dlog(`[TurnManager] restorePhase: ${saved.phase}${saved.held ? ' (held)' : ''}`);
+  }
+
 }

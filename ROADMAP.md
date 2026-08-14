@@ -644,12 +644,35 @@ it twice more, so it landed here. M12a is struck through accordingly.
       menu's Save screen and the title screen's Load screen. A pre-slot save is
       migrated into slot 1 rather than lost, and never over a slot somebody wrote
       deliberately.
-- [ ] **A save mid-turn.** Still refused mid-animation, mid-auction, mid-trade and
-      now mid-choice,
-      because a restore resumes at the start of a turn — but the pause menu now
-      says *which* of those is in the way instead of showing a toast after the
-      press. The real work is the same problem as making a landing resumable,
-      which `TurnFlow`'s `hold()` / `resume()` has a shape for.
+- [x] **A save mid-turn.** The snapshot carries **where in the turn** it was
+      taken — the phase, whether the turn was held, and whether a landing is
+      owed — so a restore picks the turn up rather than rewinding it. Saving
+      while a token is walking and while the buy prompt is open both work now,
+      and those are where a game spends most of its waiting.
+
+      The rule the guard follows is worth stating, because it is what makes the
+      remaining refusals principled rather than arbitrary: **you may save
+      whenever the game is making you wait, and not in the middle of your own
+      half-finished input.** A walk is the game making you wait. A half-built
+      trade, an unanswered question and a live auction are not.
+
+      Two things fell out of it. A restore must **not** re-enter the saved phase
+      — `enterPhase` runs a phase's `onEnter`, and arriving twice would run a
+      variant's extra move again — so `restorePhase` sets the phase and the
+      driver decides what to do from there. And `AWAITING_BUY_DECISION` turned
+      out to be **declared in the phase list since 8b and never entered**: a turn
+      waiting for a buy decision reported `LANDING`, a phase it had already left.
+      Both drivers enter it now.
+
+- [ ] **Save during an auction.** The one remaining refusal that is plain data
+      rather than a callback: subject, bidders, high bid, whose turn to bid. What
+      makes it more than an afternoon is everything around it — `auctionEndsTurn`,
+      the queue of subjects a bankruptcy fills, and the house-contention claims —
+      which is the most delicate machinery in the turn and has a documented bug
+      behind it ("a turn does not end while anything is under the hammer").
+      Pausing already stops the clock, because the clock is a `scene.time` event
+      on a scene that pauses, so the refusal costs a player nothing but the
+      save.
 - [x] **Get the turn log out.** Pause → Turn log copies it to the clipboard or
       saves it as a text file. Two routes because neither works everywhere: the
       clipboard is what somebody usually wants and browsers refuse it outside a

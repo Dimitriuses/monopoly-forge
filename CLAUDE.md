@@ -344,6 +344,37 @@ instead of returning `undefined`, and `TurnManager` resets an out-of-range
 `player.position` to 0 rather than propagating it. A corrupted position used to
 cascade into every subsequent roll.
 
+### A restored turn is picked up, not restarted
+
+**14. The snapshot says *where in the turn* it was taken.** `turn.phase`,
+`turn.held` and `turn.pendingLanding`. A restore used to call `startTurn()`
+whatever had been saved, which is why saving was refused any time a turn was in
+progress — the save was fine and the resume threw the middle of it away.
+
+**`restorePhase` sets the phase and does not `enterPhase` it.** A phase's
+`onEnter` is what *happens* when you arrive; arriving a second time would run a
+variant's extra move again, from a save taken while the first one was on screen.
+What to do next is the driver's, and there are only three answers —
+`GameScene.resumeSavedTurn` has them: a landing is owed (a token was walking, so
+snap the tokens and resolve it — never replay the walk, the salary is already
+paid), an answer is owed (re-offer the buy prompt), or nothing is owed (offer the
+dice).
+
+**`pendingLanding` comes from the driver, not the model.** Only the scene knows a
+tween is in flight; `captureGame` takes it as a parameter for that reason.
+
+**14b. What may be saved is a rule, not a list.** *You may save whenever the game
+is making you wait, and not in the middle of your own half-finished input.*
+`saveBlockedBecause()` returns a sentence, and every entry in it should be
+somebody's unfinished input — an auction, a half-built trade, an unanswered
+question. If a new blocker is not that, the answer is to make it saveable.
+
+**14c. A phase nothing enters is a phase that lies.** `AWAITING_BUY_DECISION` sat
+in the phase list from 8b to 10b with nothing ever entering it, so a turn waiting
+on the buy prompt reported `LANDING` — a phase it had already left. Both drivers
+call `offerBuy()` now. A `driven` phase still needs *something* to drive it, or
+it is documentation rather than state.
+
 ### Anything new that is game state has to go in the snapshot
 
 `game/Snapshot.ts` is the save file. Adding a field to a model class that a game

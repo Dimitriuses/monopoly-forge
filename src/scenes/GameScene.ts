@@ -5,6 +5,7 @@ import { Dice } from '@/game/Dice';
 import { diceFor } from '@/game/Variants';
 import { Bank } from '@/game/Bank';
 import { TurnManager } from '@/game/TurnManager';
+import type { TurnPhase } from '@/game/TurnFlow';
 import { CardDeck, CardEffects, type Card } from '@/cards/CardDeck';
 import { bus } from '@/utils/EventBus';
 import { rng } from '@/utils/PRNG';
@@ -195,7 +196,75 @@ export class GameScene extends Phaser.Scene {
     };
   }
 
+  /**
+   * Pick a saved turn up where it was put down.
+   *
+   * A restore has always called `startTurn()`, which threw away the middle of a
+   * turn and is the reason saving was refused whenever one was in progress. The
+   * middle of a turn is now saved, so what is left is deciding what to *do* with
+   * each phase — and there are only three answers:
+   *
+   *   * **a landing is owed** — a token was walking. The model is already at the
+   *     destination and any salary is already paid, so the walk is not replayed:
+   *     the tokens snap to where the model says and the landing resolves. That
+   *     is the common case by a distance, because a walk is where a game spends
+   *     most of its waiting.
+   *   * **an answer is owed** — the buy prompt was open. The tile is wherever the
+   *     player is standing, so it can simply be asked again.
+   *   * **nothing is owed** — the turn was between things. Offer the dice.
+   *
+   * A *held* phase is resumed rather than re-entered, because `enterPhase` runs
+   * a phase's `onEnter` and arriving twice would run a variant's extra move a
+   * second time.
+   */
+  private resumeSavedTurn(phase: TurnPhase): void {
+    for (const player of this.players) this.snapToken(player.id, player.position);
+    this.pushUIUpdate();
+    this.boardView.refresh();
+
+    if (this.pendingLanding) {
+      dlog(`[GameScene] resuming a saved turn: landing owed at ${phase}`);
+      this.setRollEnabled(false);
+      // A beat, so the board is on screen before anything happens on it.
+      this.time.delayedCall(350, () => this.turnManager.resolveLanding());
+      return;
+    }
+
+    if (phase === 'AWAITING_BUY_DECISION') {
+      const player = this.turnManager.currentPlayer;
+      const tile   = this.board.getTile(player.position);
+      if (isOwnable(tile) && tile.ownerId === null) {
+        dlog('[GameScene] resuming a saved turn: re-offering the buy prompt');
+        this.setRollEnabled(false);
+        this.showBuyPrompt(tile.id, player.id, tile.price, tile.name);
+        return;
+      }
+      // The deed was somehow taken between the save and the load. Nothing is
+      // owed, so fall through and end the turn rather than prompting for it.
+      this.safeEndTurn(0);
+      return;
+    }
+
+    if (this.turnManager.isHeld) {
+      dlog(`[GameScene] resuming a saved turn: ${phase} was held`);
+      this.turnManager.resume();
+      return;
+    }
+
+    // WAITING_FOR_ROLL, ROLLING, and anything a rule set added that was not
+    // holding: the turn is between things, so offer the dice again.
+    dlog(`[GameScene] resuming a saved turn: waiting for a roll (saved at ${phase})`);
+    this.turnManager.restorePhase({ phase: 'WAITING_FOR_ROLL', held: false });
+    this.setRollEnabled(true);
+    bus.emit('turn:start', { playerId: this.turnManager.currentPlayer.id });
+  }
+
   /** What the model needs to resolve a landing — see `game/Landing.ts`. */
+  /** Where a restored game left off, or null for a new one. */
+  private resumedPhase: TurnPhase | null = null;
+  /** A saved move whose landing had not resolved — see `resumeSavedTurn`. */
+  private pendingLanding = false;
+
   /** The question on screen, or null. Saving is refused while one is open. */
   private pendingChoice: ChoiceRequest | null = null;
   private choiceMenu: Menu | null = null;
@@ -218,6 +287,8 @@ export class GameScene extends Phaser.Scene {
     this.commDeck    = parts.commDeck;
     this.cardEffects = parts.cardEffects;
     this.rules       = parts.rules;
+    this.resumedPhase   = parts.resumedPhase ?? null;
+    this.pendingLanding = parts.pendingLanding ?? false;
   }
 
   /**
@@ -273,7 +344,8 @@ export class GameScene extends Phaser.Scene {
     this.registerBusListeners();
 
     this.scene.launch('UIScene', { players: this.players });
-    this.turnManager.startTurn();
+    if (this.resumedPhase) this.resumeSavedTurn(this.resumedPhase);
+    else                   this.turnManager.startTurn();
     this.exposeDebugHandle();
   }
 
@@ -623,6 +695,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private showBuyPrompt(tileId: number, playerId: string, price: number, tileName: string, baseRent?: number): void {
+    this.turnManager.offerBuy();
     const player = this.players.find((p) => p.id === playerId)!;
 
     // Rebuild dynamic children (keep bg at index 0).
@@ -939,11 +1012,15 @@ export class GameScene extends Phaser.Scene {
    * boolean so the pause menu can print it under a dead row.
    */
   private saveBlockedBecause(): string | null {
-    if (this.isAnimating)        return 'A token is still moving';
-    if (this.auction)            return 'Something is under the hammer';
+    // A token walking and an open buy prompt used to block a save and no longer
+    // do: the snapshot carries the phase, so the turn comes back where it was.
+    // What is left is genuinely un-saveable, and the division is worth stating —
+    // **you may save whenever the game is making you wait, and not in the middle
+    // of your own half-finished input.**
+    if (this.auction)             return 'Something is under the hammer';
     if (this.auctionQueue.length) return 'An estate is waiting to be auctioned';
-    if (this.tradePanel.isOpen)  return 'A trade is half built';
-    if (this.pendingChoice)      return 'Something is waiting to be chosen';
+    if (this.tradePanel.isOpen)   return 'A trade is half built';
+    if (this.pendingChoice)       return 'Something is waiting to be chosen';
     return null;
   }
 
@@ -958,6 +1035,10 @@ export class GameScene extends Phaser.Scene {
       board: this.board, bank: this.bank, dice: this.dice, players: this.players,
       turnManager: this.turnManager, chanceDeck: this.chanceDeck, commDeck: this.commDeck,
       cardEffects: this.cardEffects, rules: this.rules,
+      // The one thing only the driver knows: a walk is on screen and its landing
+      // has not been resolved. The model is already at the destination, so a
+      // restore owes the landing rather than the walk.
+      pendingLanding: this.isAnimating,
     });
     SaveLoad.save(snapshot, snapshot.rngState, slot, {
       gameId: this.gameId, round: this.turnManager.round,

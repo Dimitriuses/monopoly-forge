@@ -11,7 +11,7 @@ import { Bank } from './Bank';
 import { Dice, type DiceResult } from './Dice';
 import { Player } from './Player';
 import { TurnManager } from './TurnManager';
-import { knownTurnOrders, knownWinConditions } from './TurnFlow';
+import { knownTurnOrders, knownWinConditions, type TurnPhase } from './TurnFlow';
 import { diceFor, knownVariants } from './Variants';
 
 // ─── Snapshot ─────────────────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ import { diceFor, knownVariants } from './Variants';
 // A restore resumes at the start of the saved player's turn. Mid-move state is
 // deliberately not captured: see `restoreGame`.
 
-export const SNAPSHOT_VERSION = 7;
+export const SNAPSHOT_VERSION = 8;
 
 export interface TileSnapshot {
   id: number;
@@ -77,7 +77,25 @@ export interface GameSnapshot {
   tiles: TileSnapshot[];
   bank: { houses: number; hotels: number; pot: number };
   /** `round` and who has played in it — a round limit cannot be re-derived. */
-  turn: { currentPlayerIndex: number; round: number; seatsThisRound: string[] };
+  turn: {
+    currentPlayerIndex: number;
+    round: number;
+    seatsThisRound: string[];
+    /**
+     * Where in the turn the save was taken. Absent means the start of one, which
+     * is what every save was before M10b and what a restore always assumed.
+     */
+    phase?: TurnPhase;
+    /** The turn was parked in that phase waiting for `resume()`. */
+    held?: boolean;
+    /**
+     * A move had been applied to the model and its landing not yet resolved —
+     * a token still walking. The *model* is already at the destination and the
+     * salary for anything passed is already paid; what is owed is the landing,
+     * so a restore resolves it rather than replaying the walk.
+     */
+    pendingLanding?: boolean;
+  };
   dice: DiceResult | null;
   decks: { chance: DeckSnapshot; community: DeckSnapshot };
   /** The rule set the game is being played under, switches and all. */
@@ -86,6 +104,18 @@ export interface GameSnapshot {
 
 /** Everything a running game is made of — what a restore hands back. */
 export interface GameParts {
+  /**
+   * A move applied to the model whose landing has not been resolved — a token
+   * mid-walk when the save was taken. Only a driver knows this, which is why it
+   * is passed in rather than read off the model.
+   */
+  pendingLanding?: boolean;
+  /**
+   * The phase a restore came back into, or null for a new game and for a save
+   * taken at the start of a turn. The driver reads it to decide what to do
+   * instead of `startTurn()`.
+   */
+  resumedPhase?: TurnPhase | null;
   /** Which game these parts were dealt from — the one thing a save cannot infer. */
   gameId: string;
   board: Board;
@@ -118,6 +148,12 @@ export function captureGame(parts: GameParts): GameSnapshot {
     turn:  {
       currentPlayerIndex: parts.turnManager.currentPlayerIndex,
       ...parts.turnManager.captureRound(),
+      // Where in the turn, not just whose turn. Without these three a restore
+      // rewinds to the start of the turn, which is why saving was refused any
+      // time one was part-way through.
+      phase:          parts.turnManager.phase,
+      held:           parts.turnManager.isHeld,
+      pendingLanding: parts.pendingLanding ?? false,
     },
     dice:  parts.dice.lastResult,
     decks: {
@@ -217,8 +253,16 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
     round:          snapshot.turn.round ?? 1,
     seatsThisRound: snapshot.turn.seatsThisRound ?? [],
   });
+  if (snapshot.turn.phase) {
+    turnManager.restorePhase({
+      phase: snapshot.turn.phase,
+      held:  snapshot.turn.held ?? false,
+    });
+  }
 
   return {
+    pendingLanding: snapshot.turn.pendingLanding ?? false,
+    resumedPhase:   snapshot.turn.phase ?? null,
     gameId: game.id,
     board, bank, dice, players, turnManager,
     chanceDeck, commDeck,
