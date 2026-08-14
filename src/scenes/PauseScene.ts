@@ -202,8 +202,19 @@ export class PauseScene extends Phaser.Scene {
 
   private resume(): void {
     this.menu.destroy();
+    this.clearMenuHandle();
     this.scene.stop();
     this.scene.resume('GameScene');
+  }
+
+  /**
+   * Take `__menu` down with the menu. A handle left pointing at a screen that is
+   * no longer on it does not fail — it answers with where the rows *used* to be,
+   * and the playtest clicks the board believing it is pressing a button. A stale
+   * debug handle is worse than none.
+   */
+  private clearMenuHandle(): void {
+    delete (window as unknown as Record<string, unknown>).__menu;
   }
 
   private exposeMenuHandle(): void {

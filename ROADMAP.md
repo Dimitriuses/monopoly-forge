@@ -44,9 +44,10 @@ state to a player.**
 three customers already in the tree, and each named by what it unlocks rather
 than by what it generalises. Not started.
 
-**M10 is refinement**, and it is under way — the corners this implementation
-knowingly cuts, the things a player asks for, and a bot worth playing against.
-**10a, 10b and 10d are done.** 10c, a bot worth playing against, is untouched.
+**M10 — refinement — is done.** The corners the rules cut are closed (10a), the
+things a player asks for are in (10b), the menus are a tree (10d), and the bots
+were measured rather than tuned (10c): they trade their way out of a stalemate
+now, and the cleverer valuation that was meant to beat them does not.
 
 **Why the classic game came first.** A configurable engine whose only consumer is
 a toy proves nothing. M1–M7 build the game the engine has to be able to express;
@@ -720,23 +721,33 @@ changed, so layering is `rulesFor(game, overrides)` — what the engine does any
 — and the third flag, added only after Pocket could not turn its own house rule
 on for a whole milestone, has nothing left to do.
 
-### 10c — a bot worth playing against
+### 10c — a bot worth playing against · done
 
-The simulator turned this from an opinion into a measurement, and the measurement
-is unflattering: tuning the baseline's three constants does **nothing**
-(`AGGRESSIVE_PROFILE` won 289 games to 287 across 576), while *seat order* is
-worth roughly 60/40 to the first two seats. So the work is not more numbers.
+One of the two worked, and it is not the one I expected. Both numbers are below;
+the reasoning is in DEVLOG.
 
-- [ ] **A policy of a different shape** — one that values a deed by the rent it is
-      likely to face rather than by its printed price, weighs where the other
-      players stand, and plans more than one purchase ahead. Whether it is better
-      is now a question with an answer: `npm run simulate -- --policies a,b`,
-      mirrored to cancel the position effect.
-- [ ] **Trade more than a mutual monopoly.** The current proposer only makes the
-      one swap, which is why about 5% of Classic games never form a monopoly at
-      all and run for ever. A policy that would sell a key for enough cash, or
-      assemble a group over several trades, would shrink that — and the stalemate
-      rate is the number that says whether it did.
+- [x] **Trade more than a mutual monopoly.** `keyPremium` — a bot will sell the
+      deed somebody else needs, for enough. **22 of 400 classic games with no
+      monopoly on the board became 0 of 400**, the median game shortened from 58
+      rounds to 53, and houses standing at the end went from 6.2 to 9.7. It costs
+      nothing head to head (397/403 over 800 mirrored games), so it is in
+      `DEFAULT_PROFILE` rather than an option. Every game that ships now finishes
+      every batch.
+- [x] **A policy of a different shape** — measured, and **not better.**
+      `game/BoardOdds.ts` runs a Markov chain over the actual board and values a
+      deed by what it will collect rather than by what it costs. Head to head it
+      is 48/52 against the baseline: inside the noise. Three things were learned
+      by taking it apart, and each is recorded where it was made — buying by
+      payback is *worse* (a deed bought is a deed denied, which the model cannot
+      see), lot-level build ordering is worse than finishing the cheapest group,
+      and the auction ceiling has almost no leverage because almost nothing is
+      declined. It ships as `--policies odds` because a measured negative is worth
+      keeping.
+- [x] **`--mirror`, and a `control`.** A policy match is meaningless unmirrored —
+      seat order is worth more than any policy on this list — so the tool plays
+      every rotation and tallies by policy name. `control` is the baseline under a
+      second name: two identical policies must come out 50/50, and they do
+      (300/300, spread 0), which is what makes the rest of these numbers quotable.
 
 ### What M10 is not
 

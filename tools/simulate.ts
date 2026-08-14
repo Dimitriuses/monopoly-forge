@@ -46,6 +46,7 @@ function parse(argv: string[]): Options {
     roundLimit: Number(value('round-limit', '0')),
     checkInvariants: !flag('no-invariants'),
     json: flag('json'),
+    mirror: flag('mirror'),
   };
 }
 
@@ -60,12 +61,76 @@ function seats(options: Options): number | Array<{ profile?: typeof PROFILES[str
   });
 }
 
+/**
+ * Play the same batch once per seating order and tally wins by *policy*.
+ *
+ * Without this a policy match says almost nothing: 8d measured seat order at
+ * roughly 60/40 to the first two seats of four, and worse than that heads-up —
+ * so a policy in seat 1 wins whether or not it is any good. Rotating cancels it,
+ * because every policy sits in every seat exactly once.
+ */
+function mirrored(options: Options): void {
+  const names = options.profiles;
+  const wins: Record<string, number> = Object.fromEntries(names.map((n) => [n, 0]));
+  let finished = 0;
+  let games = 0;
+
+  for (let rotation = 0; rotation < names.length; rotation++) {
+    const order = names.map((_, i) => names[(i + rotation) % names.length]);
+    for (const id of options.games) {
+      for (let i = 0; i < options.runs; i++) {
+        const result = simulate({
+          game: id,
+          // The same seeds in every rotation, so the two orderings play the same
+          // dice and the only difference is who sat where.
+          seed: options.seed + i,
+          players: order.map((name) => ({ profile: PROFILES[name] })),
+          maxTurns: options.maxTurns,
+          checkInvariants: false,
+          rules: options.roundLimit
+            ? { winCondition: 'roundLimit', roundLimit: options.roundLimit }
+            : undefined,
+        });
+        games++;
+        if (result.winnerId === null) continue;
+        finished++;
+        const seat = Number(result.winnerId.replace(/[^0-9]/g, '')) - 1;
+        if (order[seat]) wins[order[seat]]++;
+      }
+    }
+  }
+
+  const width = Math.max(...names.map((n) => n.length));
+  console.log(`\n▶ mirrored: ${names.length} seating order(s) × ${options.runs} games ` +
+              `× ${options.games.length} game(s) = ${games} played, ${finished} finished\n`);
+  for (const name of names) {
+    const share = finished ? Math.round((wins[name] / finished) * 100) : 0;
+    console.log(`  ${name.padEnd(width)}  ${String(wins[name]).padStart(5)}  ${share}%`);
+  }
+  const spread = Math.max(...names.map((n) => wins[n])) - Math.min(...names.map((n) => wins[n]));
+  console.log(
+    `\n  spread ${spread} of ${finished} — ` +
+    (spread / Math.max(1, finished) < 0.05
+      ? 'inside the noise. No policy here is better than another.'
+      : 'outside the noise.'),
+  );
+}
+
 function main(): void {
   const options = parse(process.argv.slice(2));
   const unknown = options.games.filter((id) => !GAMES[id]);
   if (unknown.length) {
     console.error(`✗ no game called ${unknown.join(', ')} — this build ships ${Object.keys(GAMES).join(', ')}`);
     process.exit(1);
+  }
+
+  if (options.mirror) {
+    if (options.profiles.length < 2) {
+      console.error('✗ --mirror needs at least two policies: --policies a,b --mirror');
+      process.exit(1);
+    }
+    mirrored(options);
+    return;
   }
 
   const table = seats(options);

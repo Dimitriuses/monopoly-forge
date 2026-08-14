@@ -207,10 +207,28 @@ describe('Bot', () => {
     });
 
     // The one thing it will not do at any price.
-    it('refuses to hand over the deed that completes the other side’s group', () => {
+    /**
+     * The veto used to be absolute at any price, and that left 22 of 400 classic
+     * games with no monopoly on the board at all. It is a *price* now — see
+     * `keyPremium`.
+     */
+    it('will not hand over the other side’s key cheaply', () => {
       give(rival, MEDITERRANEAN);
       give(bot, BALTIC);
-      expect(acceptTrade(ctx, offerTo({ fromCash: 5000, toTileIds: [BALTIC] }))).toBe(false);
+      expect(acceptTrade(ctx, offerTo({ fromCash: 100, toTileIds: [BALTIC] }))).toBe(false);
+    });
+
+    it('will hand it over for enough', () => {
+      give(rival, MEDITERRANEAN);
+      give(bot, BALTIC);
+      expect(acceptTrade(ctx, offerTo({ fromCash: 5000, toTileIds: [BALTIC] }))).toBe(true);
+    });
+
+    it('never hands one over when the policy has no price for it', () => {
+      const strict = { ...ctx, profile: { ...DEFAULT_PROFILE, keyPremium: 0 } };
+      give(rival, MEDITERRANEAN);
+      give(bot, BALTIC);
+      expect(acceptTrade(strict, offerTo({ fromCash: 5000, toTileIds: [BALTIC] }))).toBe(false);
     });
 
     it('will not agree to cash it does not have', () => {

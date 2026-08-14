@@ -306,7 +306,7 @@ src/
 | M8d — A simulation platform | ✅ A headless runner, six invariants after every turn, a batch CLI, a second policy measured, and a balance pass driven by the numbers |
 | **M9 — A game is a folder** (board + economy + deck + theme) | ✅ **Complete.** Six games ship, registration is scoped to the loaded one, a game can be composed from another and bring its own artwork, and [authoring a game](docs/authoring-a-game.md) is written down |
 | **M11 — A board that is not a circuit** | ✅ **Complete.** Ultimate Monopoly: 120 tiles across three loops. Movement became a named strategy, `move` reports its route, a tile's rule may mention somebody else, colour groups opened, and group rent stopped being a literal |
-| **M10 — Refinement** | 🟡 **10a, 10b and 10d done**; 10c (a better bot) untouched. All four printed-rule corners closed, both menus are a tree, the turn log comes out, a save may be taken mid-turn and mid-auction, bots offer *you* trades, and the palette changes without restarting |
+| **M10 — Refinement** | ✅ **Complete.** All four printed-rule corners closed, both menus are a tree, saves work mid-turn and mid-auction, the turn log comes out, bots offer *you* trades and now trade their way out of a stalemate — 22 of 400 unfinished classic games became 0 — and the cleverer valuation that was meant to beat them was measured and does not |
 
 ---
 
@@ -2389,3 +2389,91 @@ pixels — screenshot the canvas, change the theme, screenshot again, and fail i
 the two buffers are identical. Then it rolls the dice, because a redraw that
 destroyed the click zones or left the roll button dead would pass every other
 check in the file.
+
+## M10c — measuring a bot instead of tuning one — 2026-08-15
+
+Two items. **One worked and it was not the one I expected**, which is the whole
+argument for this milestone existing as a measurement rather than an opinion.
+
+### The rig first
+
+A policy match is meaningless unmirrored — 8d put seat order at 60/40 to the
+first two seats of four, and it is worse than that heads-up — so `--mirror` plays
+every rotation on the same seeds and tallies by policy *name*. And before
+believing a single number out of it I added `control`: the baseline under a
+second name. Two identical policies came out **300/300, spread 0**. That is what
+makes everything below quotable.
+
+### The one that did not work
+
+`game/BoardOdds.ts` runs a Markov chain over the real board — the real
+`Board.move`, so it is correct on a circle, a spiral and three loops as well as
+on the square — and values a deed by what it will *collect* rather than what it
+costs. It reproduces the two famous facts about Monopoly without being told
+either: Jail is the busiest square, and the oranges are the best group. Both fall
+out of Go To Jail sitting six to eight squares away.
+
+Then I priced four decisions off it, and it lost **57/43 over 800 mirrored
+games**.
+
+Taking it apart was the useful part:
+
+- **The first version valued a lot at its three-house rent**, which made every
+  payback come out under a single lap. The bot bought down to zero cash and bid
+  its whole stack at auction. It was valuing houses nobody had paid for. Pricing
+  the *deed's* own earning power took it to 43%.
+- **Buying by payback is worse than buying for denial** — worth about four points
+  on its own. A deed declined goes to auction, and with two players the only
+  other bidder is your opponent. An income model cannot see that.
+- **Ranking lots by yield is worse than finishing the cheapest group.** Cheapest-
+  first was never really about cheapness: it *concentrates*, and a finished group
+  is what wins. Moving the odds up to group level recovered most of the gap.
+- **The auction ceiling has almost no leverage**, because with two players almost
+  nothing is declined. Capping it changed the result by literally zero games.
+
+Final score: 48/52, inside the noise. **It is not better.** It ships as
+`--policies odds` with all four findings written where they were made, because a
+measured negative that says *why* is worth more than a deleted branch.
+
+### The one that did
+
+The other item named its own number: *"about 5% of Classic games never form a
+monopoly at all and run for ever — the stalemate rate is the number that says
+whether it did."*
+
+The cause was one line. `acceptTrade` refused to hand over a deed that completes
+somebody else's group **at any price**, so the only deed worth asking for was the
+only deed nobody would ever sell. Four players sat on four part-groups until the
+turn cap.
+
+`keyPremium` makes it a price rather than a veto: two and a half times what the
+deed is worth to us. With `buyKeyForCash` to propose it:
+
+| | baseline | with key trading |
+|---|---|---|
+| classic games with no monopoly | **22 / 400** | **0 / 400** |
+| median rounds | 58 | 53 |
+| houses standing at the end | 6.2 | 9.7 |
+| trades per game | 6 | 10 |
+
+And it costs nothing head to head — 397/403 over 800 mirrored games — so it went
+into `DEFAULT_PROFILE` rather than behind a flag. **Every game that ships now
+finishes every batch**, classic and speed included, where both used to leave a
+handful running to the cap.
+
+I checked the attribution rather than assuming it: the baseline valuation *plus*
+`keyPremium` alone gives 0 of 400 too. The odds model contributes nothing to it.
+
+What has not changed is the fact underneath. Monopoly still need not terminate —
+a table that refuses to trade still cannot end — so "every game reaches a winner"
+is still not an invariant, and the batch still reports unfinished games rather
+than failing on them.
+
+### One harness bug, and it is the interesting kind
+
+The default playtest failed after all this with `menu row "theme" is not on
+screen`. `__menu` is published by whichever menu is open and **was never taken
+down** when the pause menu closed, so the harness read where the rows *used to
+be* and clicked the board believing it was pressing a button. It did not fail —
+it silently did the wrong thing, which is the failure a debug handle should never
+have. `PauseScene` deletes the handle on the way out now.

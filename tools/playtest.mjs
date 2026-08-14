@@ -98,9 +98,37 @@ async function menuSpots(page) {
   return page.evaluate(() => (window.__menu ? window.__menu.spots() : []));
 }
 
-/** Click a menu row by id. Fails loudly — a silent miss is the old bug. */
-async function menuPress(page, box, id, { adjust = 0 } = {}) {
-  const spots = await menuSpots(page);
+/** Settle whatever a landing put on screen, so a menu press is not swallowed. */
+async function settlePrompts(page, box) {
+  for (let guard = 0; guard < 10; guard++) {
+    const open = await page.evaluate(() => ({
+      card: window.__forge.cardOpen(),
+      buy: window.__forge.buyPromptOpen(),
+      auction: window.__forge.auctionOpen(),
+    }));
+    if (open.card)         await clickGame(page, box, HOTSPOTS.cardOk);
+    else if (open.buy)     await clickGame(page, box, HOTSPOTS.pass);
+    else if (open.auction) await clickGame(page, box, HOTSPOTS.auctionPass);
+    else return;
+    await sleep(450);
+  }
+}
+
+/**
+ * Click a menu row by id. Fails loudly — a silent miss is the old bug.
+ *
+ * Polls for the row rather than reading once: the headless clock runs slow
+ * enough that a screen which is *about* to be on-screen is not yet, and a matrix
+ * of runs back to back makes that worse. Sleeping a fixed time instead is what
+ * CLAUDE.md warns about.
+ */
+async function menuPress(page, box, id, { adjust = 0, timeout = 4000 } = {}) {
+  let spots = await menuSpots(page);
+  const deadline = Date.now() + timeout;
+  while (!spots.some((s) => s.id === id) && Date.now() < deadline) {
+    await sleep(80);
+    spots = await menuSpots(page);
+  }
   const row = spots.find((s) => s.id === id);
   if (!row) {
     throw new Error(
@@ -849,7 +877,11 @@ async function main() {
       console.log(`  ✓ switched to the ${nowTheme} palette mid-game, and it still plays`);
 
       // Put it back, so the rest of the run — and every screenshot after this
-      // one — is in the palette the run started with.
+      // one — is in the palette the run started with. The liveness roll above
+      // may have opened a prompt, and a menu press with one on screen goes to
+      // the prompt instead.
+      await settlePrompts(page, box);
+      await waitFor(page, idle, { timeout: 9000 });
       await clickGame(page, box, HOTSPOTS.pause);
       await sleep(400);
       await menuPress(page, box, 'settings');

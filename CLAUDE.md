@@ -21,7 +21,8 @@ npm run simulate     # plays games headlessly and reports; see below
 
 `npm run simulate` builds a Node bundle (`vite.sim.config.ts` → `dist-sim/`) and
 runs it. `--game <id|all>`, `--games N`, `--seed N`, `--players N`,
-`--policies a,b` (one seat each, for a head-to-head), `--round-limit N`,
+`--policies a,b` (one seat each, for a head-to-head), `--mirror` (every seating
+order, tallied by policy — the only honest way to compare two), `--round-limit N`,
 `--max-turns N`, `--no-invariants`, `--json`. It exits non-zero **only** when an
 invariant breaks; a game that outruns the cap is reported, because Monopoly
 genuinely does not always terminate.
@@ -413,6 +414,28 @@ paid for:
 
 Bump `SNAPSHOT_VERSION` when the shape changes; `validateSnapshot` refuses a save
 this build cannot read rather than half-restoring it.
+
+### A bot claim is a measurement or it is nothing
+
+**17. `--policies a,b --mirror`, or do not say a bot is better.** Seat order is
+worth more than any policy in this repo, so an unmirrored match measures the
+seating. The tool plays every rotation and tallies by policy name, and
+`PROFILES.control` is the baseline under a second name — two identical policies
+must come out 50/50 (they do: 300/300, spread 0). Check that before quoting
+anything else.
+
+**17b. `game/BoardOdds.ts` is computed, never tabulated.** A Markov chain over
+the real board and the real `Board.move`, so it is right on a circle, a spiral
+and three loops as well as on the 1935 square. It leaves out the cards and the
+three-doubles rule deliberately: the pattern a bot needs is *which squares are
+busy*, that is decided by Go To Jail, and odds that changed every time somebody
+drew a card would be worse than blunt ones that hold still. Cached per `Board`.
+
+**17c. Three measured findings live in `Bot.ts` as comments.** Buying by payback
+is worse than buying for denial; ranking lots by yield is worse than finishing
+the cheapest group; the auction ceiling barely matters because little is
+declined. Do not "fix" any of those without re-running the mirror — each is a
+result, not an oversight.
 
 ### Bots decide, the scene drives
 

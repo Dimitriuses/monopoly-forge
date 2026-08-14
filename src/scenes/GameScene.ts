@@ -1258,6 +1258,7 @@ export class GameScene extends Phaser.Scene {
       onTheme: (id: string) => this.applyThemeLive(id),
       onSave: (slot: number) => this.saveGame(slot),
       onQuit: () => {
+        delete (window as unknown as Record<string, unknown>).__menu;
         this.scene.stop('PauseScene');
         this.scene.stop('UIScene');
         this.scene.stop();

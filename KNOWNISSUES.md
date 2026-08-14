@@ -284,6 +284,20 @@ same shape as `registerTileDecoration` and would be the way to do it.
 Nor is there an asset *budget*: a game that brought a 4MB texture would simply be
 slow to start, and nothing says so.
 
+### The bots no longer stalemate, but Monopoly still can
+
+*Changed in M10c.* Until the bots would sell a key, 22 of 400 classic games ended
+with no monopoly on the board at all and ran to the turn cap. That is now 0 of
+400, on every game that ships.
+
+What has **not** changed is the fact underneath it, and the distinction matters:
+Monopoly genuinely need not terminate. Four players who never complete a colour
+group build nothing, so rent never rises above the salary and nobody can go
+under. The bots now trade their way out of that position; a table of people who
+refuse to trade would still sit in it. So *"every game reaches a winner"* remains
+un-implementable as an invariant, and `sim/Invariants.ts` still does not check
+it — the batch reports unfinished games rather than failing on them.
+
 ### The games that are not Classic are unbalanced
 
 Roundabout and Orbits exist to prove the geometry is not hardcoded, and their

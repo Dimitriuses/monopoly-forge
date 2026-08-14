@@ -4,6 +4,8 @@ import {
   canBuildHouse, canBuildHotel, canUnmortgage, ownsWholeGroup, unmortgageCost,
 } from './BuildRules';
 import { countOwnedOfType } from './Rent';
+import { RailroadTile, UtilityTile } from '@/tiles/SpecialTiles';
+import { trafficOf } from './BoardOdds';
 import type { Board } from './Board';
 import type { Bank } from './Bank';
 import type { Player } from './Player';
@@ -33,12 +35,38 @@ export interface BotProfile {
   auctionCeiling: number;
   /** Only build once holding at least this much beyond the reserve. */
   buildBuffer: number;
+  /**
+   * How a deed is *priced*, which is the axis 8d showed the three numbers above
+   * are not on.
+   *
+   * - `price` — what it says on the deed, with a bump for one that completes a
+   *   group. Every bot did this until M10c.
+   * - `odds` — what it is likely to *earn*: how busy the square is
+   *   (`game/BoardOdds.ts`) times the rent it would charge. A different question,
+   *   and the one the printed price cannot answer.
+   */
+  valuation: 'price' | 'odds';
+  /**
+   * `odds` only: sell a deed somebody else needs, if the cash is this many times
+   * what it is worth to us. The baseline never sells a key at any price, which
+   * is a large part of why one game in twenty never forms a monopoly at all.
+   * 0 keeps the old absolute veto.
+   */
+  keyPremium: number;
 }
 
 export const DEFAULT_PROFILE: BotProfile = {
   reserve: 150,
   auctionCeiling: 1.2,
   buildBuffer: 100,
+  valuation: 'price',
+  // 2.5 rather than 0 since M10c, and it is the one change in this file that a
+  // measurement asked for outright: a bot that would never sell a key at any
+  // price left **22 of 400 classic games with no monopoly on the board at all**,
+  // running to the turn cap. Letting a key go for two and a half times its worth
+  // took that to 0 of 400, shortened the median game from 58 rounds to 53, and
+  // cost nothing head to head — 397/403 over 800 mirrored games.
+  keyPremium: 2.5,
 };
 
 /**
@@ -57,11 +85,48 @@ export const AGGRESSIVE_PROFILE: BotProfile = {
   reserve: 40,
   auctionCeiling: 1.6,
   buildBuffer: 0,
+  valuation: 'price',
+  keyPremium: 0,
+};
+
+/**
+ * The different *shape* 8d asked for, and the one this milestone exists to
+ * measure. Its three numbers sit between the other two on purpose — if it wins,
+ * the win has to come from the valuation rather than from the dial settings that
+ * were already shown not to matter.
+ *
+ * Four decisions change, and all four for the same reason: a deed is worth what
+ * it will collect, not what it costs.
+ *
+ *   * **what to buy** — payback, not affordability
+ *   * **what to bid** — a multiple of expected income, not of face value
+ *   * **where to build** — the busiest group it may legally build on, not the
+ *     cheapest lot it owns
+ *   * **what to trade** — the same valuation on both sides, and a price at which
+ *     it *will* part with somebody's key
+ */
+export const ODDS_PROFILE: BotProfile = {
+  reserve: 100,
+  auctionCeiling: 1.3,
+  buildBuffer: 50,
+  valuation: 'odds',
+  keyPremium: 2.5,
 };
 
 export const PROFILES: Record<string, BotProfile> = {
   baseline:   DEFAULT_PROFILE,
+  /** A copy of the baseline under another name — the control the mirror is
+   *  checked against. Two identical policies must come out 50/50, or the
+   *  measurement is measuring the harness. */
+  /**
+   * A copy of the baseline under another name. Not a policy — a **control**: two
+   * identical policies have to come out 50/50, or `--mirror` is measuring itself
+   * rather than the bots. It does (300/300, spread 0), which is what makes the
+   * other numbers in this file worth quoting.
+   */
+  control:    { ...DEFAULT_PROFILE },
   aggressive: AGGRESSIVE_PROFILE,
+  odds:       ODDS_PROFILE,
 };
 
 /** Everything a decision can depend on. Read-only by convention. */
@@ -88,7 +153,22 @@ export function shouldBuy(ctx: BotContext, tile: Tile & Ownable): boolean {
   if (!player.canAfford(price)) return false;
 
   if (isStrategic(ctx, tile)) return player.cash - price >= 0;
-  return player.cash - price >= profileOf(ctx).reserve;
+
+  const profile = profileOf(ctx);
+  if (profile.valuation === 'odds') {
+    // A deed that pays for itself inside a dozen laps is worth the reserve being
+    // dipped into; one that does not can wait for the auction, where this policy
+    // will bid what it is actually worth.
+    // Deliberately the same rule as the baseline, and this is a *result* rather
+    // than an omission. Buying by payback — dipping into the reserve for a busy
+    // square — was measured and lost about four points on its own (43% to 47%
+    // over 600 mirrored games when it was taken back out). The model does not
+    // see that a deed bought is also a deed denied, and with two players the
+    // only other bidder is the opponent.
+    return player.cash - price >= profile.reserve;
+  }
+
+  return player.cash - price >= profile.reserve;
 }
 
 /**
@@ -101,7 +181,20 @@ export function auctionCeiling(ctx: BotContext, tile: Tile & Ownable): number {
   const profile = profileOf(ctx);
   const strategic = isStrategic(ctx, tile);
 
-  const ceiling = Math.floor(tile.price * (strategic ? profile.auctionCeiling + 0.5 : profile.auctionCeiling));
+  // What it is worth, rather than a fraction of what it says on the card. Eight
+  // laps of expected income is the yardstick: long enough that a busy square is
+  // worth over the odds, short enough that a quiet one is not.
+  // Eight laps of expected income, rather than a fraction of what the card says.
+  // Capping it at the printed price made no difference over 800 games either
+  // way — with two players almost nothing is declined, so almost nothing reaches
+  // an auction, and this is the decision with the least leverage of the four.
+  const worth = profile.valuation === 'odds'
+    ? Math.floor(expectedIncome(ctx, tile) * 8)
+    : Math.floor(tile.price * profile.auctionCeiling);
+
+  const ceiling = strategic
+    ? Math.floor(worth * (profile.valuation === 'odds' ? 1.6 : 1) + (profile.valuation === 'odds' ? 0 : tile.price * 0.5))
+    : worth;
   const spendable = strategic ? player.cash : player.cash - profile.reserve;
   return Math.max(0, Math.min(ceiling, spendable));
 }
@@ -188,10 +281,18 @@ export function buildPlan(ctx: BotContext): BuildStep[] {
   const steps: BuildStep[] = [];
   let spent = 0;
 
+  // Cheapest-first is what the baseline does, and it is why it puts its money
+  // into the browns. The `odds` policy spends where a house *earns* most per
+  // dollar — which on the classic board is the oranges, and is worked out rather
+  // than known.
   const lots = [...player.ownedTileIds]
     .map((id) => board.getTile(id))
     .filter((t): t is PropertyTile => t instanceof PropertyTile)
-    .sort((a, b) => a.houseCost - b.houseCost);
+    .sort(profile.valuation === 'odds'
+      // Best group first, cheapest lot within it — so a group is finished rather
+      // than a scattering of good squares half-built.
+      ? (a, b) => (groupYield(ctx, b) - groupYield(ctx, a)) || (a.houseCost - b.houseCost)
+      : (a, b) => a.houseCost - b.houseCost);
 
   for (const lot of lots) {
     if (canBuildHouse(board, bank, player, lot).ok && spent + lot.houseCost <= budget) {
@@ -247,7 +348,21 @@ export function acceptTrade(ctx: BotContext, offer: TradeOffer): boolean {
   const other = ctx.players.find((p) => p.id === (iAmProposer ? offer.toId : offer.fromId));
   const givingTheirKey = !!other && giving.some((id) => completesGroupFor(board, other, id));
   const gettingOurKey  = getting.some((id) => completesGroupFor(board, player, id));
-  if (givingTheirKey && !gettingOurKey) return false;
+
+  if (givingTheirKey && !gettingOurKey) {
+    // The veto used to be absolute, and that is a large part of why one classic
+    // game in twenty never forms a monopoly at all: the only deed worth asking
+    // for is the only deed nobody will ever sell, so four players sit on four
+    // part-groups until the turn cap. A policy with a `keyPremium` will sell —
+    // for enough. Everything a monopoly is worth to *them* is still coming out
+    // of the price, because it is `valueOf` that the premium multiplies.
+    const premium = profileOf(ctx).keyPremium;
+    if (premium <= 0) return false;
+
+    const keys = giving.filter((id) => completesGroupFor(board, other!, id));
+    const asking = keys.reduce((sum, id) => sum + valueOf(ctx, id), 0) * premium;
+    if (gettingCash < asking) return false;
+  }
 
   const given = giving.reduce((sum, id) => sum + valueOf(ctx, id), givingCash);
   const gained = getting.reduce((sum, id) => sum + valueOf(ctx, id), gettingCash);
@@ -291,7 +406,9 @@ export function mayInterrupt(
 
 export function proposeTrade(ctx: BotContext): TradeOffer | null {
   const budget = Math.max(0, ctx.player.cash - profileOf(ctx).reserve);
-  return swapForMonopoly(ctx, budget) ?? buyOutright(ctx, budget);
+  return swapForMonopoly(ctx, budget)
+      ?? buyKeyForCash(ctx, budget)
+      ?? buyOutright(ctx, budget);
 }
 
 /** Cash steps to search over. Finer than this buys nothing but iterations. */
@@ -319,6 +436,38 @@ function swapForMonopoly(ctx: BotContext, budget: number): TradeOffer | null {
       const offer = cheapestYes(ctx, owner, base, budget);
       if (offer) return offer;
     }
+  }
+  return null;
+}
+
+/**
+ * Cash for the one lot that completes a group for us, with nothing going back.
+ *
+ * The third shape, and the one that needs no *mutual* monopoly to be possible —
+ * which is the point. A swap only happens when two players are each one lot
+ * short of two different groups, and a board where that never lines up is a
+ * board where nobody ever builds. Whether the owner will part with it is
+ * `acceptTrade`'s decision and depends on their `keyPremium`; a baseline
+ * opponent still says no at any price, so this shape simply finds nothing
+ * against one.
+ */
+function buyKeyForCash(ctx: BotContext, budget: number): TradeOffer | null {
+  const { player, players } = ctx;
+  if (profileOf(ctx).keyPremium <= 0) return null;
+
+  // The dearest key first: if only one purchase is affordable it should be the
+  // one that earns most, which is the same yardstick the rest of this policy uses.
+  const wanted = keysHeldByOthers(ctx)
+    .slice()
+    .sort((a, b) => valueOf(ctx, b.id) - valueOf(ctx, a.id));
+
+  for (const key of wanted) {
+    const owner = players.find((p) => p.id === key.ownerId);
+    if (!owner || owner.isBankrupt) continue;
+
+    const base: TradeOffer = { ...emptyOffer(player.id, owner.id), toTileIds: [key.id] };
+    const offer = cheapestYes(ctx, owner, base, budget);
+    if (offer) return offer;
   }
   return null;
 }
@@ -400,7 +549,87 @@ function ourKeysFor(ctx: BotContext, them: Player): PropertyTile[] {
 function valueOf(ctx: BotContext, tileId: number): number {
   const tile = ctx.board.getTile(tileId);
   if (!isOwnable(tile)) return 0;
+
+  if (profileOf(ctx).valuation === 'odds') {
+    // The same yardstick the auction uses, so a bot does not value a deed one
+    // way across the table and another under the hammer.
+    const worth = Math.floor(expectedIncome(ctx, tile) * 8);
+    return isStrategic(ctx, tile) ? Math.floor(worth * 1.6) : Math.max(worth, tile.mortgage);
+  }
   return isStrategic(ctx, tile) ? Math.floor(tile.price * 1.5) : tile.price;
+}
+
+/**
+ * What a colour *group* returns for the money, per lap: the rent a first house
+ * adds across all of it, weighted by how busy each square is, over what building
+ * out the group costs.
+ *
+ * A **group** and not a lot, which was the first draft and lost. Cheapest-lot-
+ * first — the baseline — is not really about cheapness: it finishes one group
+ * before starting another, and a finished group is what wins. Ranking individual
+ * lots by yield scattered the money across the best squares of several groups
+ * and developed none of them. So the odds go into choosing *which* group to
+ * pour money into, and inside it the cheapest lot still comes first.
+ */
+function groupYield(ctx: BotContext, lot: PropertyTile): number {
+  const group = ctx.board.groupTiles(lot.group);
+  let gain = 0;
+  let cost = 0;
+  for (const member of group) {
+    const level = Math.min(member.houses, 4);
+    const step  = (member.rentTiers[Math.min(level + 1, 5)] ?? 0) - (member.rentTiers[level] ?? 0);
+    gain += trafficOf(ctx.board, member.id) * step;
+    cost += member.houseCost;
+  }
+  return gain / Math.max(1, cost);
+}
+
+// ─── Valuing a deed by what it will collect ───────────────────────────────────
+// The `odds` policy's half of the file. Pure functions of the board and who owns
+// what, drawing no randomness — the same two rules every decision above obeys.
+
+/**
+ * The rent this deed would charge at the level its owner could plausibly reach.
+ *
+ * Not the rent it charges *now*, which is nearly always the bare tier and would
+ * make every undeveloped lot look worthless. A lot whose group can still be
+ * completed is priced at three houses — where the classic rent ladder is
+ * steepest, and where a real game usually stops. A lot in a group somebody else
+ * already holds a piece of is priced at what it will actually collect.
+ */
+function reachableRent(ctx: BotContext, tile: Tile & Ownable): number {
+  const { board, player } = ctx;
+
+  if (tile instanceof PropertyTile) {
+    const group = board.groupTiles(tile.group);
+    const free  = group.filter((t) => t.ownerId === null || t.ownerId === player.id).length;
+    // The *deed's* earning power, not the developed lot's. Pricing a lot at its
+    // three-house rent was the first draft, and it valued houses nobody had paid
+    // for: every payback came out under a lap, so the policy bought down to zero
+    // cash and bid its whole stack at auction. It lost 60/40 over 800 mirrored
+    // games — the measurement that made this line what it is. What a house adds
+    // is a separate decision with its own cost, and `houseYield` makes it.
+    if (free === group.length) return tile.rentTiers[0] * board.rules.monopolyRent;
+    return tile.rentTiers[0];
+  }
+
+  if (tile instanceof RailroadTile) {
+    return tile.rentFor(countOwnedOfType(board, player, tile.type) + 1);
+  }
+  if (tile instanceof UtilityTile) {
+    // Seven is the average roll, which is what a utility charges a multiple of.
+    return tile.rentMultiplier(countOwnedOfType(board, player, 'utility') + 1) * 7;
+  }
+  return 0;
+}
+
+/**
+ * What a deed is expected to collect per lap of the board: how busy the square
+ * is, times what it charges. This is the number the printed price does not
+ * contain, and the whole reason this policy exists.
+ */
+function expectedIncome(ctx: BotContext, tile: Tile & Ownable): number {
+  return trafficOf(ctx.board, tile.id) * reachableRent(ctx, tile);
 }
 
 /** A deed that completes a colour group, or a fourth railroad, and so on. */
