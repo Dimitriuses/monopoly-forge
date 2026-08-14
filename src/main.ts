@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT } from '@/config';
 import { BootScene } from '@/scenes/BootScene';
 import { MenuScene } from '@/scenes/MenuScene';
+import { PauseScene } from '@/scenes/PauseScene';
 import { GameScene } from '@/scenes/GameScene';
 import { UIScene } from '@/scenes/UIScene';
 import { CardScene } from '@/scenes/CardScene';
@@ -19,7 +20,7 @@ const config: Phaser.Types.Core.GameConfig = {
   parent: 'game-container',
   dom: { createContainer: true },
   physics: { default: 'arcade' },
-  scene: [BootScene, MenuScene, GameScene, UIScene, CardScene],
+  scene: [BootScene, MenuScene, GameScene, UIScene, CardScene, PauseScene],
 };
 
 window.addEventListener('load', () => {

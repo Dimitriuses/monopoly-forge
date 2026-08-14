@@ -540,13 +540,18 @@ export class GameScene extends Phaser.Scene {
     tradeBtn.on('pointerout',  () => tradeBtn.setStyle({ backgroundColor: theme().panel.button.on }));
     tradeBtn.on('pointerdown', () => this.openTrade());
 
-    const saveBtn = this.add.text(300, 738, '💾  SAVE', {
+    // Was SAVE. Saving moved into the pause menu, where it can be a row that says
+    // *why* it is unavailable rather than a button that shows a toast after the
+    // fact — the same bargain the property panel's build buttons make.
+    const menuBtn = this.add.text(300, 738, '⏸  MENU', {
       fontFamily: theme().font.display, fontSize: '14px', color: '#ffffff',
       backgroundColor: theme().chrome.button.fill, padding: { x: 12, y: 9 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setDepth(20);
-    saveBtn.on('pointerover', () => saveBtn.setStyle({ backgroundColor: theme().chrome.button.hover }));
-    saveBtn.on('pointerout',  () => saveBtn.setStyle({ backgroundColor: theme().chrome.button.fill }));
-    saveBtn.on('pointerdown', () => this.saveGame());
+    menuBtn.on('pointerover', () => menuBtn.setStyle({ backgroundColor: theme().chrome.button.hover }));
+    menuBtn.on('pointerout',  () => menuBtn.setStyle({ backgroundColor: theme().chrome.button.fill }));
+    menuBtn.on('pointerdown', () => this.openPause());
+
+    this.input.keyboard?.on('keydown-ESC', () => this.openPause());
 
     const muteBtn = this.add.text(383, 738, '🔊', {
       fontFamily: theme().font.body, fontSize: '15px',
@@ -921,9 +926,24 @@ export class GameScene extends Phaser.Scene {
 
   // ── Save / load ───────────────────────────────────────────────────────────────
 
-  private saveGame(): void {
-    if (this.isAnimating || this.auction || this.tradePanel.isOpen) {
-      this.notif.show('Finish what you are doing first, then save.', 'warning');
+  /**
+   * Why the game cannot be saved right now, or null. A restore resumes at the
+   * *start* of a turn, so anything half-finished has nowhere to be stored — see
+   * the snapshot section of KNOWNISSUES. Reported as a sentence rather than a
+   * boolean so the pause menu can print it under a dead row.
+   */
+  private saveBlockedBecause(): string | null {
+    if (this.isAnimating)        return 'A token is still moving';
+    if (this.auction)            return 'Something is under the hammer';
+    if (this.auctionQueue.length) return 'An estate is waiting to be auctioned';
+    if (this.tradePanel.isOpen)  return 'A trade is half built';
+    return null;
+  }
+
+  private saveGame(slot = 1): void {
+    const blocked = this.saveBlockedBecause();
+    if (blocked) {
+      this.notif.show(`${blocked} — finish that first, then save.`, 'warning');
       return;
     }
     const snapshot = captureGame({
@@ -932,8 +952,35 @@ export class GameScene extends Phaser.Scene {
       turnManager: this.turnManager, chanceDeck: this.chanceDeck, commDeck: this.commDeck,
       cardEffects: this.cardEffects, rules: this.rules,
     });
-    SaveLoad.save(snapshot, snapshot.rngState);
-    this.notif.show('Game saved. It will be waiting on the menu.', 'success');
+    SaveLoad.save(snapshot, snapshot.rngState, slot, {
+      gameId: this.gameId, round: this.turnManager.round,
+    });
+    this.notif.show(`Game saved to slot ${slot}.`, 'success');
+  }
+
+  /**
+   * Pause, and hand the pause menu everything it needs to answer for itself.
+   * `scene.pause` rather than `stop`: the board stays on screen behind the
+   * scrim, and every timer and tween is held rather than cancelled — a paused
+   * `delayedCall` is exactly what the turn-generation guard expects to survive.
+   */
+  private openPause(): void {
+    if (this.scene.isActive('PauseScene')) return;
+    const blocked = this.saveBlockedBecause();
+    this.scene.pause();
+    this.scene.launch('PauseScene', {
+      canSave: blocked === null,
+      saveReason: blocked ?? undefined,
+      gameId: this.gameId,
+      round: this.turnManager.round,
+      onSave: (slot: number) => this.saveGame(slot),
+      onQuit: () => {
+        this.scene.stop('PauseScene');
+        this.scene.stop('UIScene');
+        this.scene.stop();
+        this.scene.start('MenuScene');
+      },
+    });
   }
 
   // ── Trading ───────────────────────────────────────────────────────────────────

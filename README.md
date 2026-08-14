@@ -30,7 +30,9 @@ Everything is mouse-driven — there is no keyboard input.
 
 | Action | How |
 |---|---|
-| Choose a game | **Classic**, **Roundabout**, **Speed Die**, **Orbits**, **Pocket** or **Ultimate** at the top of the menu, or `?game=ultimate` in the URL. A game brings its board, its economy, its deck, the palette it prefers and any artwork of its own |
+| Choose a game | **Play → Game** on the menu, or `?game=ultimate` in the URL. Six ship: **Classic**, **Roundabout**, **Speed Die**, **Orbits**, **Pocket**, **Ultimate**. A game brings its board, its economy, its deck, the palette it prefers and any artwork of its own |
+| Change the rules | **Play → Game Settings.** Starting cash, the salary, the jail fine and term, the house supply, how a full colour group is charged, how the game ends — about twenty of them, in sections, each showing what this game would have played |
+| Pause | **Escape**, or the MENU button. Resume, save to one of three slots, change the sound or the theme, or quit to the title |
 | Choose 2–6 players | Click a number on the menu |
 | Change a player's token | Click the token name next to `P1`, `P2`, … to cycle |
 | Play against the computer | Each seat says **🙋 Human** or **🤖 Bot** — click to swap. Seats 2+ are bots by default |
@@ -120,8 +122,8 @@ headless browser — see [tools/playtest.mjs](tools/playtest.mjs).
 
 | | |
 |---|---|
-| ![Menu](screenshots/1-menu.png) | ![Board](screenshots/2-board.png) |
-| **Setup** — 2–6 players, tokens, house rules | **Board** — 40 tiles, colour groups, HUD, turn log |
+| ![Menu](screenshots/1-menu.png) | ![Play](screenshots/1b-play.png) |
+| **Main menu** — Play, Load and Settings, as a tree | **Play** — the game, its rules, the table |
 | ![Buy prompt](screenshots/3-buy-prompt.png) | ![Card](screenshots/4-card.png) |
 | **Buy prompt** — price, base rent, your cash | **Cards** — Chance and Community Chest |
 | ![Jail](screenshots/5-jail.png) | ![Late game](screenshots/6-late-game.png) |
@@ -130,6 +132,8 @@ headless browser — see [tools/playtest.mjs](tools/playtest.mjs).
 | **Property panel** — rent ladder, costs, build and mortgage actions | **Auction** — a declined property, round-robin bidding on a clock |
 | ![Trade](screenshots/9-trade.png) | ![Trade review](screenshots/10-trade-review.png) |
 | **Trade** — build an offer from either side's deeds and cash | **…then accept, decline or counter it** |
+| ![Game settings](screenshots/1c-settings.png) | ![Board](screenshots/2-board.png) |
+| **Game Settings** — generated from the rules themselves, saying what changed | **The board** — the classic 40 |
 | ![Bots](screenshots/12-bots.png) | ![Round board](screenshots/13-round-board.png) |
 | **Bots** — every seat handed to the computer, playing itself | **Roundabout** — 24 tiles on a circle, no corners |
 | ![Orbit board](screenshots/14-orbit-board.png) | ![Ultimate board](screenshots/15-ultimate-board.png) |
@@ -153,7 +157,7 @@ Three axes of customisation, none of which should require editing engine code:
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 462 unit tests pin down.
+it is what the 483 unit tests pin down.
 
 ### What already supports it
 
@@ -229,7 +233,7 @@ Three consequences worth the trouble:
 **The model runs in Node.** `src/config.ts` deliberately contains no Phaser
 import — the `Phaser.Game` options live in `main.ts` instead — so everything under
 `game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 462 unit tests run in ~8 s with no jsdom, and it is the seam a
+That is what lets 483 unit tests run in ~8 s with no jsdom, and it is the seam a
 headless AI opponent would plug into.
 
 **Games are reproducible.** Every dice roll and both deck shuffles draw from one
@@ -329,7 +333,7 @@ http://localhost:3000/?seed=20260512&debug=1
 ## Tests
 
 ```bash
-npm test                # 462 unit tests, plain Node, ~8 s
+npm test                # 483 unit tests, plain Node, ~8 s
 npm run typecheck       # tsc --noEmit
 npm run playtest        # build first: plays 30 seeded turns in a headless browser
 npm run playtest -- --bots   # hand every seat to a bot and watch them play it out

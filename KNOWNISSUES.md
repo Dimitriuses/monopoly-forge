@@ -149,6 +149,22 @@ swap, so four players who are never simultaneously one-lot-short of two differen
 groups will never complete one. A stronger trading policy would shrink this, and
 the simulator is now the thing that could measure whether it did.
 
+### The menu can set a rule that the game it is set for refuses
+
+*Added in M10d.*
+
+`RULE_FIELDS` deliberately excludes `movement`, because a tracks board played as
+a `circuit` is a pairing `validateGame` refuses and the menu would be offering a
+choice that silently falls back to Classic. Nothing stops the *other* direction
+being reachable, though: `winCondition: 'roundLimit'` with `roundLimit: 0` is a
+game with no limit and no knockout ending either, and the settings screen will
+happily let you build it.
+
+The screen does not validate a combination before starting. It should — the
+check exists (`validateGame`) and the screen has the resolved rule set in hand —
+so a refused combination could be a row that says why instead of a game that
+quietly plays something else. Small, and not written.
+
 ### The playtest harness assumed a 40-tile board
 
 *Found and fixed in M11.*

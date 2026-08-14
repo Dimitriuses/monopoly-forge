@@ -1,12 +1,18 @@
 import Phaser from 'phaser';
-import type { HouseRules, TokenType } from '@/config';
-import { TOKEN_LABELS, DEFAULT_HOUSE_RULES, HOUSE_RULE_LABELS } from '@/config';
-import { SaveLoad } from '@/utils/SaveLoad';
-import { GAMES, DEFAULT_GAME } from '@/games';
+import type { TokenType } from '@/config';
+import { TOKEN_LABELS } from '@/config';
+import { SaveLoad, type SlotSummary } from '@/utils/SaveLoad';
+import { GAMES, DEFAULT_GAME, rulesFor } from '@/games';
 import { validateSnapshot, type GameSnapshot } from '@/game/Snapshot';
-import { knownVariants, variantNamed } from '@/game/Variants';
+import {
+  RULE_FIELDS, RULE_GROUPS, formatRuleValue, nudgeRuleValue, variantFields,
+  type RuleGroup,
+} from '@/game/RuleFields';
+import type { GameRules } from '@/game/Rules';
 import { theme, setTheme, knownThemes } from '@/ui/Theme';
 import { bakeTokenTextures, bakeBuildingTextures } from '@/ui/Textures';
+import { Menu, backItem, type MenuItem, type MenuScreen } from '@/ui/Menu';
+import { sfx } from '@/ui/Sfx';
 
 interface PlayerSetup {
   name: string;
@@ -14,33 +20,36 @@ interface PlayerSetup {
   isBot: boolean;
 }
 
+// ─── MenuScene ────────────────────────────────────────────────────────────────
+// Play / Load / Settings, as a tree.
+//
+// It was one flat screen with everything on it, which held six games, five
+// player counts, six seat rows and four switches and had run out of room — the
+// house-rule chips were already shrinking to fit as more variants registered.
+//
+// The important change is not the nesting, it is **`overrides`**. The menu used
+// to keep a whole `HouseRules` object plus three "has the player touched this?"
+// flags, because a game's defaults must not beat a player's choice and a
+// player's choice must not beat a game they have not chosen yet. Keeping only
+// the keys somebody actually changed makes that bookkeeping disappear: layering
+// is `rulesFor(game, overrides)`, which is what the engine does anyway, and the
+// bug Pocket hit in M9b — the menu's `false` beating a game's `true` — cannot be
+// written any more.
+
 export class MenuScene extends Phaser.Scene {
-  private playerCount: number = 2;
+  private menu!: Menu;
+  private playerCount = 2;
   private players: PlayerSetup[] = [];
-  private setupContainer!: Phaser.GameObjects.Container;
-  private countButtons: Map<number, Phaser.GameObjects.Text> = new Map();
-  /** `?houseRules=freeParkingJackpot,noAuction` switches them on; the chips override. */
-  private houseRules: HouseRules = MenuScene.houseRulesFromUrl();
-  /** Variants switched on. `?variants=speedDie` preselects, the chips override. */
-  private variants: string[] = new URLSearchParams(window.location.search)
-    .get('variants')?.split(',').filter((name) => knownVariants().includes(name)) ?? [];
-  /** Whether the player has touched the variant chips, which outranks a game's. */
-  private variantsChosen = !!new URLSearchParams(window.location.search).get('variants');
-  /** House rules the player has set themselves — those outrank a game's too. */
-  private houseRulesChosen = MenuScene.houseRulesNamedInUrl();
+
   /**
-   * Which game to play. `?game=<id>` preselects one; the chips override it.
-   *
-   * Read without loading it — `gameById` applies a game's registrations, and the
-   * menu has no business doing that for a game nobody has started yet. The id is
-   * checked against what ships and falls back if it is not one of them.
+   * Only the rules the player has changed. Everything else comes from the game,
+   * so picking a different game moves every untouched value with it and leaves
+   * every deliberate one alone.
    */
-  /** Whether the player has picked a palette themselves, which outranks a game's. */
-  private themeChosen = !!new URLSearchParams(window.location.search).get('theme');
-  private gameId: string = (() => {
-    const asked = new URLSearchParams(window.location.search).get('game');
-    return asked && GAMES[asked] ? asked : DEFAULT_GAME.id;
-  })();
+  private overrides: Partial<GameRules> = {};
+  /** Whether a palette was picked by hand, which outranks a game's preference. */
+  private themeChosen = false;
+  private gameId: string = DEFAULT_GAME.id;
 
   constructor() {
     super({ key: 'MenuScene' });
@@ -48,376 +57,334 @@ export class MenuScene extends Phaser.Scene {
 
   create(): void {
     const { width, height } = this.scale;
+    const t = theme();
 
-    // ── Background ────────────────────────────────────────────────────────────
-    this.add.rectangle(0, 0, width, height, 0x1a1a2e).setOrigin(0);
-
-    // ── Title ─────────────────────────────────────────────────────────────────
-    this.add.text(width / 2, 80, '🏦 MONOPOLY FORGE', {
-      fontFamily: 'Georgia, serif',
-      fontSize: '42px',
-      color: '#f0c040',
-      stroke: '#000',
-      strokeThickness: 4,
+    this.add.rectangle(0, 0, width, height, t.chrome.page).setOrigin(0);
+    this.add.text(width / 2, 70, '🏦 MONOPOLY FORGE', {
+      fontFamily: t.font.display, fontSize: '40px', color: t.chrome.heading,
+      stroke: '#000', strokeThickness: 4,
+    }).setOrigin(0.5);
+    this.add.text(width / 2, 110, 'A Custom Phaser 3 Edition', {
+      fontFamily: t.font.display, fontSize: '16px', color: t.chrome.dim,
     }).setOrigin(0.5);
 
-    this.add.text(width / 2, 130, 'A Custom Phaser 3 Edition', {
-      fontFamily: 'Georgia, serif',
-      fontSize: '18px',
-      color: '#aaaacc',
-    }).setOrigin(0.5);
+    this.readUrl();
+    this.seatDefaults();
 
-    this.buildGameSelector();
-    this.buildThemeSelector();
-
-    // ── Player count selector ─────────────────────────────────────────────────
-    this.add.text(width / 2, 200, 'Number of Players', {
-      fontFamily: 'Georgia, serif',
-      fontSize: '20px',
-      color: '#ffffff',
-    }).setOrigin(0.5);
-
-    [2, 3, 4, 5, 6].forEach((count, i) => {
-      const btn = this.add.text(width / 2 - 100 + i * 50, 235, String(count), {
-        fontFamily: 'Georgia, serif',
-        fontSize: '22px',
-        color: '#888888',
-        backgroundColor: '#2a2a4a',
-        padding: { x: 10, y: 6 },
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-
-      this.countButtons.set(count, btn);
-
-      btn.on('pointerdown', () => {
-        this.playerCount = count;
-        // Without this the highlight stays on whichever count was selected when
-        // the buttons were built, while the rows below silently change.
-        this.refreshCountButtons();
-        this.buildSetupUI();
-      });
-    });
-    this.refreshCountButtons();
-
-    // ── Player setup rows ──────────────────────────────────────────────────────
-    this.setupContainer = this.add.container(0, 0);
-    this.buildSetupUI();
-
-    this.buildHouseRules();
-
-    // ── Start button ──────────────────────────────────────────────────────────
-    const startBtn = this.add.text(width / 2, height - 80, '▶  START GAME', {
-      fontFamily: 'Georgia, serif',
-      fontSize: '26px',
-      color: '#ffffff',
-      backgroundColor: '#27ae60',
-      padding: { x: 32, y: 14 },
-    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-
-    startBtn.on('pointerover', () => startBtn.setStyle({ backgroundColor: '#2ecc71' }));
-    startBtn.on('pointerout',  () => startBtn.setStyle({ backgroundColor: '#27ae60' }));
-    startBtn.on('pointerdown', () => this.startGame());
-
-    this.buildContinueButton();
+    this.menu = new Menu(this, () => this.rootScreen());
+    this.menu.render();
+    this.exposeMenuHandle();
   }
 
-  /**
-   * Which game to play — a board, the economy it is balanced for, the deck it
-   * deals and the palette it looks best in, all in one choice. It was a *board*
-   * picker until M9a, with the economy hidden inside the map file and no way to
-   * tell from the menu that Roundabout starts you with less money.
-   */
-  private buildGameSelector(): void {
-    const { width } = this.scale;
-    const games = Object.values(GAMES);
-    const chipW = 150;
-    const gap = 10;
-    const left = width / 2 - (games.length * chipW + (games.length - 1) * gap) / 2;
+  // ── The screens ─────────────────────────────────────────────────────────────
 
-    // The chips draw from their top-left, so they occupy 148–172; the blurb sits
-    // under them and still clears "Number of Players" at y=200.
-    const blurb = this.add.text(width / 2, 176, '', {
-      fontFamily: 'Georgia, serif', fontSize: '11px', color: '#55667a',
-    }).setOrigin(0.5);
-
-    const chips = games.map((game, i) => {
-      const chip = this.add.text(left + i * (chipW + gap), 148, game.name, {
-        fontFamily: 'Georgia, serif', fontSize: '14px',
-        padding: { x: 8, y: 5 }, fixedWidth: chipW, align: 'center',
-      }).setInteractive({ useHandCursor: true });
-      chip.on('pointerdown', () => { this.selectGame(game.id); paint(); });
-      return chip;
-    });
-
-    const paint = () => {
-      games.forEach((game, i) => {
-        const active = game.id === this.gameId;
-        chips[i].setColor(active ? '#ffffff' : '#8899aa');
-        chips[i].setBackgroundColor(active ? '#2a6b9b' : '#1a2640');
-        if (active) blurb.setText(game.blurb);
-      });
+  private rootScreen(): MenuScreen {
+    const recent = SaveLoad.mostRecent();
+    return {
+      title: 'Main Menu',
+      items: [
+        { id: 'play', label: 'Play', kind: 'submenu', primary: true,
+          onPress: () => this.menu.open(() => this.playScreen()) },
+        { id: 'load', label: 'Load', kind: 'submenu',
+          value: recent ? `slot ${recent.slot}` : 'empty',
+          enabled: recent !== null,
+          reason: 'No saved games yet',
+          onPress: () => this.menu.open(() => this.loadScreen()) },
+        { id: 'settings', label: 'Settings', kind: 'submenu',
+          onPress: () => this.menu.open(() => this.settingsScreen()) },
+      ],
     };
-    paint();
-    // `?game=` may have preselected one, and its defaults have to be applied the
-    // same way clicking the chip would.
-    this.selectGame(this.gameId);
+  }
+
+  private playScreen(): MenuScreen {
+    const game = GAMES[this.gameId];
+    const items: MenuItem[] = [
+      { id: 'game', label: 'Game', kind: 'value', value: game.name, hint: game.blurb,
+        onAdjust: (d) => { this.cycleGame(d); this.menu.render(); } },
+      { id: 'rules', label: 'Game Settings', kind: 'submenu',
+        value: this.changedCount() ? `${this.changedCount()} changed` : 'default',
+        onPress: () => this.menu.open(() => this.rulesScreen()) },
+      { id: 'count', label: 'Number of Players', kind: 'value', value: String(this.playerCount),
+        onAdjust: (d) => { this.setPlayerCount(this.playerCount + d); this.menu.render(); } },
+      { id: 'seats', label: 'Players', kind: 'heading' },
+    ];
+
+    this.players.forEach((player, i) => {
+      items.push({
+        id: `seat${i + 1}`,
+        label: `${player.name} — ${TOKEN_LABELS[player.token]}`,
+        kind: 'value',
+        value: player.isBot ? '🤖 Bot' : '🙋 Human',
+        onPress: () => { this.cycleToken(i); this.menu.render(); },
+        onAdjust: () => { player.isBot = !player.isBot; this.menu.render(); },
+      });
+    });
+
+    items.push(
+      { id: 'start', label: 'Start', primary: true, onPress: () => this.startGame() },
+      { id: 'cancel', label: 'Cancel', onPress: () => this.menu.back() },
+    );
+    return { title: 'Play', items };
   }
 
   /**
-   * Take a game's defaults. They are *defaults*, not requirements: once somebody
-   * has picked a palette or touched the variant chips themselves, their choice
-   * outranks whatever the next game would have preferred.
+   * Sections, not one long list. Twenty rules plus the variants overflow a
+   * screen, and a menu that scrolls is a menu whose rows the harness has to
+   * scroll into view first — this is both the smaller change and the better
+   * read. Which section a rule is in is metadata beside the rule, so a rule
+   * added to the engine still costs one line and no scene edit.
+   */
+  private rulesScreen(): MenuScreen {
+    const game = GAMES[this.gameId];
+    const items: MenuItem[] = RULE_GROUPS.map((group) => {
+      const changed = RULE_FIELDS
+        .filter((f) => f.group === group.id && f.key in this.overrides).length;
+      return {
+        id: `group.${group.id}`,
+        label: group.label,
+        kind: 'submenu' as const,
+        value: changed ? `${changed} changed` : undefined,
+        onPress: () => this.menu.open(() => this.ruleGroupScreen(group.id, group.label)),
+      };
+    });
+
+    items.push({
+      id: 'group.variants', label: 'Variants', kind: 'submenu',
+      value: rulesFor(game, this.overrides).variants.length
+        ? `${rulesFor(game, this.overrides).variants.length} on` : undefined,
+      onPress: () => this.menu.open(() => this.variantsScreen()),
+    });
+
+    items.push(
+      { id: 'reset', label: 'Reset to game defaults',
+        enabled: this.changedCount() > 0,
+        reason: `Nothing changed — these are ${game.name}'s own rules`,
+        onPress: () => { this.overrides = {}; this.menu.render(); } },
+      backItem(this.menu),
+    );
+
+    return {
+      title: 'Game Settings',
+      subtitle: this.changedCount()
+        ? `${game.name}, with ${this.changedCount()} rule${this.changedCount() === 1 ? '' : 's'} changed`
+        : `${game.name}'s own rules`,
+      items,
+    };
+  }
+
+  private ruleGroupScreen(group: RuleGroup, label: string): MenuScreen {
+    const game = GAMES[this.gameId];
+    const resolved = rulesFor(game, this.overrides);
+    const defaults = rulesFor(game);
+
+    const items: MenuItem[] = RULE_FIELDS.filter((f) => f.group === group).map((field) => ({
+      id: `rule.${field.key}`,
+      label: field.label,
+      kind: 'value' as const,
+      value: formatRuleValue(field, resolved[field.key]),
+      // A changed rule says so, so "what have I actually altered?" is answerable
+      // without remembering what this game's default was.
+      hint: field.key in this.overrides
+        ? `changed — ${game.name} plays ${formatRuleValue(field, defaults[field.key])}`
+        : field.hint,
+      onAdjust: (d) => {
+        this.overrides = {
+          ...this.overrides,
+          [field.key]: nudgeRuleValue(field, resolved[field.key], d),
+        };
+        this.menu.render();
+      },
+    }));
+
+    items.push(backItem(this.menu));
+    return { title: label, subtitle: `Playing ${game.name}`, items };
+  }
+
+  private variantsScreen(): MenuScreen {
+    const on = rulesFor(GAMES[this.gameId], this.overrides).variants;
+    const items: MenuItem[] = variantFields().map((variant) => ({
+      id: `variant.${variant.name}`,
+      label: variant.label,
+      kind: 'value' as const,
+      value: on.includes(variant.name) ? 'on' : 'off',
+      hint: variant.blurb,
+      onPress: () => { this.toggleVariant(variant.name); this.menu.render(); },
+      onAdjust: () => { this.toggleVariant(variant.name); this.menu.render(); },
+    }));
+    items.push(backItem(this.menu));
+    return { title: 'Variants', items };
+  }
+
+  private loadScreen(): MenuScreen {
+    const items: MenuItem[] = SaveLoad.slots().map((slot) => ({
+      id: `slot${slot.slot}`,
+      label: `Slot ${slot.slot}`,
+      kind: 'value' as const,
+      value: slot.used ? describeSlot(slot) : 'empty',
+      hint: slot.used ? new Date(slot.timestamp).toLocaleString() : undefined,
+      enabled: slot.used,
+      reason: 'Nothing saved here',
+      onPress: () => this.loadSlot(slot.slot),
+    }));
+    items.push(backItem(this.menu));
+    return { title: 'Load', items };
+  }
+
+  private settingsScreen(): MenuScreen {
+    return {
+      title: 'Settings',
+      items: [
+        { id: 'sound', label: 'Sound', kind: 'value',
+          value: sfx.muted ? 'off' : `${Math.round(sfx.volume * 100)}%`,
+          onAdjust: (d) => { sfx.setVolume(sfx.volume + d * 0.1); this.menu.render(); },
+          onPress: () => { sfx.toggleMute(); this.menu.render(); } },
+        { id: 'theme', label: 'Theme', kind: 'value', value: theme().name,
+          hint: 'A palette is a preference — it is not saved with a game',
+          onAdjust: (d) => { this.cycleTheme(d); this.menu.render(); } },
+        backItem(this.menu),
+      ],
+    };
+  }
+
+  // ── Choices ─────────────────────────────────────────────────────────────────
+
+  private changedCount(): number {
+    return Object.keys(this.overrides).length;
+  }
+
+  private cycleGame(delta: 1 | -1): void {
+    const ids = Object.keys(GAMES);
+    const at = ids.indexOf(this.gameId);
+    this.selectGame(ids[((at < 0 ? 0 : at) + delta + ids.length) % ids.length]);
+  }
+
+  /**
+   * Take a game's palette. Its *rules* need nothing done to them — they are the
+   * base `rulesFor` layers the overrides over, so an untouched rule follows the
+   * game automatically and a changed one stays changed.
    */
   private selectGame(id: string): void {
     this.gameId = id;
     const game = GAMES[id];
-    if (!game) return;
-    if (game.theme && !this.themeChosen)  this.applyTheme(game.theme);
-    if (!this.variantsChosen)             this.variants = [...(game.variants ?? [])];
-
-    // A house rule the *game* asks for, on any switch the player has not touched.
-    // Without this the menu sent all three booleans explicitly every time, so a
-    // game could never turn one on: `resolveRules(game.rules, houseRules)` let
-    // the menu's `false` win over the game's `true`. Pocket asks for the Free
-    // Parking jackpot and silently did not get it.
-    for (const key of Object.keys(this.houseRules) as Array<keyof HouseRules>) {
-      if (this.houseRulesChosen.has(key)) continue;
-      this.houseRules[key] = game.rules?.[key] ?? DEFAULT_HOUSE_RULES[key];
-    }
+    if (game?.theme && !this.themeChosen) this.applyTheme(game.theme);
   }
 
-  /**
-   * The house-rule switches. Every one of these is read by the game — a flag
-   * nothing consults does not belong here (see HouseRules in config.ts).
-   */
-  private buildHouseRules(): void {
-    const { width } = this.scale;
-
-    // The switches are house rules *and* registered variants in one row: both
-    // are things you turn on before starting, and a variant that registers
-    // itself appears here without this scene being edited.
-    const chips: Array<{ label: string; on: () => boolean; toggle: () => void }> = [
-      ...(Object.keys(HOUSE_RULE_LABELS) as Array<keyof HouseRules>).map((key) => ({
-        label:  HOUSE_RULE_LABELS[key],
-        on:     () => this.houseRules[key],
-        toggle: () => {
-          this.houseRulesChosen.add(key);
-          this.houseRules[key] = !this.houseRules[key];
-        },
-      })),
-      ...knownVariants().map((name) => ({
-        label:  variantNamed(name).label,
-        on:     () => this.variants.includes(name),
-        toggle: () => {
-          this.variantsChosen = true;
-          this.variants = this.variants.includes(name)
-            ? this.variants.filter((v) => v !== name)
-            : [...this.variants, name];
-        },
-      })),
-    ];
-
-    // One row across, not a column: six player rows can reach y=578 and the
-    // START button starts at y=690, so there is only one line's worth of space.
-    // The chips shrink to fit rather than running off the edge as more register.
-    const gap   = 15;
-    const chipW = Math.min(230, (width - 80 - (chips.length - 1) * gap) / chips.length);
-    const left  = width / 2 - (chips.length * chipW + (chips.length - 1) * gap) / 2;
-
-    this.add.text(width / 2, 600, 'House rules & variants', {
-      fontFamily: 'Georgia, serif', fontSize: '14px', color: '#7788aa',
-    }).setOrigin(0.5);
-
-    chips.forEach((chip, i) => {
-      const row = this.add.text(left + i * (chipW + gap), 626, '', {
-        fontFamily: 'Georgia, serif', fontSize: '15px',
-        color: '#aaaacc', backgroundColor: '#2a2a4a',
-        padding: { x: 10, y: 4 }, fixedWidth: chipW,
-      }).setInteractive({ useHandCursor: true });
-
-      const paint = () => {
-        row.setText(`${chip.on() ? '☑' : '☐'}  ${chip.label}`);
-        row.setColor(chip.on() ? '#f0c040' : '#8899aa');
-      };
-      paint();
-
-      row.on('pointerdown', () => { chip.toggle(); paint(); });
-    });
+  private toggleVariant(name: string): void {
+    const current = rulesFor(GAMES[this.gameId], this.overrides).variants;
+    this.overrides = {
+      ...this.overrides,
+      variants: current.includes(name)
+        ? current.filter((v) => v !== name)
+        : [...current, name],
+    };
   }
 
-  /** Only offered when there is a save, and only if this build can read it. */
-  private buildContinueButton(): void {
-    const saved = SaveLoad.load();
-    if (!saved || !validateSnapshot(saved.state)) return;
-
-    const when = new Date(saved.timestamp).toLocaleString();
-    const btn = this.add.text(this.scale.width / 2, this.scale.height - 30, '↻  CONTINUE SAVED GAME', {
-      fontFamily: 'Georgia, serif', fontSize: '15px', color: '#ffffff',
-      backgroundColor: '#2a3a55', padding: { x: 16, y: 8 },
-    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-
-    btn.on('pointerover', () => btn.setStyle({ backgroundColor: '#3d5170' }));
-    btn.on('pointerout',  () => btn.setStyle({ backgroundColor: '#2a3a55' }));
-    btn.on('pointerdown', () => {
-      this.scene.start('GameScene', {
-        players: this.players,
-        snapshot: saved.state as unknown as GameSnapshot,
-      });
-    });
-
-    this.add.text(this.scale.width / 2, this.scale.height - 8, `saved ${when}`, {
-      fontFamily: 'Georgia, serif', fontSize: '10px', color: '#55667a',
-    }).setOrigin(0.5);
-  }
-
-  /**
-   * How the game looks. A single cycling chip in the corner rather than a row of
-   * its own: a theme is a preference, not a decision about the game, and it does
-   * not deserve the same weight on the menu as the board or the rules.
-   */
-  private buildThemeSelector(): void {
-    const chip = this.add.text(this.scale.width - 20, 20, '', {
-      fontFamily: 'Georgia, serif', fontSize: '13px',
-      color: '#8899aa', backgroundColor: '#2a2a4a', padding: { x: 10, y: 5 },
-    }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
-
-    const paint = () => chip.setText(`🎨  ${theme().name}`);
-    paint();
-
-    chip.on('pointerdown', () => {
-      const ids = knownThemes().map((t) => t.id);
-      this.themeChosen = true;
-      this.applyTheme(ids[(ids.indexOf(theme().id) + 1) % ids.length]);
-      paint();
-    });
+  private cycleTheme(delta: 1 | -1): void {
+    const ids = knownThemes().map((t) => t.id);
+    const at = ids.indexOf(theme().id);
+    this.themeChosen = true;
+    this.applyTheme(ids[((at < 0 ? 0 : at) + delta + ids.length) % ids.length]);
   }
 
   /**
    * Switch palette. The pieces and the buildings are baked textures, so a new one
-   * means baking them again. The menu itself keeps its own colours — it is the
-   * frame around the game, not part of the board.
+   * means baking them again.
    */
   private applyTheme(id: string): void {
     setTheme(id);
     bakeTokenTextures(this);
     bakeBuildingTextures(this);
+    this.cameras.main.setBackgroundColor(theme().chrome.page);
   }
 
-  /**
-   * House rules named in the URL. It is the same affordance `?map=` and
-   * `?variants=` give, and it is what lets the playtest exercise a rule set
-   * other than the default one — the switches are canvas text with no DOM to
-   * click from a harness.
-   */
-  /** Which switches `?houseRules=` named, so a game cannot override those either. */
-  private static houseRulesNamedInUrl(): Set<keyof HouseRules> {
-    const named = new URLSearchParams(window.location.search).get('houseRules');
-    return new Set(
-      (named?.split(',') ?? []).filter((key) => key in DEFAULT_HOUSE_RULES),
-    ) as Set<keyof HouseRules>;
+  private setPlayerCount(count: number): void {
+    this.playerCount = Math.max(2, Math.min(6, count));
+    this.seatDefaults();
   }
 
-  private static houseRulesFromUrl(): HouseRules {
-    const rules = { ...DEFAULT_HOUSE_RULES };
-    const named = new URLSearchParams(window.location.search).get('houseRules');
-    for (const key of named?.split(',') ?? []) {
-      if (key in rules) rules[key as keyof HouseRules] = true;
+  private seatDefaults(): void {
+    const tokens = Object.keys(TOKEN_LABELS) as TokenType[];
+    const kept = this.players.slice(0, this.playerCount);
+    for (let i = kept.length; i < this.playerCount; i++) {
+      // Seat 1 is yours; the rest default to bots, so one person can start a real
+      // game without configuring anything.
+      kept.push({ name: `Player ${i + 1}`, token: tokens[i % tokens.length], isBot: i > 0 });
     }
-    return rules;
+    this.players = kept;
   }
 
   /**
    * The next piece nobody else has taken. Cycling each row independently used to
    * let two seats both end up as "Car", and a shared token is a shared colour on
-   * the board — the owner bands, the tokens and the HUD all read the same, and
-   * there is nothing left to tell the two players apart by.
-   *
-   * There are eight pieces and at most six seats, so a free one always exists;
-   * the loop bound is there so a shorter list could never spin.
+   * the board — there is then nothing left to tell the two players apart by.
    */
-  private nextFreeToken(seat: number, tokens: TokenType[]): TokenType {
+  private cycleToken(seat: number): void {
+    const tokens = Object.keys(TOKEN_LABELS) as TokenType[];
     const taken = new Set(this.players.filter((_, i) => i !== seat).map((p) => p.token));
-    const from  = tokens.indexOf(this.players[seat].token);
-
+    const from = tokens.indexOf(this.players[seat].token);
     for (let step = 1; step <= tokens.length; step++) {
       const candidate = tokens[(from + step) % tokens.length];
-      if (!taken.has(candidate)) return candidate;
+      if (!taken.has(candidate)) { this.players[seat].token = candidate; return; }
     }
-    return this.players[seat].token;
   }
 
-  /** Repaint the player-count buttons so exactly one reads as selected. */
-  private refreshCountButtons(): void {
-    this.countButtons.forEach((btn, count) => {
-      const selected = count === this.playerCount;
-      btn.setColor(selected ? '#f0c040' : '#888888');
-      btn.setBackgroundColor(selected ? '#3d3d6b' : '#2a2a4a');
+  // ── Starting ────────────────────────────────────────────────────────────────
+
+  private loadSlot(slot: number): void {
+    const saved = SaveLoad.load(slot);
+    if (!saved || !validateSnapshot(saved.state)) return;
+    this.scene.start('GameScene', {
+      players: this.players,
+      snapshot: saved.state as unknown as GameSnapshot,
     });
   }
 
-  private buildSetupUI(): void {
-    this.setupContainer.removeAll(true);
-    this.players = [];
+  private startGame(): void {
+    this.scene.start('GameScene', {
+      players: this.players,
+      seed: this.readSeedFromUrl(),
+      gameId: this.gameId,
+      houseRules: { ...this.overrides },
+    });
+  }
 
-    const tokens = Object.keys(TOKEN_LABELS) as TokenType[];
-    const startY = 290;
-    // Line the rows up under the centred title rather than against the far left.
-    const labelX = this.scale.width / 2 - 110;
-    const tokenX = this.scale.width / 2 - 60;
+  // ── The URL ─────────────────────────────────────────────────────────────────
+  // Still the only way a harness can drive the menu: it is canvas text with no
+  // DOM to click, and every switch that was reachable before this rewrite stays
+  // reachable. A rule named here counts as *chosen*, exactly as clicking it does.
 
-    for (let i = 0; i < this.playerCount; i++) {
-      const y = startY + i * 55;
-      const defaultToken = tokens[i % tokens.length];
-      // Seat 1 is yours; the rest default to bots, so a single player can start
-      // a real game from the menu without configuring anything.
-      this.players.push({ name: `Player ${i + 1}`, token: defaultToken, isBot: i > 0 });
+  private readUrl(): void {
+    const params = new URLSearchParams(window.location.search);
 
-      // Row label
-      this.setupContainer.add(
-        this.add.text(labelX, y, `P${i + 1}`, {
-          fontFamily: 'Georgia, serif', fontSize: '18px', color: '#aaaacc',
-        }).setOrigin(0, 0.5),
-      );
+    const asked = params.get('game');
+    if (asked && GAMES[asked]) this.gameId = asked;
 
-      // Token selector (simple text cycle for now)
-      const tokenLabel = this.add.text(tokenX, y, TOKEN_LABELS[defaultToken], {
-        fontFamily: 'Georgia, serif', fontSize: '16px', color: '#f0c040',
-        backgroundColor: '#2a2a4a', padding: { x: 8, y: 4 },
-      }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
+    const themeId = params.get('theme');
+    if (themeId) this.themeChosen = true;
+    this.selectGame(this.gameId);
+    if (themeId) this.applyTheme(themeId);
 
-      tokenLabel.on('pointerdown', () => {
-        this.players[i].token = this.nextFreeToken(i, tokens);
-        tokenLabel.setText(TOKEN_LABELS[this.players[i].token]);
-      });
-
-      this.setupContainer.add(tokenLabel);
-
-      // Who takes this seat's turns.
-      const seat = this.add.text(tokenX + 160, y, '', {
-        fontFamily: 'Georgia, serif', fontSize: '14px',
-        padding: { x: 8, y: 4 }, fixedWidth: 110, align: 'center',
-      }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
-
-      const paintSeat = () => {
-        const bot = this.players[i].isBot;
-        seat.setText(bot ? '🤖  Bot' : '🙋  Human');
-        seat.setColor(bot ? '#88ccff' : '#f0c040');
-        seat.setBackgroundColor(bot ? '#1a3450' : '#2a2a4a');
-      };
-      paintSeat();
-
-      seat.on('pointerdown', () => {
-        this.players[i].isBot = !this.players[i].isBot;
-        paintSeat();
-      });
-
-      this.setupContainer.add(seat);
+    for (const key of params.get('houseRules')?.split(',') ?? []) {
+      if (RULE_FIELDS.some((f) => f.key === key)) {
+        this.overrides = { ...this.overrides, [key]: true };
+      }
     }
+
+    const variants = params.get('variants');
+    if (variants !== null) {
+      this.overrides = {
+        ...this.overrides,
+        variants: variants.split(',').filter(Boolean),
+      };
+    }
+
+    const players = Number(params.get('players'));
+    if (Number.isFinite(players) && players >= 2) this.setPlayerCount(players);
   }
 
   /**
-   * `?seed=12345` in the URL re-seeds the global PRNG, so dice rolls and both
-   * card shuffles replay identically. Used by the playtest harness and handy for
-   * reproducing a bug report. Omitted or non-numeric = a random game.
+   * `?seed=12345` re-seeds the global PRNG, so dice rolls and both card shuffles
+   * replay identically. Omitted or non-numeric = a random game.
    */
   private readSeedFromUrl(): number | undefined {
     const raw = new URLSearchParams(window.location.search).get('seed');
@@ -426,13 +393,23 @@ export class MenuScene extends Phaser.Scene {
     return Number.isFinite(seed) ? seed : undefined;
   }
 
-  private startGame(): void {
-    this.scene.start('GameScene', {
-      players: this.players,
-      seed: this.readSeedFromUrl(),
-      gameId: this.gameId,
-      houseRules: { ...this.houseRules, variants: this.variants },
-    });
-    // UIScene is launched by GameScene once the model is ready
+  /**
+   * Where the rows are, by name. The harness used to hold menu coordinates in
+   * `HOTSPOTS`, which a nested menu invalidates completely — this is the same
+   * answer `tileCentre()` and `tradeSpots()` already gave: a thing that decides
+   * its own layout reports it.
+   */
+  private exposeMenuHandle(): void {
+    (window as unknown as Record<string, unknown>).__menu = {
+      title: () => this.menu.title,
+      depth: () => this.menu.depth,
+      spots: () => this.menu.spots(),
+      back: () => { this.menu.back(); },
+    };
   }
+}
+
+function describeSlot(slot: SlotSummary): string {
+  const name = GAMES[slot.gameId]?.name ?? slot.gameId ?? 'game';
+  return slot.round ? `${name}, round ${slot.round}` : name;
 }

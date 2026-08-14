@@ -63,14 +63,10 @@ const GAME_W = 1280;
 const GAME_H = 800;
 
 const HOTSPOTS = {
-  playerCount3: [590, 235],  // MenuScene: [2,3,4,5,6] at width/2-100 + i*50
-  // MenuScene seat toggles: tokenX + 160, rows at y = 290 + i*55. Seat 1 is a
-  // human by default and seats 2+ are bots, so the default run flips 2 and 3
-  // back to human to keep its coverage of the prompts deterministic.
-  seat1:        [800, 290],
-  seat2:        [800, 345],
-  seat3:        [800, 400],
-  startGame:    [640, 720],  // MenuScene: (width/2, height-80)
+  // The menu is not in this table any more. It is a tree of screens whose rows
+  // move as games, variants and save slots are added, so it reports its own
+  // positions through `__menu.spots()` and the harness clicks rows *by name* —
+  // the same answer `tileCentre()` and `tradeSpots()` already gave.
   roll:         [512, 738],  // GameScene.buildButtons
   jail:         [710, 738],  // GameScene.buildButtons (hidden unless offered)
   buy:          [424, 458],  // GameScene.showBuyPrompt, container at (512,400)
@@ -79,12 +75,52 @@ const HOTSPOTS = {
   auctionBid:   [382, 426],  // AuctionPanel, container at (512,400): first bid button
   auctionPass:  [512, 484],  // AuctionPanel pass button
   trade:        [180, 738],  // GameScene.buildButtons
-  save:         [300, 738],
-  continueSave: [640, 770],  // MenuScene.buildContinueButton, (width/2, height-30)
+  pause:        [300, 738],  // GameScene.buildButtons — was SAVE before M10
   // The trade panel is not in this table any more. Its deed list is measured
   // rather than reserved, so its buttons sit wherever the players' holdings put
   // them — it reports its own positions through `__forge.tradeSpots()`.
 };
+
+// ─── Driving the menu ─────────────────────────────────────────────────────────
+// Rows by name, never by coordinate. `__menu` is published by whichever menu is
+// on screen (the title screen or the pause screen), so the same three helpers
+// drive both.
+
+async function menuSpots(page) {
+  return page.evaluate(() => (window.__menu ? window.__menu.spots() : []));
+}
+
+/** Click a menu row by id. Fails loudly — a silent miss is the old bug. */
+async function menuPress(page, box, id, { adjust = 0 } = {}) {
+  const spots = await menuSpots(page);
+  const row = spots.find((s) => s.id === id);
+  if (!row) {
+    throw new Error(
+      `menu row "${id}" is not on screen; rows are: ${spots.map((s) => s.id).join(', ') || 'none'}`,
+    );
+  }
+  if (!row.enabled) throw new Error(`menu row "${id}" is disabled`);
+  // A value row nudges from its ‹ › buttons, and the menu reports where those
+  // are — nothing here works out an offset from the row's centre.
+  const x = adjust === 0 ? row.x : (adjust < 0 ? row.decX : row.incX);
+  if (x === null || x === undefined) {
+    throw new Error(`menu row "${id}" has no ‹ › to nudge`);
+  }
+  await clickGame(page, box, [x, row.y]);
+  await sleep(140);
+}
+
+/** Nudge a value row until it reads what we want, or give up loudly. */
+async function menuSet(page, box, id, wanted, tries = 12) {
+  for (let i = 0; i < tries; i++) {
+    const row = (await menuSpots(page)).find((s) => s.id === id);
+    if (!row) throw new Error(`menu row "${id}" is not on screen`);
+    if (String(row.value ?? '') === String(wanted)) return;
+    await menuPress(page, box, id, { adjust: 1 });
+  }
+  const row = (await menuSpots(page)).find((s) => s.id === id);
+  throw new Error(`could not set "${id}" to ${wanted}; it reads ${row && row.value}`);
+}
 
 /** Where a trade-panel control is right now, asked of the panel itself. */
 async function tradeSpot(page, name) {
@@ -231,27 +267,55 @@ async function main() {
 
     console.log('  ✓ menu rendered');
 
-    // Three players makes the HUD panel worth looking at. Capture after the
-    // selection so the shot shows the count highlight and the extra row.
-    await clickGame(page, box, HOTSPOTS.playerCount3);
-    await sleep(250);
+    await shot(page, box, '1-menu');
+
+    // Walk the settings tree before starting, so the generated rule screens are
+    // exercised rather than skipped past. Changing a rule here also proves the
+    // override actually reaches the game: it is asserted against `__forge.rules()`
+    // once the board is up.
+    await menuPress(page, box, 'settings');
+    await menuPress(page, box, 'sound', { adjust: -1 });
+    await menuPress(page, box, 'back');
+
+    await menuPress(page, box, 'play');
+    await menuPress(page, box, 'rules');
+    await menuPress(page, box, 'group.jail');
+    await menuPress(page, box, 'rule.jailFine', { adjust: 1 });
+    const jailFine = (await menuSpots(page)).find((r) => r.id === 'rule.jailFine');
+    await shot(page, box, '1c-settings');
+    await menuPress(page, box, 'back');
+    await menuPress(page, box, 'back');
+
+    // Three players makes the HUD panel worth looking at.
+    await menuSet(page, box, 'count', '3');
     if (BOTS) {
       // Seat 1 is yours by default; hand it over too, so nobody has to click.
-      await clickGame(page, box, HOTSPOTS.seat1);
+      await menuPress(page, box, 'seat1', { adjust: 1 });
     } else {
       // All-human keeps the buy prompt, auction and trade steps below on rails.
-      await clickGame(page, box, HOTSPOTS.seat2);
-      await clickGame(page, box, HOTSPOTS.seat3);
+      await menuPress(page, box, 'seat2', { adjust: 1 });
+      await menuPress(page, box, 'seat3', { adjust: 1 });
     }
     await sleep(200);
-    await shot(page, box, '1-menu');
-    await clickGame(page, box, HOTSPOTS.startGame);
+    await shot(page, box, '1b-play');
+    await menuPress(page, box, 'start');
+    const wantedJailFine = Number(String(jailFine.value).replace(/[^0-9]/g, ''));
 
     if (!(await waitFor(page, forgeReady, { timeout: 12000 }))) {
       throw new Error('GameScene never exposed __forge — the game did not start');
     }
     await sleep(700);
     console.log('  ✓ board rendered, game started');
+
+    // The menu edited a rule; the game had better be playing by it. This is the
+    // check that would have caught M9b's silently-ignored house rule.
+    const liveRules = await page.evaluate(() => window.__forge.rules());
+    if (liveRules.jailFine !== wantedJailFine) {
+      throw new Error(
+        `the menu set the jail fine to ${wantedJailFine} and the game is playing ${liveRules.jailFine}`,
+      );
+    }
+    console.log(`  ✓ a rule changed on the menu reached the game (jail fine $${wantedJailFine})`);
     await shot(page, box, '2-board');
 
     // Everyone starts on GO — the busiest square a game ever has.
@@ -625,13 +689,17 @@ async function main() {
     // exactly as it was. The turn phase is excluded on purpose: a restore always
     // resumes at the start of the saved player's turn.
     const beforeSave = await page.evaluate(() => window.__forge.state());
-    await clickGame(page, box, HOTSPOTS.save);
+    await clickGame(page, box, HOTSPOTS.pause);
+    await sleep(400);
+    await menuPress(page, box, 'save');
+    await menuPress(page, box, 'slot1');
     await sleep(400);
 
     await page.reload({ waitUntil: 'load' });
     await page.waitForSelector('canvas');
     await sleep(900);
-    await clickGame(page, box, HOTSPOTS.continueSave);
+    await menuPress(page, box, 'load');
+    await menuPress(page, box, 'slot1');
 
     if (!(await waitFor(page, forgeReady, { timeout: 12000 }))) {
       throw new Error('CONTINUE did not start the saved game');

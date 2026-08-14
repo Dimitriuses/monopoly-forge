@@ -306,7 +306,7 @@ src/
 | M8d — A simulation platform | ✅ A headless runner, six invariants after every turn, a batch CLI, a second policy measured, and a balance pass driven by the numbers |
 | **M9 — A game is a folder** (board + economy + deck + theme) | ✅ **Complete.** Six games ship, registration is scoped to the loaded one, a game can be composed from another and bring its own artwork, and [authoring a game](docs/authoring-a-game.md) is written down |
 | **M11 — A board that is not a circuit** | ✅ **Complete.** Ultimate Monopoly: 120 tiles across three loops. Movement became a named strategy, `move` reports its route, a tile's rule may mention somebody else, colour groups opened, and group rent stopped being a literal |
-| **M10 — Refinement** | ⚪ Not started — the corners the rules still cut, what a player asks for, and a bot worth playing against |
+| **M10 — Refinement** | 🟡 Under way — **10d done**: both menus are a tree from one component, saving moved into a pause screen that says why it cannot, and Game Settings is generated from metadata beside the rules |
 
 ---
 
@@ -1989,3 +1989,75 @@ The test that mattered most was not a unit test: a played-out game has to end
 with deeds on **all three tracks**. A board whose junctions were never reached
 would pass everything else and still be a 40-tile game with 80 tiles of scenery.
 `SimResult` gained `tilesOwned` for it.
+
+## M10d — the menus become a tree — 2026-08-14
+
+The flat menu had run out of room. Six games, five player counts, six seat rows
+and four switches on one screen, with the house-rule chips already shrinking to
+fit as more variants registered — a seventh game or a second variant would have
+been the thing that broke it.
+
+Both menus are a tree now, and the useful part is that there is only one of them:
+`ui/Menu.ts` is a stack of screens of labelled rows, and the title screen and the
+pause screen are the same component with different roots. Written as two scenes
+they would have drifted before the milestone was out.
+
+A screen is **data, rebuilt on every render**, which sounded like an
+implementation detail and turned out to be the design. A row's label, value and
+enabled-ness are functions, so "Save — a token is still moving" is a row that
+answers for itself rather than a scene remembering to grey something out. That is
+what made moving Save into the pause menu worth doing at all: `saveBlockedBecause()`
+returns a *sentence*, and the row prints it, where the old SAVE button could only
+be pressed and then apologise with a toast.
+
+### The settings screen writes itself
+
+`GameRules` has been a flat bag of numbers and switches since 8b, which is
+exactly the shape a settings screen wants and says nothing about how to present
+one. `RULE_FIELDS` beside the rules supplies the missing half — label, type,
+range, section — and the screens are generated from it. Twenty rules, in seven
+sections, and adding a rule to the engine costs one line here and no scene edit.
+
+Two exclusions are deliberate and both are interesting. **`movement`** is not a
+preference: setting a tracks board to `circuit` makes Ultimate Monopoly a
+120-tile single loop, which `validateGame` refuses outright — so the control
+would have offered a choice that silently drops you back to Classic. And
+anything array-shaped stays out until it has a control worth using.
+
+### A bug class deleted rather than fixed
+
+The menu used to keep a whole `HouseRules` object plus three flags —
+`themeChosen`, `variantsChosen`, `houseRulesChosen` — because a game's defaults
+must not beat a player's choice and a player's choice must not beat a game they
+have not picked yet. The third was added in M9b, after Pocket could not turn its
+own Free Parking jackpot on for an entire milestone.
+
+It keeps `Partial<GameRules>` of only what somebody actually changed. Layering is
+then `rulesFor(game, overrides)`, which is what the engine does anyway; an
+untouched rule follows whichever game is picked, a touched one survives changing
+game, and there is no third flag to forget. The menu got smaller.
+
+### Two traps, one old and one new
+
+`PauseScene` would not compile: "type `this` is not assignable to parameter of
+type `Scene`". That is the same misleading error `GameScene` hit with `renderer`
+in M8c — `Phaser.Scene` already has a `data` property, its `DataManager`, and a
+scene field of that name shadows it. Renamed to `paused`. CLAUDE.md now lists
+both rather than the one.
+
+And the first draft laid rows out on a fixed pitch, which put every hint
+underneath the *next* row's background. Rows are not a fixed pitch: `y`
+accumulates, and a row with a note is taller.
+
+### The harness stopped clicking coordinates
+
+`HOTSPOTS` held five menu positions — the player-count buttons, three seat
+toggles, START — every one of them invalidated by a tree of screens. The answer
+was the one already used twice: `__menu.spots()` reports each row's id, label,
+current value and where its ‹ › buttons are, and the harness presses rows **by
+name**, failing loudly when one is missing or disabled.
+
+It bought something beyond not breaking. The run now walks into Game Settings,
+nudges the jail fine, starts the game and asserts `__forge.rules().jailFine` is
+what the menu said — which is precisely the check that would have caught the M9b
+house-rule bug the day it was written, rather than a milestone later.

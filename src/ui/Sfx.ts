@@ -38,18 +38,54 @@ export type SfxName = keyof typeof VOICES;
 
 class Sfx {
   private context: AudioContext | null = null;
-  private enabled = true;
+  /**
+   * 0–1, and 0 *is* mute — one control rather than a level and a flag that can
+   * disagree. Persisted, because a volume is a preference like the theme: it
+   * belongs to the person, not to the game, so it is not in the snapshot.
+   */
+  private level = Sfx.read();
 
-  get muted(): boolean { return !this.enabled; }
+  get volume(): number { return this.level; }
+  get muted(): boolean { return this.level <= 0; }
 
-  /** Returns the new state, so a button can relabel itself. */
-  toggleMute(): boolean {
-    this.enabled = !this.enabled;
-    return this.enabled;
+  setVolume(value: number): number {
+    this.level = Math.max(0, Math.min(1, Math.round(value * 100) / 100));
+    Sfx.write(this.level);
+    return this.level;
   }
 
+  /** Returns whether sound is now *on*, so a button can relabel itself. */
+  toggleMute(): boolean {
+    // Remember where it was, so unmuting does not silently jump to full.
+    if (this.level > 0) {
+      this.remembered = this.level;
+      this.setVolume(0);
+    } else {
+      this.setVolume(this.remembered);
+    }
+    return !this.muted;
+  }
+
+  private remembered = 0.7;
+
+  private static read(): number {
+    try {
+      const raw = localStorage.getItem(Sfx.KEY);
+      const value = raw === null ? 0.7 : Number(raw);
+      return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0.7;
+    } catch {
+      return 0.7;   // A browser with no storage still gets sound.
+    }
+  }
+
+  private static write(value: number): void {
+    try { localStorage.setItem(Sfx.KEY, String(value)); } catch { /* not fatal */ }
+  }
+
+  private static readonly KEY = 'monopoly_forge_volume';
+
   play(name: SfxName): void {
-    if (!this.enabled) return;
+    if (this.level <= 0) return;
     const voices = VOICES[name];
     if (!voices) return;
 
@@ -63,7 +99,7 @@ class Sfx {
       }
     } catch {
       // A browser that will not make noise is not a reason to stop the game.
-      this.enabled = false;
+      this.level = 0;
     }
   }
 
@@ -88,7 +124,7 @@ class Sfx {
 
     // A quick attack and an exponential tail — square-edged gain clicks.
     gain.gain.setValueAtTime(0.0001, at);
-    gain.gain.exponentialRampToValueAtTime(blip.gain, at + 0.01);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, blip.gain * this.level), at + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, at + blip.duration);
 
     osc.connect(gain).connect(ctx.destination);

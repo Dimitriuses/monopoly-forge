@@ -386,6 +386,40 @@ occupants shuffle and then close up again. Anything that moves a token must go
 through `placeToken` / `snapToken` rather than setting a position directly, or it
 will land on top of somebody.
 
+### The menus are a tree, and one component draws both
+
+**13. Both menus render from `ui/Menu.ts`.** The title screen and the pause
+screen are the same object with different roots; written as two scenes they drift
+inside a milestone. A screen is **data, rebuilt on every render** — a row's
+label, value and enabled-ness are functions — so "Save — a token is still moving"
+is a row that answers for itself rather than a scene remembering to grey
+something out. Rows draw onto a `Surface`, so 10c's rule applies unchanged.
+
+**13b. A player-editable rule is a line in `RULE_FIELDS`, not a control.**
+`game/RuleFields.ts` (plain Node, beside the rules) says which of `GameRules` a
+person may set, its type, its range and which section it belongs in; the settings
+screens are generated. Adding a rule to the engine costs one line here and no
+scene edit. Two things stay out on purpose: **`movement`**, because setting a
+tracks board to `circuit` is a pairing `validateGame` refuses — it belongs to the
+board, not to a preference — and anything **array-shaped** (`bidSteps`), which
+has no control worth building. `variants` is the exception that proves it: a list
+the engine holds, shown as one switch per entry.
+
+**13c. The menu keeps only what the player changed.** `Partial<GameRules>`, not a
+full rule set plus flags. Layering is then `rulesFor(game, overrides)` — what the
+engine does anyway — so an untouched rule follows whichever game is picked and a
+touched one survives changing game. The three `themeChosen` / `variantsChosen` /
+`houseRulesChosen` booleans this replaced were three chances to get that wrong,
+and the third existed only because Pocket could not turn its own house rule on
+for a whole milestone.
+
+**13d. Saving lives in the pause menu, and says why it cannot.**
+`GameScene.saveBlockedBecause()` returns a *sentence* rather than a boolean, so
+the row prints "something is under the hammer" instead of the player pressing a
+button and getting a toast. Pause uses `scene.pause`, never `stop`: the board
+stays behind the scrim and every tween and `delayedCall` is held rather than
+cancelled — which is what the turn-generation guard expects to survive.
+
 ### Colours come from `theme()`, and a panel is written to, not rebuilt
 
 **10. No colour literal in `ui/` or `scenes/`.** `ui/Theme.ts` holds the board's
@@ -457,10 +491,13 @@ the buttons and the wiring.
   sits there at full alpha, looking fine, and never fires again. `setInteractive`
   on an object that already has `input` just flips `enabled`, so the pair is safe.
   This killed ROLL DICE after three doubles sent a player to jail; see DEVLOG.
-- `Phaser.Scene` already has a `renderer` property (the WebGL/Canvas renderer).
-  A scene field of that name fails to compile with a misleading "type `this` is
-  not assignable to parameter of type `Scene`" — `GameScene` calls its
-  `BoardRenderer` `boardView` for that reason.
+- **`Phaser.Scene` already owns some obvious field names**, and a scene field
+  that collides fails to compile with the misleading "type `this` is not
+  assignable to parameter of type `Scene`". Two have been hit: `renderer` (the
+  WebGL/Canvas renderer), which is why `GameScene` calls its `BoardRenderer`
+  `boardView`; and **`data`** (the scene's `DataManager`), which is why
+  `PauseScene` calls its init payload `paused`. Check the name before adding a
+  field — the error names neither the property nor the file.
 
 ### A local `npm ci` does not prove CI will install
 
@@ -497,6 +534,14 @@ update that table**, or the harness clicks empty space and fails with a vague
 `isAnimating`, whether a prompt, card or property panel is open) so the harness can
 assert on real model state rather than pixels. It is gated on the same switch as
 debug logging, so a plain production load exposes nothing.
+
+**The menu is not in `HOTSPOTS` either.** It is a tree whose rows move as games,
+variants and save slots are added, so it reports its own positions through
+`__menu.spots()` — id, label, current value, and where the ‹ › are — and the
+harness presses rows **by name**. `menuPress` throws when a row is missing or
+disabled rather than clicking empty space, because a silent miss is the failure
+mode the table had. The run also walks into Game Settings, changes a rule, and
+asserts it reached `__forge.rules()`.
 
 **Nothing in the harness may assume the board's size.** `__forge.board()` reports
 the size, the tracks and which squares charge a tax. It exists because the

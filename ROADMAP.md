@@ -44,10 +44,11 @@ state to a player.**
 three customers already in the tree, and each named by what it unlocks rather
 than by what it generalises. Not started.
 
-**M10 is refinement** — the corners this implementation knowingly cuts, the
-things a player asks for, and a bot worth playing against. Nothing in it opens a
-new seam; every item is already written down in KNOWNISSUES or in the deferred
-list, left because it was not what the milestone of the day was about.
+**M10 is refinement**, and it is under way — the corners this implementation
+knowingly cuts, the things a player asks for, and a bot worth playing against.
+**10d is done**: both menus are a tree rendered from one component, saving moved
+into a pause screen where a dead row can say why, and the Game Settings screen is
+*generated* from metadata beside the rules rather than laid out by hand.
 
 **Why the classic game came first.** A configurable engine whose only consumer is
 a toy proves nothing. M1–M7 build the game the engine has to be able to express;
@@ -626,11 +627,15 @@ None is hidden; each is a KNOWNISSUES entry with its reason.
 
 ### 10b — what a player asks for
 
-- [ ] **Named save slots, and a save mid-turn.** One localStorage key today, and
-      saving is refused mid-animation, mid-auction and mid-trade because a restore
-      resumes at the start of a turn. Slots are straightforward; mid-turn state is
-      the real work, and it is the same problem as making a landing resumable —
-      which `TurnFlow`'s `hold()` / `resume()` now has a shape for.
+- [x] **Named save slots.** Three of them, written and read through the pause
+      menu's Save screen and the title screen's Load screen. A pre-slot save is
+      migrated into slot 1 rather than lost, and never over a slot somebody wrote
+      deliberately.
+- [ ] **A save mid-turn.** Still refused mid-animation, mid-auction and mid-trade,
+      because a restore resumes at the start of a turn — but the pause menu now
+      says *which* of those is in the way instead of showing a toast after the
+      press. The real work is the same problem as making a landing resumable,
+      which `TurnFlow`'s `hold()` / `resume()` has a shape for.
 - [ ] **Get the turn log out.** It keeps the whole game since M8c and scrolls,
       but there is no copy, no download, and nothing survives closing the tab.
 - [ ] **A bot that offers *you* a trade.** `proposeTrade` exists and bots use it
@@ -643,6 +648,48 @@ None is hidden; each is a KNOWNISSUES entry with its reason.
 - [ ] **Test the `noAuction` house rule.** The playtest exercises the other two;
       this one is left out because it would switch off the auction step the same
       run depends on, so it needs a second pass with different assertions.
+
+### 10d — the menus · done
+
+One flat screen held six games, five player counts, six seat rows and four
+switches, and had run out of room — the house-rule chips were already shrinking
+to fit as more variants registered. Both menus are a tree now, and both render
+from the same component.
+
+- [x] **`ui/Menu.ts`** — a stack of screens of labelled rows. A screen is *data*,
+      rebuilt each render, so a row's label, value and enabled-ness are functions
+      and "Save — a token is still moving" is a row that answers for itself.
+      Drawn onto a `Surface`, per 10c.
+- [x] **A pause menu**, on Escape or the button that used to say SAVE: Resume,
+      Save, Settings, Quit to menu. `scene.pause` rather than `stop`, so the board
+      stays behind a scrim and every tween and timer is held rather than
+      cancelled. Quitting asks first, and says whether the game is saved.
+- [x] **Saving moved into it**, where a dead row can say *why* — "a token is
+      still moving", "something is under the hammer" — rather than a button
+      showing a toast after the fact. Same bargain the property panel's build
+      buttons make.
+- [x] **A generated Game Settings screen.** `RULE_FIELDS` beside `CLASSIC_RULES`
+      says which rules a player may set, their type, their range and which
+      section they belong in; the screens are built from it. A rule added to the
+      engine costs one line and no scene edit. `movement` is deliberately absent:
+      it is a property of the board, and setting a tracks board to `circuit` is a
+      pairing `validateGame` refuses.
+- [x] **Sound became a level, not a mute**, persisted to localStorage — a volume
+      is a preference like the theme, so it is not in the snapshot. The theme
+      picker moved next to it under Settings.
+- [x] **The harness clicks rows by name.** `__menu.spots()` reports every row's
+      position, its value and where its ‹ › are; `HOTSPOTS` lost its five menu
+      coordinates. It also now walks into Game Settings, changes a rule, and
+      asserts the change reached `__forge.rules()` — the check that would have
+      caught M9b's silently-ignored house rule.
+
+**The bug class that went away.** The menu used to keep a whole `HouseRules`
+object plus three "has the player touched this?" flags, because a game's defaults
+must not beat a player's choice and a player's choice must not beat a game they
+have not picked yet. It keeps `Partial<GameRules>` of only what somebody actually
+changed, so layering is `rulesFor(game, overrides)` — what the engine does anyway
+— and the third flag, added only after Pocket could not turn its own house rule
+on for a whole milestone, has nothing left to do.
 
 ### 10c — a bot worth playing against
 
