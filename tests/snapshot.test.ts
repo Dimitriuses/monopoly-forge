@@ -43,9 +43,9 @@ function playedGame(): GameParts {
 
   own(players[0], MEDITERRANEAN, BALTIC);
   own(players[1], READING);
-  (board.getTile(MEDITERRANEAN) as PropertyTile).houses = 3;
+  (board.getTile(MEDITERRANEAN) as PropertyTile).level = 3;
   (board.getTile(BALTIC) as PropertyTile).isMortgaged = true;
-  bank.houses = 29;
+  bank.level = 29;
   bank.pot = 275;
 
   players[0].cash = 640;
@@ -99,7 +99,7 @@ describe('Snapshot — round trip', () => {
     const med = restored.board.getTile(MEDITERRANEAN) as PropertyTile;
     const baltic = restored.board.getTile(BALTIC) as PropertyTile;
     expect(med.ownerId).toBe('p1');
-    expect(med.houses).toBe(3);
+    expect(med.level).toBe(3);
     expect(baltic.isMortgaged).toBe(true);
     expect(restored.board.getTile(READING)).toMatchObject({ ownerId: 'p2' });
     expect([...restored.players[0].ownedTileIds].sort()).toEqual([MEDITERRANEAN, BALTIC]);

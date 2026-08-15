@@ -1,8 +1,9 @@
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable, type Ownable, type Tile } from '@/tiles/Tile';
 import {
-  canBuildHouse, canBuildHotel, canUnmortgage, ownsWholeGroup, unmortgageCost,
+  buildingLevel, canBuild, canUnmortgage, ownsWholeGroup, unmortgageCost,
 } from './BuildRules';
+import { rungAt } from './BuildLadder';
 import { countOwnedOfType } from './Rent';
 import { RailroadTile, UtilityTile } from '@/tiles/SpecialTiles';
 import { trafficOf } from './BoardOdds';
@@ -253,9 +254,7 @@ export function jailChoice(ctx: BotContext, fine: number): JailChoice {
   const { player } = ctx;
   if (player.getOutOfJailCards > 0) return 'card';
 
-  const developed = ctx.board.tiles.some(
-    (t) => t instanceof PropertyTile && (t.houses > 0 || t.hasHotel),
-  );
+  const developed = ctx.board.tiles.some((t) => buildingLevel(t) > 0);
   if (developed && player.cash >= fine + profileOf(ctx).reserve) return 'pay';
   return 'roll';
 }
@@ -264,7 +263,12 @@ export function jailChoice(ctx: BotContext, fine: number): JailChoice {
 
 export interface BuildStep {
   tileId: number;
-  kind: 'house' | 'hotel';
+  /**
+   * Which kind of building the next rung puts up — `house`, `hotel`, and on a
+   * board that has them `skyscraper`. It is reported rather than chosen: the
+   * ladder decides what comes next, and the bot only decides *where*.
+   */
+  kind: string;
 }
 
 /**
@@ -295,13 +299,14 @@ export function buildPlan(ctx: BotContext): BuildStep[] {
       : (a, b) => a.houseCost - b.houseCost);
 
   for (const lot of lots) {
-    if (canBuildHouse(board, bank, player, lot).ok && spent + lot.houseCost <= budget) {
-      steps.push({ tileId: lot.id, kind: 'house' });
-      spent += lot.houseCost;
-    } else if (canBuildHotel(board, bank, player, lot).ok && spent + lot.houseCost <= budget) {
-      steps.push({ tileId: lot.id, kind: 'hotel' });
-      spent += lot.houseCost;
-    }
+    // One question instead of two since M12d, and a board that adds a rung above
+    // the hotel is built to the top of it without `Bot.ts` learning its name.
+    if (!canBuild(board, bank, player, lot).ok) continue;
+    if (spent + lot.houseCost > budget) continue;
+    const rung = rungAt(board.rules.buildLadder, lot.type, lot.level + 1);
+    if (!rung) continue;
+    steps.push({ tileId: lot.id, kind: rung.kind.id });
+    spent += lot.houseCost;
   }
   return steps;
 }
@@ -576,8 +581,12 @@ function groupYield(ctx: BotContext, lot: PropertyTile): number {
   let gain = 0;
   let cost = 0;
   for (const member of group) {
-    const level = Math.min(member.houses, 4);
-    const step  = (member.rentTiers[Math.min(level + 1, 5)] ?? 0) - (member.rentTiers[level] ?? 0);
+    // What the *next* rung would add, whatever rung that is — the top of the
+    // table rather than a literal 5, so a board with skyscrapers is valued to
+    // the top of its own ladder instead of stopping at the hotel.
+    const top   = member.rentTiers.length - 1;
+    const level = Math.min(member.level, top);
+    const step  = (member.rentTiers[Math.min(level + 1, top)] ?? 0) - (member.rentTiers[level] ?? 0);
     gain += trafficOf(ctx.board, member.id) * step;
     cost += member.houseCost;
   }

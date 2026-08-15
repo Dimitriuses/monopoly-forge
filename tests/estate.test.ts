@@ -29,7 +29,7 @@ describe('Estate — what a player is worth', () => {
 
   it('counts cash, mortgage values and half the cost of every building', () => {
     give(MEDITERRANEAN, BALTIC);
-    (board.getTile(MEDITERRANEAN) as PropertyTile).houses = 2;
+    (board.getTile(MEDITERRANEAN) as PropertyTile).level = 2;
 
     // 1500 cash + 2 × $25 + 2 × $30 mortgage
     expect(liquidValue(board, ann)).toBe(1500 + 50 + 60);
@@ -64,13 +64,13 @@ describe('Estate — the fire sale', () => {
   it('sells buildings before it mortgages anything', () => {
     give(MEDITERRANEAN, BALTIC);
     const med = board.getTile(MEDITERRANEAN) as PropertyTile;
-    med.houses = 1;
+    med.level = 1;
     const stock = bank.houses;
 
     raiseCash(board, bank, ann, 25);
 
     expect(ann.cash).toBe(25);                 // half of the $50 house
-    expect(med.houses).toBe(0);
+    expect(med.level).toBe(0);
     expect(med.isMortgaged).toBe(false);       // deed untouched
     expect(bank.houses).toBe(stock + 1);       // house went back to stock
   });
@@ -79,12 +79,12 @@ describe('Estate — the fire sale', () => {
     give(MEDITERRANEAN, BALTIC);
     const med = board.getTile(MEDITERRANEAN) as PropertyTile;
     const baltic = board.getTile(BALTIC) as PropertyTile;
-    med.houses = 3;
-    baltic.houses = 2;
+    med.level = 3;
+    baltic.level = 2;
 
     raiseCash(board, bank, ann, 25);
-    expect(med.houses).toBe(2);
-    expect(baltic.houses).toBe(2);
+    expect(med.level).toBe(2);
+    expect(baltic.level).toBe(2);
   });
 
   it('mortgages the largest deeds first, and stops as soon as it has enough', () => {
@@ -100,7 +100,7 @@ describe('Estate — the fire sale', () => {
 
   it('raises everything it can when the target is out of reach', () => {
     give(MEDITERRANEAN, BALTIC);
-    (board.getTile(MEDITERRANEAN) as PropertyTile).houses = 1;
+    (board.getTile(MEDITERRANEAN) as PropertyTile).level = 1;
 
     raiseCash(board, bank, ann, 99_999);
 
@@ -216,7 +216,7 @@ describe('Estate — settling a debt', () => {
   it('counts what the fire sale sold and mortgaged', () => {
     ann.cash = 0;
     give(ann, MEDITERRANEAN, BALTIC);
-    (board.getTile(MEDITERRANEAN) as PropertyTile).houses = 2;
+    (board.getTile(MEDITERRANEAN) as PropertyTile).level = 2;
 
     const settlement = settleDebt(board, bank, ann, bo, 80);
 
@@ -239,13 +239,13 @@ describe('Estate — settling a debt', () => {
     ann.cash = 0;
     give(ann, MEDITERRANEAN, BALTIC);
     const med = board.getTile(MEDITERRANEAN) as PropertyTile;
-    med.houses = 2;
+    med.level = 2;
     const stock = bank.houses;
 
     settleDebt(board, bank, ann, bo, 10_000);
 
-    expect(med.houses).toBe(0);
-    expect(med.hasHotel).toBe(false);
+    expect(med.level).toBe(0);
+    expect(med.level === 5).toBe(false);
     expect(bank.houses).toBe(stock + 2);   // both houses back in stock
   });
 
@@ -255,13 +255,13 @@ describe('Estate — settling a debt', () => {
     ann.cash = 0;
     give(ann, MEDITERRANEAN);
     const med = board.getTile(MEDITERRANEAN) as PropertyTile;
-    med.hasHotel = true;
-    bank.houses = 0;                     // nothing to break the hotel into
+    med.level = 5;
+    bank.level = 0;                     // nothing to break the hotel into
     const hotels = bank.hotels;
 
     settleDebt(board, bank, ann, bo, 10_000);
 
-    expect(med.hasHotel).toBe(false);
+    expect(med.level === 5).toBe(false);
     expect(bank.hotels).toBe(hotels + 1);
     expect(med.ownerId).toBe('p2');
   });

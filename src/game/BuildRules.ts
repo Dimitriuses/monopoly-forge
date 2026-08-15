@@ -1,5 +1,6 @@
 import { PropertyTile } from '@/tiles/PropertyTile';
-import type { Ownable, Tile } from '@/tiles/Tile';
+import { isOwnable, type Ownable, type Tile } from '@/tiles/Tile';
+import { consumedBy, costOf, rungAt, topLevel } from './BuildLadder';
 import type { Board } from './Board';
 import type { Bank } from './Bank';
 import type { Player } from './Player';
@@ -7,14 +8,18 @@ import { CLASSIC_RULES } from './Rules';
 
 // ─── Build rules ──────────────────────────────────────────────────────────────
 // The legality half of development. `Bank` moves cash and inventory and asks no
-// questions — deliberately, because it has no view of the board — so the two
-// rules that need one live here:
+// questions — deliberately, because it has no view of the board — so the rules
+// that need one live here:
 //
-//   1. you may only build on a colour group you own outright, and
-//   2. houses must stay within one of each other across that group.
+//   1. you may only build on a colour group you own outright,
+//   2. buildings must stay within one of each other across that group, and
+//   3. neither applies to a level that says `group: false` — a train depot needs
+//      nothing but the deed it stands on.
 //
-// Every check returns a reason as well as a verdict, so the property panel can
-// say *why* a button is dead instead of just greying it out.
+// Since M12d this is one check per *direction* rather than one per building:
+// `canBuild` and `canSell` walk the ladder, so a game adding a rung above the
+// hotel gets its legality for free. Every check returns a reason as well as a
+// verdict, so the property panel can say *why* a button is dead.
 
 export interface RuleCheck {
   ok: boolean;
@@ -25,9 +30,9 @@ export interface RuleCheck {
 const ALLOWED: RuleCheck = { ok: true, reason: '' };
 const denied = (reason: string): RuleCheck => ({ ok: false, reason });
 
-/** Buildings standing on a lot, counting a hotel as the fifth. */
-export function buildingLevel(tile: PropertyTile): number {
-  return tile.hasHotel ? 5 : tile.houses;
+/** Which rung is standing on a tile — 0 for anything that cannot hold one. */
+export function buildingLevel(tile: Tile): number {
+  return isOwnable(tile) ? tile.level : 0;
 }
 
 export function isProperty(tile: Tile): tile is PropertyTile {
@@ -47,60 +52,72 @@ export function groupBuildingCount(board: Board, tile: PropertyTile): number {
 
 // ─── Building ────────────────────────────────────────────────────────────────
 
-export function canBuildHouse(board: Board, bank: Bank, player: Player, tile: PropertyTile): RuleCheck {
-  const base = developable(board, player, tile);
-  if (!base.ok) return base;
-
-  if (tile.hasHotel)   return denied(`${tile.name} already has a hotel.`);
-  const max = board.rules.housesBeforeHotel;
-  if (tile.houses >= max) return denied(`${tile.name} is ready for a hotel, not another house.`);
-
-  const lowest = Math.min(...board.groupTiles(tile.group).map(buildingLevel));
-  if (buildingLevel(tile) > lowest) {
-    return denied('Houses must stay within one of each other across the group.');
+/**
+ * May this tile climb one rung? The one question, whatever the rung is.
+ *
+ * A level that needs its colour group brings the two rules that come with one —
+ * own it outright, and keep the group even. A level that does not (a train
+ * depot) skips both, which is the printed rule: "you don't need to own multiple
+ * Railroads before building a Train Depot on one."
+ */
+export function canBuild(board: Board, bank: Bank, player: Player, tile: Tile & Ownable): RuleCheck {
+  const next = tile.level + 1;
+  const rung = rungAt(board.rules.buildLadder, tile.type, next);
+  if (!rung) {
+    const top = topLevel(board.rules.buildLadder, tile.type);
+    return denied(top === 0
+      ? `Nothing can be built on ${tile.name}.`
+      : `${tile.name} is built as far as it goes.`);
   }
-  if (bank.houses <= 0)                 return denied('The bank has run out of houses.');
-  if (!player.canAfford(tile.houseCost)) return denied(`A house here costs $${tile.houseCost}.`);
-  return ALLOWED;
-}
+  const { kind } = rung;
 
-export function canBuildHotel(board: Board, bank: Bank, player: Player, tile: PropertyTile): RuleCheck {
-  const base = developable(board, player, tile);
-  if (!base.ok) return base;
+  if (tile.ownerId !== player.id) return denied(`${tile.name} is not yours to build on.`);
+  if (tile.isMortgaged)           return denied(`${tile.name} is mortgaged.`);
 
-  if (tile.hasHotel)     return denied(`${tile.name} already has a hotel.`);
-  const needed = board.rules.housesBeforeHotel;
-  if (tile.houses !== needed) return denied(`A hotel needs ${needed} houses on the lot first.`);
+  if (kind.group) {
+    if (!isProperty(tile)) return denied(`${tile.name} is not in a colour group.`);
+    const shared = developable(board, player, tile);
+    if (!shared.ok) return shared;
 
-  // Even building applies to the hotel too: no lot may be left behind.
-  const behind = board.groupTiles(tile.group)
-    .some((t) => t.id !== tile.id && buildingLevel(t) < needed);
-  if (behind) return denied(`Every lot in the group needs ${needed} houses first.`);
-
-  if (bank.hotels <= 0)                  return denied('The bank has run out of hotels.');
-  if (!player.canAfford(tile.houseCost)) return denied(`A hotel here costs $${tile.houseCost}.`);
-  return ALLOWED;
-}
-
-export function canSellHouse(board: Board, player: Player, tile: PropertyTile): RuleCheck {
-  if (tile.ownerId !== player.id) return denied(`${tile.name} is not yours to sell from.`);
-  if (tile.hasHotel)  return denied('Sell the hotel first.');
-  if (tile.houses <= 0) return denied(`${tile.name} has no houses on it.`);
-
-  const highest = Math.max(...board.groupTiles(tile.group).map(buildingLevel));
-  if (buildingLevel(tile) < highest) {
-    return denied('Houses must come down evenly across the group.');
+    // Even building, and it is the *level* that has to stay even rather than the
+    // house count: a group where one lot has a hotel and another has three
+    // houses is uneven whether or not you call five "a hotel".
+    const lowest = Math.min(...board.groupTiles(tile.group).map(buildingLevel));
+    if (tile.level > lowest) {
+      return denied(`${kind.label}s must go up evenly across the colour group.`);
+    }
   }
+
+  if ((bank.stock[kind.id] ?? 0) <= 0) {
+    return denied(`The bank has run out of ${kind.label.toLowerCase()}s.`);
+  }
+  const cost = costOf(kind, houseCostOf(tile));
+  if (!player.canAfford(cost)) return denied(`A ${kind.label.toLowerCase()} here costs $${cost}.`);
   return ALLOWED;
 }
 
-export function canSellHotel(bank: Bank, player: Player, tile: PropertyTile): RuleCheck {
+/**
+ * May this tile come down one rung?
+ *
+ * The one thing a sale can get wrong is the exchange underneath it: a hotel
+ * comes down into four houses, and if the bank has not got four the sale would
+ * silently destroy them.
+ */
+export function canSell(board: Board, bank: Bank, player: Player, tile: Tile & Ownable): RuleCheck {
   if (tile.ownerId !== player.id) return denied(`${tile.name} is not yours to sell from.`);
-  if (!tile.hasHotel) return denied(`${tile.name} has no hotel on it.`);
-  // A hotel comes down into four houses; without the stock to hand back, the
-  // sale would silently destroy them (Bank.sellHotel leaves the lot bare).
-  if (bank.houses < bank.housesPerHotel) {
-    return denied('The bank has too few houses to break the hotel into.');
+  const rung = rungAt(board.rules.buildLadder, tile.type, tile.level);
+  if (!rung) return denied(`${tile.name} has nothing on it to sell.`);
+
+  if (rung.kind.group && isProperty(tile)) {
+    const highest = Math.max(...board.groupTiles(tile.group).map(buildingLevel));
+    if (tile.level < highest) {
+      return denied('Buildings must come down evenly across the colour group.');
+    }
+  }
+
+  const needed = consumedBy(board.rules.buildLadder, tile.type, tile.level - 1);
+  if (needed && (bank.stock[needed.kind.id] ?? 0) < needed.count) {
+    return denied(`The bank has too few ${needed.kind.label.toLowerCase()}s to break it into.`);
   }
   return ALLOWED;
 }
@@ -139,7 +156,12 @@ export function unmortgageCost(tile: Ownable, rate = CLASSIC_RULES.mortgageInter
 
 // ─── Shared preconditions ─────────────────────────────────────────────────────
 
-/** Ownership, monopoly and mortgage checks common to houses and hotels. */
+/** What a level with no price of its own charges here. */
+function houseCostOf(tile: Tile & Ownable): number {
+  return (tile as { houseCost?: number }).houseCost ?? 0;
+}
+
+/** Ownership, monopoly and mortgage checks common to every group-built level. */
 function developable(board: Board, player: Player, tile: PropertyTile): RuleCheck {
   if (tile.ownerId !== player.id) return denied(`${tile.name} is not yours to build on.`);
   if (!ownsWholeGroup(board, player, tile)) {

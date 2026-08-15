@@ -1,5 +1,5 @@
-import { PropertyTile } from '@/tiles/PropertyTile';
 import { heldByPlayer, holdingKind, knownHoldings } from '@/game/Holdings';
+import { standingOn, topLevel } from '@/game/BuildLadder';
 import { isOwnable } from '@/tiles/Tile';
 import type { Board } from '@/game/Board';
 import type { Bank } from '@/game/Bank';
@@ -104,38 +104,49 @@ function deedsAgree({ board, players }: InvariantContext): Violation[] {
 }
 
 /**
- * The building supply is finite and that is a rule, not an accident: houses in
- * the bank plus houses on the board must equal what the rule set stocked. A
- * hotel is worth `housesPerHotel` of them, which is why breaking one up has its
- * own check in `BuildRules`.
+ * The building supply is finite and that is a rule, not an accident: what is in
+ * the box plus what is on the board must equal what the rule set stocked.
+ *
+ * **Every kind**, since M12d, not just houses and hotels. A census that named
+ * the two classic buildings would have let a game's third one be minted out of
+ * nothing and never noticed — which is precisely the bug this file exists to
+ * catch, and precisely the shape of the deck bug it was written after.
+ *
+ * The exchange between rungs is what makes it worth checking rather than
+ * obvious: putting up a hotel takes one out of the hotel box and puts four back
+ * in the house box, and every one of those four movements is a chance to lose
+ * count.
  */
 function buildingCensus({ board, bank, rules }: InvariantContext): Violation[] {
-  const lots = board.tiles.filter((t): t is PropertyTile => t instanceof PropertyTile);
   const problems: Violation[] = [];
+  const owned = board.tiles.filter(isOwnable);
 
-  const housesOut = lots.reduce((n, lot) => n + lot.houses, 0);
-  if (housesOut + bank.houses !== rules.houseLimit) {
-    problems.push({
-      what: 'houses',
-      detail: `${housesOut} on the board + ${bank.houses} in the bank ≠ ${rules.houseLimit}`,
-    });
-  }
+  const out: Record<string, number> = {};
+  for (const level of rules.buildLadder) out[level.id] = 0;
 
-  const hotelsOut = lots.filter((lot) => lot.hasHotel).length;
-  if (hotelsOut + bank.hotels !== rules.hotelLimit) {
-    problems.push({
-      what: 'hotels',
-      detail: `${hotelsOut} on the board + ${bank.hotels} in the bank ≠ ${rules.hotelLimit}`,
-    });
-  }
+  for (const tile of owned) {
+    const standing = standingOn(rules.buildLadder, tile.type, tile.level);
+    if (standing) out[standing.kind.id] = (out[standing.kind.id] ?? 0) + standing.count;
 
-  // A lot cannot be both fully built and building.
-  for (const lot of lots) {
-    if (lot.hasHotel && lot.houses > 0) {
-      problems.push({ what: 'buildings', detail: `${lot.name} has a hotel and ${lot.houses} houses` });
+    // A tile standing higher than its type's ladder allows: the number is the
+    // whole of the state now, so an out-of-range one is the only way to be
+    // "both fully built and building" that the old two-field shape allowed.
+    const top = topLevel(rules.buildLadder, tile.type);
+    if (tile.level < 0 || tile.level > top) {
+      problems.push({
+        what: 'buildings',
+        detail: `${tile.name} is at level ${tile.level}, and ${tile.type} tops out at ${top}`,
+      });
     }
-    if (lot.houses > bank.housesPerHotel) {
-      problems.push({ what: 'buildings', detail: `${lot.name} has ${lot.houses} houses` });
+  }
+
+  for (const level of rules.buildLadder) {
+    const held = bank.stock[level.id] ?? 0;
+    if ((out[level.id] ?? 0) + held !== level.supply) {
+      problems.push({
+        what: level.id,
+        detail: `${out[level.id] ?? 0} on the board + ${held} in the bank ≠ ${level.supply}`,
+      });
     }
   }
   return problems;

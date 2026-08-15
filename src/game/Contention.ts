@@ -1,5 +1,5 @@
 import { PropertyTile } from '@/tiles/PropertyTile';
-import { canBuildHouse } from './BuildRules';
+import { canBuild } from './BuildRules';
 import type { Board } from './Board';
 import type { Bank } from './Bank';
 import type { Player } from './Player';
@@ -48,7 +48,7 @@ export function houseClaims(board: Board, bank: Bank, players: Player[]): HouseC
       .filter((t): t is PropertyTile => t instanceof PropertyTile)
       // `canBuildHouse` already asks the bank whether it has any left, so a
       // claim is only ever raised while there is something to contend for.
-      .filter((lot) => canBuildHouse(board, bank, player, lot).ok)
+      .filter((lot) => canBuild(board, bank, player, lot).ok)
       .filter((lot) => player.canAfford(lot.houseCost))
       .sort((a, b) => a.houseCost - b.houseCost || a.id - b.id);
 

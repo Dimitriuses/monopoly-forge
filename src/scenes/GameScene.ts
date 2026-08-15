@@ -28,12 +28,12 @@ import { groupColor, setTheme, theme } from '@/ui/Theme';
 import { bakeTokenTextures, bakeBuildingTextures } from '@/ui/Textures';
 import { CLASSIC_RULES, type GameRules } from '@/game/Rules';
 import { PropertyTile } from '@/tiles/PropertyTile';
-import { isOwnable, type Tile } from '@/tiles/Tile';
+import { isOwnable, type Ownable, type Tile } from '@/tiles/Tile';
 import {
   RailroadTile, UtilityTile, TaxTile, RAILROAD_RENT, UTILITY_MULTIPLIERS,
 } from '@/tiles/SpecialTiles';
 import {
-  canBuildHouse, canBuildHotel, canSellHouse, canSellHotel,
+  canBuild, canSell,
   canMortgage, canUnmortgage, unmortgageCost, ownsWholeGroup, groupBuildingCount,
   type RuleCheck,
 } from '@/game/BuildRules';
@@ -63,6 +63,7 @@ import {
 } from '@/game/TileEffects';
 import { askChoice, preferredOption, type ChoiceRequest } from '@/game/Choice';
 import { describeHolding, heldByPlayer } from '@/game/Holdings';
+import { refundOf, rungAt, rungsFor, standingOn } from '@/game/BuildLadder';
 
 /** One seat's holdings, as the pause menu's Inventory screen shows them. */
 export interface InventoryView {
@@ -318,8 +319,8 @@ export class GameScene extends Phaser.Scene {
         bankrupt: player.isBankrupt,
         deeds: deeds.length,
         groups,
-        houses: lots.reduce((n, lot) => n + lot.houses, 0),
-        hotels: lots.filter((lot) => lot.hasHotel).length,
+        houses: lots.reduce((n, lot) => n + countOf(this.board, lot, 'house'), 0),
+        hotels: lots.filter((lot) => topKind(this.board, lot) === 'hotel').length,
         jailCards: player.jailCards.length,
         holdings: heldByPlayer(player).map(({ name, count }) => ({
           name,
@@ -1214,9 +1215,8 @@ export class GameScene extends Phaser.Scene {
       // than over the counter — and the rest of the plan waits for the result.
       if (next.kind === 'house' && this.startHouseContention(player, lot)) break;
 
-      const built = next.kind === 'hotel'
-        ? canBuildHotel(this.board, this.bank, player, lot).ok && this.bank.buyHotel(player, lot)
-        : canBuildHouse(this.board, this.bank, player, lot).ok && this.bank.buyHouse(player, lot);
+      const built = canBuild(this.board, this.bank, player, lot).ok
+        && this.bank.build(player, lot);
       if (!built) break;
 
       this.notif.show(
@@ -1775,7 +1775,7 @@ export class GameScene extends Phaser.Scene {
     const requested = contention.requestedBy === winner.id ? contention.lot : null;
     const claim = contention.claims.find((c) => c.player.id === winner.id);
     const legal = (claim?.lots ?? []).filter(
-      (lot) => canBuildHouse(this.board, this.bank, winner, lot).ok,
+      (lot) => canBuild(this.board, this.bank, winner, lot).ok,
     );
 
     if (!requested && legal.length > 1) {
@@ -1807,11 +1807,11 @@ export class GameScene extends Phaser.Scene {
   /** Put a contested house on a lot, wherever the choice landed. */
   private placeContestedHouse(winner: Player, tileId: number, amount: number): void {
     const lot = this.board.getTile(tileId);
-    if (!(lot instanceof PropertyTile) || !canBuildHouse(this.board, this.bank, winner, lot).ok) {
+    if (!(lot instanceof PropertyTile) || !canBuild(this.board, this.bank, winner, lot).ok) {
       dwarn(`[GameScene] ${winner.name} won a house with nowhere left to put it`);
       return;
     }
-    this.bank.buyHouse(winner, lot, amount);
+    this.bank.build(winner, lot, amount);
     this.notif.show(`${winner.name} put the house on ${lot.name}.`, 'success');
     this.boardView.refresh();
     this.pushUIUpdate();
@@ -1857,8 +1857,7 @@ export class GameScene extends Phaser.Scene {
       for (const lot of lots) {
         for (const p of this.players) p.ownedTileIds.delete(lot.id);
         lot.ownerId = owner.id;
-        lot.houses = 0;
-        lot.hasHotel = false;
+        lot.level = 0;
         lot.isMortgaged = false;
         owner.ownedTileIds.add(lot.id);
       }
@@ -1899,8 +1898,7 @@ export class GameScene extends Phaser.Scene {
         this.players.find((p) => p.id === lot.ownerId)?.ownedTileIds.delete(lot.id);
         lot.ownerId     = player.id;
         lot.isMortgaged = false;
-        lot.houses      = 0;
-        lot.hasHotel    = false;
+        lot.level       = 0;
         player.ownedTileIds.add(lot.id);
       }
       player.cash = Math.max(player.cash, 1000);
@@ -2045,37 +2043,32 @@ export class GameScene extends Phaser.Scene {
         if (!property) return;
         // With the bank down to its last houses and more than one player able to
         // buy, the house goes under the hammer instead of over the counter.
-        if (canBuildHouse(this.board, this.bank, player, property).ok
+        if (canBuild(this.board, this.bank, player, property).ok
             && this.startHouseContention(player, property)) return;
-        attempt(
-          canBuildHouse(this.board, this.bank, player, property),
-          () => this.bank.buyHouse(player, property),
-          `${player.name} built a house on ${property.name}.`, 'success',
-        );
+        {
+          // The rung's own name, so the toast says "opened a hotel" and, on a
+          // board that has them, "built a skyscraper" — without this scene
+          // holding a list of what can be built.
+          const next = rungAt(this.board.rules.buildLadder, property.type, property.level + 1);
+          attempt(
+            canBuild(this.board, this.bank, player, property),
+            () => this.bank.build(player, property),
+            `${player.name} built a ${next?.kind.label.toLowerCase() ?? 'building'} `
+              + `on ${property.name}.`, 'success',
+          );
+        }
         break;
-      case 'buildHotel':
+      case 'sellBuilding':
         if (!property) return;
-        attempt(
-          canBuildHotel(this.board, this.bank, player, property),
-          () => this.bank.buyHotel(player, property),
-          `${player.name} opened a hotel on ${property.name}!`, 'success',
-        );
-        break;
-      case 'sellHouse':
-        if (!property) return;
-        attempt(
-          canSellHouse(this.board, player, property),
-          () => this.bank.sellHouse(player, property),
-          `${player.name} sold a house on ${property.name}.`, 'info',
-        );
-        break;
-      case 'sellHotel':
-        if (!property) return;
-        attempt(
-          canSellHotel(this.bank, player, property),
-          () => this.bank.sellHotel(player, property),
-          `${player.name} sold the hotel on ${property.name}.`, 'info',
-        );
+        {
+          const standing = rungAt(this.board.rules.buildLadder, property.type, property.level);
+          attempt(
+            canSell(this.board, this.bank, player, property),
+            () => this.bank.sell(player, property),
+            `${player.name} sold a ${standing?.kind.label.toLowerCase() ?? 'building'} `
+              + `on ${property.name}.`, 'info',
+          );
+        }
         break;
       case 'mortgage':
         attempt(
@@ -2115,8 +2108,12 @@ export class GameScene extends Phaser.Scene {
     }
 
     const status: string[] = [];
-    if (property?.hasHotel)    status.push('🏨 Hotel');
-    else if (property?.houses) status.push(`🏠 ${property.houses} house${property.houses > 1 ? 's' : ''}`);
+    const standing = property
+      ? standingOn(this.board.rules.buildLadder, property.type, property.level)
+      : null;
+    if (standing) {
+      status.push(`${standing.count} ${standing.kind.label}${standing.count > 1 ? 's' : ''}`);
+    }
     if (isOwnable(tile) && tile.isMortgaged) status.push('⚠ Mortgaged');
     if (owner && property && ownsWholeGroup(this.board, owner, property)) status.push('★ Group complete');
 
@@ -2164,8 +2161,13 @@ export class GameScene extends Phaser.Scene {
   private rentRowsFor(tile: Tile, owner: Player | null): RentRow[] {
     if (tile instanceof PropertyTile) {
       const charging = owner !== null && !tile.isMortgaged;
-      const tier     = tile.hasHotel ? 5 : tile.houses;
-      const labels   = ['Bare lot', '1 house', '2 houses', '3 houses', '4 houses', 'Hotel'];
+      const tier     = tile.level;
+      // One label per rung of *this game's* ladder, so a board with skyscrapers
+      // lists seven rows and the classic one still lists six.
+      const labels   = ['Bare lot', ...rungsFor(this.board.rules.buildLadder, tile.type)
+        .map((rung) => (rung.kind.perTile > 1
+          ? `${rung.nth} ${rung.kind.label.toLowerCase()}${rung.nth > 1 ? 's' : ''}`
+          : rung.kind.label))];
       // The bare-lot tier doubles once the owner holds the whole group.
       const doubled  = owner !== null && ownsWholeGroup(this.board, owner, tile);
       return tile.rentTiers.map((rent, i) => ({
@@ -2210,16 +2212,25 @@ export class GameScene extends Phaser.Scene {
       ({ key, label, enabled: check.ok, reason: check.reason });
 
     const actions: PanelAction[] = [];
-    if (tile instanceof PropertyTile) {
+    // Anything the ladder can build on — a lot, and on Ultimate Monopoly a
+    // railroad or a cab company too. The buttons name the *next* rung and the
+    // one standing, so neither this scene nor the panel holds a list of
+    // buildings.
+    if (this.bank.topLevelFor(tile) > 0) {
+      const ladder   = this.board.rules.buildLadder;
+      const next     = rungAt(ladder, tile.type, tile.level + 1);
+      const standing = rungAt(ladder, tile.type, tile.level);
+      const cost     = this.bank.priceOf(tile, tile.level + 1);
+
       actions.push(
-        button('buildHouse', `🏠 Build  $${tile.houseCost}`,
-          canBuildHouse(this.board, this.bank, player, tile)),
-        button('buildHotel', `🏨 Hotel  $${tile.houseCost}`,
-          canBuildHotel(this.board, this.bank, player, tile)),
-        button('sellHouse', `Sell house  +$${Math.floor(tile.houseCost / 2)}`,
-          canSellHouse(this.board, player, tile)),
-        button('sellHotel', `Sell hotel  +$${Math.floor(tile.houseCost / 2)}`,
-          canSellHotel(this.bank, player, tile)),
+        button('buildHouse',
+          next ? `${next.kind.label}  $${cost}` : 'Fully built',
+          canBuild(this.board, this.bank, player, tile)),
+        button('sellBuilding',
+          standing
+            ? `Sell ${standing.kind.label.toLowerCase()}  +$${refundOf(standing.kind, houseCostOf(tile))}`
+            : 'Sell building',
+          canSell(this.board, this.bank, player, tile)),
       );
     }
     actions.push(
@@ -2646,4 +2657,19 @@ export class GameScene extends Phaser.Scene {
       turn:    this.turnManager.toJSON(),
     };
   }
+}
+
+/** How many of one kind stand on a tile — the inventory still counts houses. */
+function houseCostOf(tile: Tile): number {
+  return (tile as { houseCost?: number }).houseCost ?? 0;
+}
+
+function countOf(board: Board, tile: Tile & Ownable, kind: string): number {
+  const standing = standingOn(board.rules.buildLadder, tile.type, tile.level);
+  return standing?.kind.id === kind ? standing.count : 0;
+}
+
+/** Which kind is standing there, if any. */
+function topKind(board: Board, tile: Tile & Ownable): string | null {
+  return standingOn(board.rules.buildLadder, tile.type, tile.level)?.kind.id ?? null;
 }

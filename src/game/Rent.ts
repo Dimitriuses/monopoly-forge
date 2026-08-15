@@ -2,6 +2,7 @@ import { PropertyTile } from '@/tiles/PropertyTile';
 import { RailroadTile, UtilityTile } from '@/tiles/SpecialTiles';
 import type { Tile, TileType } from '@/tiles/Tile';
 import { buildingLevel } from './BuildRules';
+import { standingOn } from './BuildLadder';
 import type { Board } from './Board';
 import type { Player } from './Player';
 
@@ -41,7 +42,7 @@ export function quoteRent(
     // Counted by the tile's *own* type, not the literal 'railroad': a game may
     // have a second railroad-shaped thing — Ultimate Monopoly's cab companies —
     // and four cabs must not make a railroad charge the four-railroad rate.
-    const base = tile.rentFor(countOwnedOfType(board, creditor, tile.type));
+    const base = improved(board, tile, tile.rentFor(countOwnedOfType(board, creditor, tile.type)), notes);
     if (ctx.arrival === 'railroadDouble' && base > 0) {
       notes.push(BY_CARD);
       return { amount: base * 2, notes };
@@ -56,7 +57,7 @@ export function quoteRent(
       ? 10
       : tile.rentMultiplier(countOwnedOfType(board, creditor, 'utility'));
     if (ctx.arrival === 'utilityTenTimes') notes.push(BY_CARD);
-    return { amount: multiplier * ctx.diceTotal, notes };
+    return { amount: improved(board, tile, multiplier * ctx.diceTotal, notes), notes };
   }
 
   if (tile instanceof PropertyTile) {
@@ -84,6 +85,25 @@ export function quoteRent(
   }
 
   return { amount: ctx.declared ?? 0, notes };
+}
+
+/**
+ * What an improvement that *multiplies* does to a rent — a train depot doubles
+ * what its railroad charges, a cab stand doubles its cab company.
+ *
+ * The other kind of improvement adds a rent *tier* and never comes through here:
+ * a lot with a hotel on it already quoted the hotel rate, because its level is
+ * the index into its own rent table. Which of the two a level is comes from the
+ * ladder, so neither this function nor `PropertyTile` has to know the names of
+ * any buildings.
+ */
+function improved(board: Board, tile: Tile, amount: number, notes: string[]): number {
+  const standing = standingOn(board.rules.buildLadder, tile.type, buildingLevel(tile));
+  if (!standing || standing.kind.effect === 'tier') return amount;
+
+  const factor = standing.kind.effect.multiply ** standing.count;
+  notes.push(`×${factor} — ${standing.kind.label.toLowerCase()}`);
+  return amount * factor;
 }
 
 /** How many tiles of one type the player holds — railroads and utilities price

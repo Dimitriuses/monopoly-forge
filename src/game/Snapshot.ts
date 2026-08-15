@@ -1,7 +1,6 @@
 import { rng } from '@/utils/PRNG';
 import { dwarn } from '@/utils/log';
 import { CardDeck, CardEffects } from '@/cards/CardDeck';
-import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable } from '@/tiles/Tile';
 import { type TokenType } from '@/config';
 import { type GameRules } from './Rules';
@@ -35,13 +34,18 @@ import { diceFor, knownVariants } from './Variants';
 // A restore resumes at the start of the saved player's turn. Mid-move state is
 // deliberately not captured: see `restoreGame`.
 
-export const SNAPSHOT_VERSION = 10;
+export const SNAPSHOT_VERSION = 11;
 
 export interface TileSnapshot {
   id: number;
   ownerId: string | null;
-  houses: number;
-  hasHotel: boolean;
+  /**
+   * Which rung of the build ladder is standing here. One number where there
+   * were two (`houses` and `hasHotel`) since M12d, because a board may build
+   * five different things and a boolean can only say whether one of them is a
+   * hotel.
+   */
+  level: number;
   isMortgaged: boolean;
 }
 
@@ -79,7 +83,7 @@ export interface GameSnapshot {
   rngState: number;
   players: PlayerSnapshot[];
   tiles: TileSnapshot[];
-  bank: { houses: number; hotels: number; pot: number };
+  bank: { stock: Record<string, number>; pot: number };
   /** `round` and who has played in it — a round limit cannot be re-derived. */
   turn: {
     currentPlayerIndex: number;
@@ -177,11 +181,12 @@ export function captureGame(parts: GameParts): GameSnapshot {
     tiles:    parts.board.tiles.filter(isOwnable).map((tile) => ({
       id:          tile.id,
       ownerId:     tile.ownerId,
-      houses:      tile instanceof PropertyTile ? tile.houses : 0,
-      hasHotel:    tile instanceof PropertyTile ? tile.hasHotel : false,
+      level:       tile.level,
       isMortgaged: tile.isMortgaged,
     })),
-    bank:  { houses: parts.bank.houses, hotels: parts.bank.hotels, pot: parts.bank.pot },
+    // The whole box, by kind. Saving `houses` and `hotels` would have quietly
+    // dropped a game's third building on every reload.
+    bank:  { stock: { ...parts.bank.stock }, pot: parts.bank.pot },
     turn:  {
       currentPlayerIndex: parts.turnManager.currentPlayerIndex,
       ...parts.turnManager.captureRound(),
@@ -248,8 +253,10 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
   // game — `new Dice()` here would quietly drop the speed die on reload.
   const dice  = diceFor(board.rules);
 
-  bank.houses = snapshot.bank.houses;
-  bank.hotels = snapshot.bank.hotels;
+  // Restored by kind, and only for kinds this ladder has: a save from a game
+  // that built skyscrapers cannot put them into a bank that stocks none, and
+  // `validateSnapshot` refuses that save rather than half-restoring it.
+  bank.stock = { ...bank.stock, ...snapshot.bank.stock };
   bank.pot    = snapshot.bank.pot ?? 0;
   dice.lastResult = snapshot.dice;
 
@@ -258,10 +265,7 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
     if (!isOwnable(tile)) continue;
     tile.ownerId     = saved.ownerId;
     tile.isMortgaged = saved.isMortgaged;
-    if (tile instanceof PropertyTile) {
-      tile.houses   = saved.houses;
-      tile.hasHotel = saved.hasHotel;
-    }
+    tile.level       = saved.level;
   }
 
   // A game brings its own decks, so a restore rebuilds from *that* game's.

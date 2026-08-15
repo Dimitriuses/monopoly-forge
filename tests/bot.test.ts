@@ -131,12 +131,12 @@ describe('Bot', () => {
     });
 
     it('pays to get out once houses are up and it can spare the cash', () => {
-      (board.getTile(ORIENTAL) as PropertyTile).houses = 2;
+      (board.getTile(ORIENTAL) as PropertyTile).level = 2;
       expect(jailChoice(ctx, 50)).toBe('pay');
     });
 
     it('will not pay itself below the reserve', () => {
-      (board.getTile(ORIENTAL) as PropertyTile).houses = 2;
+      (board.getTile(ORIENTAL) as PropertyTile).level = 2;
       bot.cash = 60;
       expect(jailChoice(ctx, 50)).toBe('roll');
     });
@@ -169,7 +169,7 @@ describe('Bot', () => {
     it('does not plan past what the bank can supply', () => {
       give(bot, MEDITERRANEAN, BALTIC);
       bot.cash = 5000;
-      bank.houses = 0;
+      bank.level = 0;
       expect(buildPlan(ctx)).toEqual([]);
     });
 

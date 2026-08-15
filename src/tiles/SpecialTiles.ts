@@ -14,6 +14,8 @@ export class RailroadTile extends Tile {
   readonly mortgage: number;
   ownerId: string | null = null;
   isMortgaged: boolean = false;
+  /** A train depot stands here on a board that has them; 0 everywhere else. */
+  level: number = 0;
 
   constructor(def: TileDefinition) {
     super(def);
@@ -48,6 +50,7 @@ export class UtilityTile extends Tile {
   readonly mortgage: number;
   ownerId: string | null = null;
   isMortgaged: boolean = false;
+  level: number = 0;
 
   constructor(def: TileDefinition) {
     super(def);

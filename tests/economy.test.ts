@@ -31,21 +31,21 @@ describe('PropertyTile — rent tiers', () => {
     tile.ownerId = 'p1';
     const expected = [2, 10, 30, 90, 160];
     expected.forEach((rent, houses) => {
-      tile.houses = houses;
+      tile.level = houses;
       expect(tile.currentRent).toBe(rent);
     });
   });
 
   it('charges the hotel tier regardless of the house counter', () => {
     tile.ownerId = 'p1';
-    tile.hasHotel = true;
-    tile.houses = 0;
+    tile.level = 5;
+    tile.level = 0;
     expect(tile.currentRent).toBe(250);
   });
 
   it('charges nothing while mortgaged, even with a hotel', () => {
     tile.ownerId = 'p1';
-    tile.hasHotel = true;
+    tile.level = 5;
     tile.isMortgaged = true;
     expect(tile.currentRent).toBe(0);
   });
@@ -235,54 +235,54 @@ describe('Bank — house and hotel inventory', () => {
   });
 
   it('draws each house from the bank stock', () => {
-    expect(bank.buyHouse(ann, tile)).toBe(true);
-    expect(tile.houses).toBe(1);
+    expect(bank.build(ann, tile)).toBe(true);
+    expect(tile.level).toBe(1);
     expect(bank.houses).toBe(31);
     expect(ann.cash).toBe(1450);
   });
 
   it('caps a lot at four houses', () => {
-    for (let i = 0; i < 4; i++) expect(bank.buyHouse(ann, tile)).toBe(true);
-    expect(bank.buyHouse(ann, tile)).toBe(false);
-    expect(tile.houses).toBe(4);
+    for (let i = 0; i < 4; i++) expect(bank.build(ann, tile)).toBe(true);
+    expect(bank.build(ann, tile)).toBe(false);
+    expect(tile.level).toBe(4);
   });
 
   it('returns four houses to the bank when a hotel is built', () => {
-    for (let i = 0; i < 4; i++) bank.buyHouse(ann, tile);
+    for (let i = 0; i < 4; i++) bank.build(ann, tile);
     expect(bank.houses).toBe(28);
 
-    expect(bank.buyHotel(ann, tile)).toBe(true);
-    expect(tile.hasHotel).toBe(true);
-    expect(tile.houses).toBe(0);
+    expect(bank.build(ann, tile)).toBe(true);
+    expect(tile.level === 5).toBe(true);
+    expect(tile.level).toBe(0);
     expect(bank.hotels).toBe(11);
     expect(bank.houses).toBe(32); // the four came back
   });
 
   it('refuses a hotel before four houses are standing', () => {
-    bank.buyHouse(ann, tile);
-    expect(bank.buyHotel(ann, tile)).toBe(false);
+    bank.build(ann, tile);
+    expect(bank.build(ann, tile)).toBe(false);
   });
 
   it('refunds half the house cost on a sale and restocks the bank', () => {
-    bank.buyHouse(ann, tile);
+    bank.build(ann, tile);
     const cash = ann.cash;
-    expect(bank.sellHouse(ann, tile)).toBe(true);
+    expect(bank.sell(ann, tile)).toBe(true);
     expect(ann.cash).toBe(cash + 25);
     expect(bank.houses).toBe(32);
-    expect(tile.houses).toBe(0);
+    expect(tile.level).toBe(0);
   });
 
   it('refuses to build when the bank has run out of houses', () => {
-    bank.houses = 0;
-    expect(bank.buyHouse(ann, tile)).toBe(false);
-    expect(tile.houses).toBe(0);
+    bank.level = 0;
+    expect(bank.build(ann, tile)).toBe(false);
+    expect(tile.level).toBe(0);
   });
 
   it('conserves the house supply across a full build-and-sell cycle', () => {
-    for (let i = 0; i < 4; i++) bank.buyHouse(ann, tile);
-    bank.buyHotel(ann, tile);
-    bank.sellHotel(ann, tile);
-    for (let i = 0; i < 4; i++) bank.sellHouse(ann, tile);
+    for (let i = 0; i < 4; i++) bank.build(ann, tile);
+    bank.build(ann, tile);
+    bank.sell(ann, tile);
+    for (let i = 0; i < 4; i++) bank.sell(ann, tile);
     expect(bank.houses).toBe(HOUSE_LIMIT);
     expect(bank.hotels).toBe(HOTEL_LIMIT);
   });

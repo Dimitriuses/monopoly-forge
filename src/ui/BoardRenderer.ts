@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import type { Board, TileLayout } from '@/game/Board';
-import { PropertyTile } from '@/tiles/PropertyTile';
-import { isOwnable } from '@/tiles/Tile';
+import { isOwnable, type Ownable, type Tile } from '@/tiles/Tile';
+import { standingOn } from '@/game/BuildLadder';
 import { theme } from './Theme';
 import { decorationFor, GROUP_BAND } from './TileDecor';
 
@@ -234,7 +234,8 @@ export class BoardRenderer {
         );
       }
 
-      if (tile instanceof PropertyTile) this.drawBuildings(tile, layout);
+      // Any ownable tile, not only a lot: a train depot stands on a railroad.
+      if (isOwnable(tile)) this.drawBuildings(tile, layout);
     }
   }
 
@@ -284,27 +285,40 @@ export class BoardRenderer {
 
   // ── Internals ───────────────────────────────────────────────────────────────
 
-  /** Houses sit along the colour stripe, a hotel replaces all four. */
-  private drawBuildings(tile: PropertyTile, layout: TileLayout): void {
-    if (!tile.hasHotel && tile.houses === 0) return;
+  /**
+   * Whatever is standing there, along the colour stripe. Four houses spread
+   * across the tile; one of anything bigger sits in the middle.
+   *
+   * It asks the ladder rather than testing `hasHotel`, so a board that builds
+   * skyscrapers or train depots draws them without this method learning their
+   * names — the texture key *is* the level's id, which is the same bargain
+   * `Game.assets` already makes with `house` and `hotel`.
+   */
+  private drawBuildings(tile: Tile & Ownable, layout: TileLayout): void {
+    const standing = standingOn(this.board.rules.buildLadder, tile.type, tile.level);
+    if (!standing) return;
+    if (!this.scene.textures.exists(standing.kind.id)) return;
 
     const angle = Phaser.Math.DegToRad(layout.rotation);
     const stripe = -layout.h / 2 + BAND / 2;   // middle of the colour band, locally
 
-    if (tile.hasHotel) {
+    // One of something big goes in the middle; a row of small ones spreads out.
+    if (standing.count === 1 && standing.kind.perTile === 1) {
       const at = this.toWorld(layout, 0, stripe);
       this.stateObjects.push(
-        this.scene.add.image(at.x, at.y, 'hotel').setScale(0.6).setRotation(angle).setDepth(3),
+        this.scene.add.image(at.x, at.y, standing.kind.id)
+          .setScale(0.6).setRotation(angle).setDepth(3),
       );
       return;
     }
 
-    // Four slots along the stripe, however the tile happens to be turned.
-    for (let k = 0; k < tile.houses; k++) {
-      const offset = (k + 0.5) * (layout.w / 4) - layout.w / 2;
+    const slots = standing.kind.perTile;
+    for (let k = 0; k < standing.count; k++) {
+      const offset = (k + 0.5) * (layout.w / slots) - layout.w / 2;
       const at = this.toWorld(layout, offset, stripe);
       this.stateObjects.push(
-        this.scene.add.image(at.x, at.y, 'house').setScale(0.5).setRotation(angle).setDepth(3),
+        this.scene.add.image(at.x, at.y, standing.kind.id)
+          .setScale(0.5).setRotation(angle).setDepth(3),
       );
     }
   }

@@ -5,7 +5,8 @@ import {
   describeHolding, giveHolding, heldByPlayer, holdingKind, takeHolding,
   valueOfHoldings,
 } from './Holdings';
-import { buildingLevel, canSellHotel, canSellHouse, canMortgage } from './BuildRules';
+import { buildingLevel, canSell, canMortgage } from './BuildRules';
+import { rungAt, refundOf, standingOn } from './BuildLadder';
 import type { Board } from './Board';
 import type { Bank } from './Bank';
 import type { Player } from './Player';
@@ -56,9 +57,11 @@ export interface Liquidation {
 export function liquidValue(board: Board, player: Player): number {
   let total = player.cash;
   for (const tile of ownedTiles(board, player)) {
-    if (tile instanceof PropertyTile) {
-      total += tile.houses * Math.floor(tile.houseCost / 2);
-      if (tile.hasHotel) total += Math.floor(tile.houseCost / 2);
+    // Every rung standing here, at half price — a hotel is worth one sale, not
+    // four, because that is what coming down one rung actually pays.
+    for (let level = tile.level; level > 0; level--) {
+      const rung = rungAt(board.rules.buildLadder, tile.type, level);
+      if (rung) total += refundOf(rung.kind, (tile as { houseCost?: number }).houseCost ?? 0);
     }
     if (!tile.isMortgaged) total += tile.mortgage;
   }
@@ -94,14 +97,13 @@ export function raiseCash(
   while (player.cash < target) {
     // Tallest first, skipping any the rules will not let go right now — a hotel
     // the bank cannot break into houses must not stop the rest of the sale.
-    const lot = developedLots(board, player).find((l) => (
-      l.hasHotel ? canSellHotel(bank, player, l).ok : canSellHouse(board, player, l).ok
-    ));
+    const lot = developedLots(board, player).find((l) => canSell(board, bank, player, l).ok);
     if (!lot) break;
 
-    const wasHotel = lot.hasHotel;
-    if (!(wasHotel ? bank.sellHotel(player, lot) : bank.sellHouse(player, lot))) break;
-    actions.push(`sold ${wasHotel ? 'the hotel' : 'a house'} on ${lot.name}`);
+    // Named before it comes down, because afterwards the rung is gone.
+    const rung = rungAt(board.rules.buildLadder, lot.type, lot.level);
+    if (!bank.sell(player, lot)) break;
+    actions.push(`sold ${rung ? `a ${rung.kind.label.toLowerCase()}` : 'a building'} on ${lot.name}`);
     sold++;
   }
 
@@ -217,11 +219,13 @@ export function transferEstate(
     // A creditor inherits land, not houses. Usually the fire sale has already
     // cleared them; anything left (a hotel the bank could not break up) goes
     // back to stock rather than out of the game — the house supply is fixed.
-    if (tile instanceof PropertyTile && buildingLevel(tile) > 0) {
-      bank.houses += tile.houses;
-      if (tile.hasHotel) bank.hotels += 1;
-      tile.houses = 0;
-      tile.hasHotel = false;
+    // Whatever kind it is, and however many rungs up: a skyscraper goes back to
+    // the skyscraper box. Counting only houses and hotels here is how the fixed
+    // supply would have sprung a leak on any board that builds a third thing.
+    if (buildingLevel(tile) > 0) {
+      const standing = standingOn(board.rules.buildLadder, tile.type, tile.level);
+      if (standing) bank.stock[standing.kind.id] += standing.count;
+      tile.level = 0;
     }
     tile.ownerId = creditor?.id ?? null;
     creditor?.ownedTileIds.add(tile.id);

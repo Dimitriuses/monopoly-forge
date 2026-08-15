@@ -33,7 +33,7 @@ describe('quoteRent — properties', () => {
   it('charges the tier the tile worked out for itself', () => {
     give(BOARDWALK);
     const tile = board.getTile(BOARDWALK) as PropertyTile;
-    tile.houses = 2;
+    tile.level = 2;
     expect(quote(BOARDWALK, tile.currentRent).amount).toBe(600);
   });
 
@@ -50,7 +50,7 @@ describe('quoteRent — properties', () => {
   it('does not double once a house is standing', () => {
     give(MEDITERRANEAN, BALTIC);
     const med = board.getTile(MEDITERRANEAN) as PropertyTile;
-    med.houses = 1;
+    med.level = 1;
     expect(quote(MEDITERRANEAN, med.currentRent).amount).toBe(10);
   });
 

@@ -34,7 +34,13 @@ export interface TileDefinition {
   group?: ColorGroup;
   houseCost?: number;
   /** rent[0]=bare, [1]=1h, [2]=2h, [3]=3h, [4]=4h, [5]=hotel */
-  rent?: [number, number, number, number, number, number];
+  /**
+   * One rent per rung of the ladder, plus the bare rate at [0]. Six on the
+   * classic board; a game that builds skyscrapers wants seven. It stopped being
+   * a six-tuple in M12d — how many a lot needs is the *game's* question, and a
+   * map has no economy, so `validateGame` is what checks the two agree.
+   */
+  rent?: number[];
   // Tax only
   amount?: number;
 }
@@ -51,6 +57,16 @@ export interface Ownable {
   readonly mortgage: number;
   ownerId: string | null;
   isMortgaged: boolean;
+  /**
+   * Which rung of the build ladder is standing here — 0 for bare, 5 for a hotel
+   * on the classic board (`game/BuildLadder.ts`). It lives on `Ownable` rather
+   * than on a lot because a railroad can hold a train depot, and the level a
+   * tile can reach comes from its *type*.
+   *
+   * It is also the index into a lot's rent table, which is what made replacing
+   * `houses: number` + `hasHotel: boolean` cheap rather than invasive.
+   */
+  level: number;
 }
 
 export function isOwnable(tile: Tile): tile is Tile & Ownable {

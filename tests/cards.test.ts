@@ -299,8 +299,8 @@ describe('CardEffects', () => {
     // Mediterranean (1) with 3 houses, Baltic (3) with a hotel.
     const med = board.getTile(1) as unknown as { houses: number; hasHotel: boolean };
     const baltic = board.getTile(3) as unknown as { houses: number; hasHotel: boolean };
-    med.houses = 3;
-    baltic.hasHotel = true;
+    med.level = 3;
+    baltic.level = 5;
     players[0].ownedTileIds = new Set([1, 3]);
 
     run({ type: 'repairs', houseCost: 25, hotelCost: 100 });

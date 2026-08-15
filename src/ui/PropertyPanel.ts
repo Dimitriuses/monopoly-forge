@@ -13,9 +13,14 @@ import { Surface } from './Retained';
 // new one. Its colours come from `theme()` for the same reason — the panel is
 // where the rest of the game's palette shows up next to a tile's colour group.
 
+/**
+ * Two building buttons rather than four since M12d: the ladder decides what the
+ * next rung is called, so "Build" and "Sell" are the whole of it. A board with
+ * skyscrapers needs no new button, and the classic board's hotel is what the
+ * Build button says when a lot has four houses on it.
+ */
 export type PanelActionKey =
-  | 'buildHouse' | 'buildHotel'
-  | 'sellHouse'  | 'sellHotel'
+  | 'buildHouse' | 'sellBuilding'
   | 'mortgage'   | 'unmortgage';
 
 export interface PanelAction {

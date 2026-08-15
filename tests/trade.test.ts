@@ -65,7 +65,7 @@ describe('Trade', () => {
   // Buildings would end up standing on a group their owner no longer holds.
   it('refuses a lot whose colour group still has buildings on it', () => {
     give(ann, MEDITERRANEAN, BALTIC);
-    (board.getTile(BALTIC) as PropertyTile).houses = 1;
+    (board.getTile(BALTIC) as PropertyTile).level = 1;
 
     const check = validateTrade(board, players, offerOf({ fromTileIds: [MEDITERRANEAN] }));
     expect(check.ok).toBe(false);

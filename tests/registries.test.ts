@@ -181,7 +181,7 @@ describe('Rule sets', () => {
     expect(new Bank(board.rules).houses).toBe(CLASSIC_RULES.houseLimit);
 
     const lean = new Bank(resolveRules({ houseLimit: 12, hotelLimit: 4 }));
-    expect(lean.houses).toBe(12);
+    expect(lean.level).toBe(12);
     expect(lean.hotels).toBe(4);
   });
 

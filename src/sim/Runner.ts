@@ -14,7 +14,8 @@ import { Auction, tileSubject, type AuctionSubject } from '@/game/Auction';
 import {
   houseClaims, housesContested, houseReserve, nominateLot, type HouseClaim,
 } from '@/game/Contention';
-import { canBuildHouse, canBuildHotel, canUnmortgage } from '@/game/BuildRules';
+import { canBuild, canUnmortgage } from '@/game/BuildRules';
+import { standingOn, type BuildLevel } from '@/game/BuildLadder';
 import { executeTrade } from '@/game/Trade';
 import {
   shouldBuy, nextBid, nextHouseBid, jailChoice, buildPlan, redeemPlan,
@@ -215,8 +216,8 @@ class Simulation {
       cash:  Object.fromEntries(this.players.map((p) => [p.id, p.cash])),
       deeds: Object.fromEntries(this.players.map((p) => [p.id, p.ownedTileIds.size])),
       tilesOwned: this.players.flatMap((p) => [...p.ownedTileIds]).sort((a, b) => a - b),
-      housesBuilt: built.reduce((n, t) => n + t.houses, 0),
-      hotelsBuilt: built.filter((t) => t.hasHotel).length,
+      housesBuilt: built.reduce((n, t) => n + housesOn(this.rules.buildLadder, t), 0),
+      hotelsBuilt: built.filter((t) => topOf(this.rules.buildLadder, t) === 'hotel').length,
       houseShortage: this.houseShortage,
       auctions: this.auctionsHeld,
       trades: this.tradesMade,
@@ -419,8 +420,8 @@ class Simulation {
     if (subject.kind !== 'house' || !this.contention) return;
     const requested = this.contention.requestedBy === winner.id ? this.contention.lot : null;
     const lot = nominateLot(this.contention.claims, winner, requested);
-    if (lot && canBuildHouse(this.board, this.bank, winner, lot).ok) {
-      this.bank.buyHouse(winner, lot, amount);
+    if (lot && canBuild(this.board, this.bank, winner, lot).ok) {
+      this.bank.build(winner, lot, amount);
     }
   }
 
@@ -471,9 +472,8 @@ class Simulation {
 
       if (next.kind === 'house' && this.startContention(player, lot)) break;
 
-      const built = next.kind === 'hotel'
-        ? canBuildHotel(this.board, this.bank, player, lot).ok && this.bank.buyHotel(player, lot)
-        : canBuildHouse(this.board, this.bank, player, lot).ok && this.bank.buyHouse(player, lot);
+      const built = canBuild(this.board, this.bank, player, lot).ok
+        && this.bank.build(player, lot);
       if (!built) break;
       if (this.bank.houses === 0) this.houseShortage = true;
     }
@@ -501,3 +501,18 @@ class Simulation {
 const TOKENS = [
   'topHat', 'car', 'dog', 'battleship', 'iron', 'boot', 'wheelbarrow', 'thimble',
 ] as const;
+
+/**
+ * The report still talks about houses and hotels, because those are the two
+ * every board here has and the two a reader of the summary knows. Anything a
+ * game builds above them is counted by `sim/Invariants.ts`, which is where being
+ * exhaustive actually matters.
+ */
+function housesOn(ladder: BuildLevel[], tile: { type: string; level: number }): number {
+  const standing = standingOn(ladder, tile.type, tile.level);
+  return standing?.kind.id === 'house' ? standing.count : 0;
+}
+
+function topOf(ladder: BuildLevel[], tile: { type: string; level: number }): string | null {
+  return standingOn(ladder, tile.type, tile.level)?.kind.id ?? null;
+}

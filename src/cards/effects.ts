@@ -1,6 +1,7 @@
 import { bus } from '@/utils/EventBus';
 import { dlog, dwarn } from '@/utils/log';
-import { PropertyTile } from '@/tiles/PropertyTile';
+import { isOwnable } from '@/tiles/Tile';
+import { standingOn } from '@/game/BuildLadder';
 import { Registry } from '@/utils/Registry';
 import type { Board } from '@/game/Board';
 import type { Bank } from '@/game/Bank';
@@ -130,9 +131,14 @@ registerCardEffect('repairs', (ctx, action, player) => {
   let total = 0;
   player.ownedTileIds.forEach((id) => {
     const tile = ctx.board.getTile(id);
-    if (tile instanceof PropertyTile) {
-      total += tile.houses * houseCost + (tile.hasHotel ? hotelCost : 0);
-    }
+    if (!isOwnable(tile)) return;
+    // Per building standing, whatever kind it is. The card names two rates and
+    // the board may hold five kinds, so anything that is not a house is charged
+    // at the hotel rate — a skyscraper is emphatically not a house, and a card
+    // written in 1935 has no opinion about it.
+    const standing = standingOn(ctx.board.rules.buildLadder, tile.type, tile.level);
+    if (!standing) return;
+    total += standing.count * (standing.kind.id === 'house' ? houseCost : hotelCost);
   });
   dlog(`[CardEffects] repairs: ${player.name} pays $${total} (houses×$${houseCost}, hotels×$${hotelCost})`);
   ctx.charge(player, null, total);

@@ -13,6 +13,7 @@
 import type { BuiltInTurnOrder, BuiltInWinCondition } from './TurnFlow';
 import type { BuiltInMovement } from './Movement';
 import type { BuiltInRollRule } from './RollRules';
+import type { BuildLevel } from './BuildLadder';
 
 export interface GameRules {
   /** What each player starts with. */
@@ -35,6 +36,21 @@ export interface GameRules {
   hotelLimit: number;
   /** Houses a lot needs before it can take a hotel. */
   housesBeforeHotel: number;
+  /**
+   * Everything that can be built, on what, and what it does — `BuildLadder.ts`.
+   *
+   * The three numbers above describe the two rungs every game in this family
+   * has, and they stay the truth for those two: `resolveRules` writes them into
+   * the ladder's `house` and `hotel` levels after layering, so a player nudging
+   * "houses in the bank" cannot disagree with the ladder, and cannot flatten a
+   * game's extra rungs by touching one of them either.
+   *
+   * A game adds levels above (skyscrapers) or beside (train depots on a
+   * railroad) them. The ladder itself is **not** in `RULE_FIELDS`: it is
+   * array-shaped, and like `movement` it belongs to the game rather than to a
+   * preference.
+   */
+  buildLadder: BuildLevel[];
   /**
    * Interest on a mortgage, as a fraction. Charged **twice** in the printed
    * game and both are now honoured: once when a mortgaged deed changes hands,
@@ -121,6 +137,12 @@ export const CLASSIC_RULES: GameRules = {
   houseLimit: 32,
   hotelLimit: 12,
   housesBeforeHotel: 4,
+  buildLadder: [
+    { id: 'house', label: 'House', perTile: 4, supply: 32,
+      on: ['property'], effect: 'tier', group: true },
+    { id: 'hotel', label: 'Hotel', perTile: 1, supply: 12,
+      on: ['property'], effect: 'tier', group: true },
+  ],
   mortgageInterest: 0.1,
   monopolyRent: 2,
   majorityRent: 1,
@@ -160,5 +182,33 @@ export function resolveRules(...overrides: Array<Partial<GameRules> | undefined>
   // A layer that names variants replaces the list rather than adding to it — a
   // map saying "played with the speed die" is a statement about the whole game.
   // Copied so no rule set ever shares `CLASSIC_RULES.variants` by reference.
-  return { ...resolved, variants: [...resolved.variants] };
+  return {
+    ...resolved,
+    variants: [...resolved.variants],
+    buildLadder: reconcileLadder(resolved),
+  };
+}
+
+/**
+ * The seam between a rule a *player* may set and a rule a *game* brings.
+ *
+ * Houses and hotels are the two rungs every game here has, and their numbers are
+ * three scalars a person can change in the settings menu. The ladder is the
+ * general mechanism and would be a miserable thing to edit with ‹ ›. So the
+ * scalars win for those two levels and the ladder keeps everything else —
+ * meaning a player who halves the house supply on Ultimate Monopoly still gets
+ * its skyscrapers, which is the failure this ordering exists to prevent.
+ *
+ * Copied rather than mutated: `CLASSIC_RULES.buildLadder` is shared by every
+ * rule set that does not override it, and one game editing it in place would
+ * change the supply for all of them.
+ */
+function reconcileLadder(rules: GameRules): BuildLevel[] {
+  return rules.buildLadder.map((level) => {
+    if (level.id === 'house') {
+      return { ...level, supply: rules.houseLimit, perTile: rules.housesBeforeHotel };
+    }
+    if (level.id === 'hotel') return { ...level, supply: rules.hotelLimit };
+    return { ...level };
+  });
 }

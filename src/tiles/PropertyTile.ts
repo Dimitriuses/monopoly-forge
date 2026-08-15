@@ -7,12 +7,18 @@ export class PropertyTile extends Tile {
   readonly price: number;
   readonly houseCost: number;
   readonly mortgage: number;
-  /** rent[0]=bare, [1]–[4]=1–4 houses, [5]=hotel */
-  readonly rentTiers: [number, number, number, number, number, number];
+  /**
+   * One tier per rung of the build ladder, plus the bare rate at `[0]`. Six on
+   * the classic board (bare, 1–4 houses, hotel) and seven where a game builds
+   * skyscrapers — a `number[]` rather than a six-tuple since M12d, because how
+   * many tiers a lot needs is a question about the *game*, not about the map.
+   * `validateGame` is where the two are checked against each other.
+   */
+  readonly rentTiers: number[];
 
   ownerId: string | null = null;
-  houses: number = 0;
-  hasHotel: boolean = false;
+  /** The rung standing here; `rentTiers[level]` is what it charges. */
+  level: number = 0;
   isMortgaged: boolean = false;
 
   constructor(def: TileDefinition) {
@@ -29,7 +35,10 @@ export class PropertyTile extends Tile {
 
   get currentRent(): number {
     if (this.isMortgaged || !this.ownerId) return 0;
-    return this.hasHotel ? this.rentTiers[5] : this.rentTiers[this.houses];
+    // The level *is* the tier. A lot standing higher than its table is a
+    // mismatch `validateGame` refuses, so the clamp is belt and braces rather
+    // than a rule — but an `undefined` here would become `NaN` rent.
+    return this.rentTiers[Math.min(this.level, this.rentTiers.length - 1)];
   }
 
   onLand(playerId: string): void {
@@ -59,8 +68,7 @@ export class PropertyTile extends Tile {
       ...super.toJSON(),
       group:      this.group,
       ownerId:    this.ownerId,
-      houses:     this.houses,
-      hasHotel:   this.hasHotel,
+      level:      this.level,
       isMortgaged:this.isMortgaged,
     };
   }
