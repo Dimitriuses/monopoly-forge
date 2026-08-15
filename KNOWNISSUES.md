@@ -23,18 +23,20 @@ The list to choose from.
 ### Gameplay
 
 
-#### The speed die leaves out its triples rule
+#### The speed die is in play from the first roll
 
-`game/SpeedDie.ts` implements the third die, the Mr. Monopoly face and the bus
-face. Two parts of the official variant are missing on purpose:
+The printed variant says the speed die **is not used until you have been round
+the board once**. Here it is live immediately.
 
-- **Triples** (all three dice alike) should let you move to any space you choose.
-  That needs a pick-a-tile prompt, and a bot owes an answer to every prompt.
-- **The speed die is not in play until you have been round the board once.** That
-  is a per-player flag, and anything that is game state has to go in the snapshot.
+It is a per-player flag, so it is game state and owes the snapshot a field
+(invariant 14). Small, and worth doing with the other per-player state rather
+than on its own.
 
-Doubles are unaffected: `SpeedDice` reports them from the two white dice, so
-three doubles still means jail.
+Everything else about the variant is implemented: the third die, the Mr.
+Monopoly face, the bus face, and — since M10a — the **triples** rule, which needed
+both a roll rule that could say what a triple means (`game/RollRules.ts`) and a
+prompt a bot could answer (`game/Choice.ts`). Doubles are unaffected: `SpeedDice`
+reports them from the two white dice, so three doubles still means jail.
 
 #### A bid has to be one of the three offered amounts
 
@@ -65,26 +67,6 @@ first two seats took roughly 60% of the wins. A better policy has to be a
 different *shape* — one that values a deed by the rent it is likely to face
 rather than by its price — and that is now a measurable claim rather than an
 opinion.
-
-#### What a repeated dice face means is still hardcoded
-
-The turn is a pipeline, a rule set names its order and win condition, and a
-variant can supply its own dice — but one turn rule is still an `if` inside
-`TurnManager.rollDice`: *N* doubles in a row send you to jail. `doublesToJail` is
-a rule value and `Dice` is substitutable, which between them cover the speed die
-(it reports doubles from the two white dice and the classic rule applies
-unchanged). What no rule set can say is that a *triple* means something, which is
-why the speed die's triples rule is missing above.
-
-**The open question, for whoever picks this up:** is a roll's *meaning* a fourth
-registered strategy beside `turnOrder`, `winCondition` and `variants` — something
-like `rollOutcome(result, player) → { jail?, rollAgain? }` — or does the roll
-belong inside the `ROLLING` phase handler, which a rule set can already replace?
-The second needs no new registry and no new field in the save file, but it means
-`rollDice` handing over control rather than consulting a strategy, which is a
-larger change to a method three bugs have already been fixed in. Both are worth
-doing only alongside the variant that needs them; the speed die's triples rule is
-the only candidate today, and it also needs a pick-a-tile prompt.
 
 #### Monopoly does not always end
 
@@ -559,6 +541,33 @@ even", passing or landing. What ships pays $300 for passing and $400 for
 stopping, which is the same pair of numbers keyed off the wrong thing. Widening
 `onPass` is easy; deciding whether *every* tile should get a context on every
 step of every walk is the part worth thinking about.
+
+#### What a repeated dice face means is still hardcoded
+
+*Closed in M10a.* `rules.rollRule` is the fifth registered strategy
+(`game/RollRules.ts`). A rule returns **what should happen** — `move`, `jail`, or
+`handled` when it has a prompt in flight — and `TurnManager` does it, so nothing
+about the dice is an `if` inside `rollDice` any more. The open question the entry
+below poses is the one that was answered: a roll's meaning *is* a registered
+strategy, and the speed die's triples rule is what proved it.
+
+The turn is a pipeline, a rule set names its order and win condition, and a
+variant can supply its own dice — but one turn rule is still an `if` inside
+`TurnManager.rollDice`: *N* doubles in a row send you to jail. `doublesToJail` is
+a rule value and `Dice` is substitutable, which between them cover the speed die
+(it reports doubles from the two white dice and the classic rule applies
+unchanged). What no rule set can say is that a *triple* means something, which is
+why the speed die's triples rule is missing above.
+
+**The open question, for whoever picks this up:** is a roll's *meaning* a fourth
+registered strategy beside `turnOrder`, `winCondition` and `variants` — something
+like `rollOutcome(result, player) → { jail?, rollAgain? }` — or does the roll
+belong inside the `ROLLING` phase handler, which a rule set can already replace?
+The second needs no new registry and no new field in the save file, but it means
+`rollDice` handing over control rather than consulting a strategy, which is a
+larger change to a method three bugs have already been fixed in. Both are worth
+doing only alongside the variant that needs them; the speed die's triples rule is
+the only candidate today, and it also needs a pick-a-tile prompt.
 
 ### Architecture
 

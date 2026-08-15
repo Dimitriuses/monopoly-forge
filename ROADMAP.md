@@ -45,6 +45,13 @@ state to a player.**
 three customers already in the tree, and each named by what it unlocks rather
 than by what it generalises. **All four are done.**
 
+**M13 and M14 are what is next.** M13 works through the open half of
+[KNOWNISSUES.md](KNOWNISSUES.md) — three defects, four printed rules still
+softened, and the balance work — while being explicit that five of the open
+entries are standing constraints rather than jobs. M14 makes a game something you
+can look *back* through: click a line in the turn log and see the board as it was,
+and save that history with the game so a finished game can be studied.
+
 **M10 — refinement — is done.** The corners the rules cut are closed (10a), the
 things a player asks for are in (10b), the menus are a tree (10d), and the bots
 were measured rather than tuned (10c): they trade their way out of a stalemate
@@ -1052,6 +1059,237 @@ counts every one.
 - **Not the printed rule at any cost.** Two reductions are staying: Squeeze
   Play's dice table is fine as it is, and the Holland Tunnels' arrival guard is
   the printed rule, not a compromise.
+
+---
+
+## M13 — the open list, worked through
+
+**Unlocks:** nothing new. That is the point of it — every other milestone here
+opened a seam, and this one closes what those left behind.
+
+[KNOWNISSUES.md](KNOWNISSUES.md) is measured rather than guessed at, and it now
+splits into what is **open** and what has been **closed**. The open half is 24
+entries, and they are not 24 pieces of work: some are defects, some are printed
+rules softened on purpose, some want a decision before they want code, and some
+are standing constraints that will still be true when this milestone is finished.
+Sorting them is most of the value.
+
+All 24 are accounted for below — **3** wrong, **4** softened, **2** balance,
+**7** awaiting a decision, and **8** that should stay exactly as they are.
+
+### 13a — the three that are simply wrong
+
+Defects, in the order they would bite somebody.
+
+- [ ] **The roll button dies after a theme change on a short Ultimate run.**
+      `--game ultimate --turns 16` fails at the mid-game palette switch; the same
+      command at 30 turns, and at six players, passes. It reproduces on the commit
+      before M12d, so the build ladder did not cause it. This is the third
+      appearance of the same family — a button re-registered with the input plugin
+      at the wrong moment — and the first that is *intermittent*, which makes it
+      worth more than the ten minutes the other two took. Ultimate is the only
+      game that defaults to the speed die's seven-phase turn; start there.
+- [ ] **The Subway and a travel voucher pay salaries they should not.** Both move
+      a player with `walkTo`, which announces every tile on the route, so riding
+      the Subway past PAY DAY collects a salary the book denies twice over. The
+      fix is known and small — announce only the destination, the way the Holland
+      Tunnel already moves — and it is here rather than in M12c because it changes
+      what two squares pay.
+- [ ] **The menu can set a rule the game it is set for refuses.** `RULE_FIELDS`
+      excludes `movement` because a tracks board played as a `circuit` is a
+      pairing `validateGame` rejects. Excluding the field is a workaround for a
+      menu that cannot express "this rule is not available for this game"; the
+      real answer is a field that knows when it does not apply.
+
+### 13b — printed rules still softened
+
+Each of these is a reduction taken deliberately, with the reason recorded. Closing
+one is a *balance* decision as much as an engineering one, which is why they are
+listed rather than assumed.
+
+- [ ] **Houses on a majority ownership.** Ultimate lets you build once you own all
+      but one of a group larger than two, and reserves the full monopoly for
+      skyscrapers. The rent half is implemented (`majorityRent`, `monopolyRent`);
+      the building half is not. The shape of the fix is already visible:
+      `BuildLevel.group` is a boolean and wants to be `'majority' | 'group' |
+      false`. **Measure before and after** — it changes how fast every Ultimate
+      game develops.
+- [ ] **The speed die is in play from the first roll.** It should not be until you
+      have been round the board once. A per-player flag, so it is game state and
+      owes the snapshot a field.
+- [ ] **A bot never spends a travel voucher, and nobody can trade one.** Valuing a
+      holding generalises; playing one does not, and a `TradeOffer` is still deeds
+      and cash. Two separate pieces: a per-game spend policy, and holdings in the
+      trade panel.
+- [ ] **Stock certificates and Roll Three cards.** The mechanism is no longer what
+      blocks them — a stock company is a holding kind and a Roll Three card is a
+      number you keep. What is left is each rule's own behaviour, which is a
+      *game's* work rather than the engine's, and is the largest thing on this
+      list.
+
+### 13c — the balance work
+
+- [ ] **The games that are not Classic are unbalanced.** Roundabout and Orbits
+      were written to fill a shape rather than to play well. `npm run simulate`
+      exists precisely to answer this, and `--mirror` exists to stop a seating
+      order being mistaken for a result.
+- [ ] **The no-auction house rule is untested end to end.** It has its own
+      playtest pass and needs the opposite assertion to the ordinary run.
+
+### 13d — the ones that want a decision before they want work
+
+Seven open entries are neither defects nor deferred rules. Each is a seam that
+was left half-open on purpose, and each needs somebody to decide *whether* it
+should close before anybody decides how.
+
+- [ ] **A bid has to be one of the three offered amounts.** The clock and the
+      raises are rule values now, so a game can set them — but free-entry bidding
+      needs somewhere to type a number, and the game is one canvas with no DOM.
+      The decision is whether that is worth a text field or whether three buttons
+      is simply the better interface.
+- [ ] **Three things cannot be saved, and one of them is only a callback.** Saving
+      mid-turn and mid-auction both work; what is left is an *unanswered question*
+      — the asker would have to be re-entrant, able to ask again from restored
+      state. That is per-asker work, and the decision is whether "you may not save
+      with a question on screen" is a limitation or a reasonable rule.
+- [ ] **Three things a bot still cannot be asked.** Narrowed by `game/Choice.ts`
+      to the cases that cannot be expressed as an option weight. An asker that
+      turns up and *cannot* is the thing that would justify a policy registry —
+      until one does, this stays as a note rather than a plan.
+- [ ] **A game can bring artwork only for a texture that already exists.**
+      `Game.assets` replaces a drawn texture; it cannot add a new lookup. M12d
+      widened this by accident — a build level's id *is* its texture key, so a
+      game adding a building already adds an asset slot. Whether the same should
+      be true for anything else is the question.
+- [ ] **The bots no longer stalemate, but Monopoly still can.** M10c took 22 of
+      400 unfinished classic games to 0 by letting the bots sell a key. What is
+      left is the game's own tail, not the policy's, and it is the same fact as
+      "Monopoly does not always end" seen from the bots' side.
+- [ ] **A turn's phases are a list; the path between them is not.** `TurnFlow`
+      made the phases data; what remains hardcoded is which phase follows which.
+      Nothing has wanted a branching turn yet, and building one speculatively is
+      what this roadmap's "at least three customers" bar exists to prevent.
+- [ ] **A panel updates in place; the board does not.** The panels retain
+      (`ui/Retained.ts`); `BoardRenderer.refresh()` still clears and redraws the
+      state layer. It has never been slow enough to matter — the decision is
+      whether to wait until it is.
+
+### What 13 deliberately does not touch
+
+Five open entries are **standing constraints, not defects**, and closing them
+would be a mistake rather than an improvement. They stay on the open list because
+they are true, not because they are owed work:
+
+| Entry | Why it stays |
+|---|---|
+| Monopoly does not always end | A fact about the game. It is why "every game reaches a winner" is not an invariant |
+| Turn-end protection is split across two layers | Both are needed; a test pins the flag's *inability* to do the generation counter's job |
+| Only one game can be loaded at a time | Serial isolation is the design. Parallel games need a registry per game, and nothing wants one |
+| The lockfile is only valid for the npm that wrote it | A property of npm. `npm run verify:install` is the mitigation |
+| `npm audit` is clean, and that is a moving target | Not a state you finish reaching |
+
+Three more are **narrowed as far as they usefully go** — the harness's hotspot
+table (menus, tiles and trade rows already report their own positions), the
+scene's turn-end delays, and the bots being a measured baseline rather than a
+tuned one. Re-opening any of them needs a reason better than tidiness.
+
+---
+
+## M14 — a game you can look back through
+
+**Unlocks:** clicking a line in the turn log to see the board as it was; and a
+saved game that carries its whole history, so a finished game can be studied
+rather than just won.
+
+The log has kept every entry since M8c and M10b let you copy it out as text.
+Text is what you read; **a position is what you want to see.** "Player 2 paid
+$1,400 rent on Boardwalk" is a sentence, and the interesting thing about it is
+which squares were owned, who was where, and what everybody was holding when it
+happened.
+
+### The design question, up front
+
+There are three ways to be able to show a past position, and the choice is the
+whole milestone.
+
+**Store a snapshot per entry.** Simplest, exact, and unaffordable: a snapshot is
+the whole board, every player, both decks and the bank. A long game logs hundreds
+of entries, and localStorage gives you a few megabytes for everything.
+
+**Replay from the seed.** The PRNG is seeded and the bots draw no randomness, so
+a game *is* reproducible — but only if every input is. Human answers are not
+derivable from a seed: which property was bought, what was bid, whether a trade
+was accepted, which square a Subway chose. Replay needs those recorded.
+
+**Keyframes plus inputs.** Snapshot occasionally, record the answers in between,
+and rebuild any moment by replaying a short way from the nearest keyframe. It is
+what every replay system converges on, and this codebase is unusually ready for
+it: determinism is already an invariant (rng, and `Bot.ts` drawing none), the
+snapshot already exists, and `sim/Runner` can already drive a game with no
+renderer — which is exactly what a replay is.
+
+**The plan is the third**, and it should be built in that order so each half is
+useful alone.
+
+### 14a — history is a model concern
+
+- [ ] The log is presentation today (`ui/Notification.ts`). An entry needs a
+      **stable id and the turn it belongs to**, so something other than the strip
+      on screen can point at it.
+- [ ] `game/History.ts` — the record itself: keyframes, the decisions between
+      them, and a lookup from entry id to *where in the record* that was.
+
+### 14b — a turn is a keyframe
+
+- [ ] Capture a snapshot at the **start of every turn**. That is cheap, bounded by
+      the round count rather than by how chatty the log is, and enough on its own
+      to answer "what did the board look like on turn 40?"
+- [ ] Clicking any log entry shows the board at the start of *its* turn. Useful
+      immediately, and the whole of the feature for anybody who does not need
+      within-turn precision.
+
+### 14c — an entry is a moment
+
+- [ ] Record the **answers** a turn needed: buy or pass, the bid, the trade, the
+      choice. Everything else is the dice, and the dice are the seed.
+- [ ] Seek to an entry by restoring its keyframe and replaying the answers up to
+      it, headlessly, through the same code a live game uses. **If a replay ever
+      disagrees with what was logged, determinism has been broken** — which makes
+      this feature a test of invariant 3 as much as a feature.
+
+### 14d — reviewing is not playing
+
+- [ ] A **review mode** in `GameScene`: the board and the tokens drawn from a
+      restored model, with every input dead. The failure to avoid is a viewer that
+      shares mutable state with the live game — a past board must be a *copy*, or
+      looking at history will quietly rewrite it.
+- [ ] Leaving review puts you back exactly where you were, which is the same
+      "pick the turn up rather than restart it" problem M10b already solved for
+      saves (invariant 14).
+
+### 14e — it saves, and that is the point
+
+- [ ] The history goes in the snapshot, so a saved game carries where it has
+      been. `SNAPSHOT_VERSION` bumps.
+- [ ] **A budget, and what happens when it is spent.** Keyframes are the only
+      part that grows without bound. A cap with the oldest keyframes dropped —
+      keeping the decisions, which are small — degrades to "we can still replay
+      it, just from further back" rather than to a failed save.
+- [ ] The exported log grows a machine-readable form beside the text, because
+      "for analysis" means something outside this repo will want to read it.
+
+### What M14 is not
+
+- **Not undo.** Looking at a past position is not returning to one. Rewinding a
+  game people have been playing is a different feature with a different question
+  behind it (what happens to everything that has happened since), and nothing in
+  this milestone should quietly make it possible.
+- **Not a network replay format.** The record is for this build, and
+  `validateSnapshot` should refuse one it cannot read rather than half-restoring
+  it — the rule the save file already follows.
+- **Not a second renderer.** Review mode draws through `BoardRenderer` and
+  `PlayerPanel` like everything else. A separate "history view" would drift from
+  the live one inside a milestone, which is the argument `ui/Menu.ts` already won.
 
 ---
 
