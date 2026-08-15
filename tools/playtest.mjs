@@ -891,8 +891,12 @@ async function main() {
       await sleep(150);
     }
 
-    await waitFor(page, idle, { timeout: 10000 });
-    await sleep(400);
+    // Settle, do not merely idle. A walk goes idle a moment *before* its landing
+    // draws a card or offers a deed, and a modal left open swallows the board
+    // click below — which is how this step began failing the day the speed die
+    // stopped rolling on the first lap and every seeded game dealt itself a
+    // different sequence.
+    await settleTurn(page, box, { timeout: 20000 });
 
     // ── Property panel ────────────────────────────────────────────────────────
     // Click an owned tile on the board and check the inspector opens on it.

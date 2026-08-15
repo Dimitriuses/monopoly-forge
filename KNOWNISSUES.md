@@ -23,21 +23,6 @@ The list to choose from.
 ### Gameplay
 
 
-#### The speed die is in play from the first roll
-
-The printed variant says the speed die **is not used until you have been round
-the board once**. Here it is live immediately.
-
-It is a per-player flag, so it is game state and owes the snapshot a field
-(invariant 14). Small, and worth doing with the other per-player state rather
-than on its own.
-
-Everything else about the variant is implemented: the third die, the Mr.
-Monopoly face, the bus face, and — since M10a — the **triples** rule, which needed
-both a roll rule that could say what a triple means (`game/RollRules.ts`) and a
-prompt a bot could answer (`game/Choice.ts`). Doubles are unaffected: `SpeedDice`
-reports them from the two white dice, so three doubles still means jail.
-
 #### A bid has to be one of the three offered amounts
 
 *Fixed in part:* the clock and the raises are rule-set values now
@@ -123,23 +108,6 @@ verdict.
 **Nobody can offer one in a trade.** A `TradeOffer` is deeds and cash; holdings
 are not in it, so the only way one changes hands is a bankruptcy. Both fixes are
 per-game or per-panel work rather than a gap in the mechanism.
-
-#### Houses cannot be built on a majority ownership
-
-*Added in M12d.* Ultimate Monopoly lets you build once you own **all but one** of
-a colour group with more than two properties — "that is called a MAJORITY
-OWNERSHIP" — and reserves the full monopoly for skyscrapers. The engine requires
-the whole group for every rung, which is the classic rule and stricter than
-Ultimate's.
-
-The rent half of that distinction *is* implemented (`majorityRent` doubles a bare
-lot on a majority, `monopolyRent` triples it on the full set). What is missing is
-the building half, and the shape of the fix is already there: `BuildLevel.group`
-is a boolean today and wants to be `'majority' | 'group' | false`, with the
-skyscraper level naming `'group'` while the house and hotel name `'majority'`.
-
-It is left out because it changes how quickly every Ultimate game develops, and
-that is a balance decision rather than a mechanism gap.
 
 #### Stock certificates and Roll Three cards are still reduced
 
@@ -489,6 +457,35 @@ even", passing or landing. What ships pays $300 for passing and $400 for
 stopping, which is the same pair of numbers keyed off the wrong thing. Widening
 `onPass` is easy; deciding whether *every* tile should get a context on every
 step of every walk is the part worth thinking about.
+
+#### Houses cannot be built on a majority ownership
+
+*Closed in M13b.* `BuildLevel.group` is `'group' | 'majority' | false` rather
+than a boolean, and Ultimate's houses and hotels ask for a **majority** — "if a
+color group has more than two properties, you may build houses and hotels once
+you own all but one property in that color group" — while its skyscrapers still
+ask for the whole set, exactly as the rule reserves them.
+
+The subtlety worth keeping: **even building is measured over the lots you own**,
+not over the group. The lot you do not own sits at level 0 and can never be built
+on, so counting it would have pinned the group at nothing for ever — the rule
+would have looked implemented and permitted no house.
+
+Measured over 80 games of Ultimate before and after: hotels standing at the end
+went from 1.5 to 2.8, games from a median 250 turns to 241, and the bank stopped
+running short of houses. More development, slightly faster, no instability.
+
+#### The speed die is in play from the first roll
+
+*Closed in M13b.* `Dice.roll()` takes an optional `RollContext` saying whose roll
+it is, and `SpeedDice` returns two plain dice until that player `hasLapped`.
+`TurnManager` sets the flag when a walk passes GO — a *walk*, because a card that
+carries you past GO is a jump rather than a lap, which is the same distinction
+`PassContext.roll` draws for pay corners.
+
+`hasLapped` is per-player state, so it is in the snapshot. A save written before
+the field existed restores it as `true`: the speed die simply stays live, which
+is the safer of the two guesses about a game already in progress.
 
 #### The Subway and a travel voucher pay salaries they should not
 

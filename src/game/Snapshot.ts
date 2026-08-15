@@ -60,6 +60,8 @@ export interface PlayerSnapshot {
   jailCardIds: string[];
   ownedTileIds: number[];
   isBankrupt: boolean;
+  /** Been round the board once — the speed die waits for it. */
+  hasLapped?: boolean;
   doublesStreak: number;
   isBot: boolean;
   /** What a *game* gave them — see `game/Holdings.ts`. Absent in pre-M12b saves. */
@@ -219,6 +221,7 @@ function capturePlayer(player: Player): PlayerSnapshot {
     jailCardIds: player.jailCards.map((c) => c.id),
     ownedTileIds: [...player.ownedTileIds],
     isBankrupt: player.isBankrupt,
+    hasLapped: player.hasLapped,
     doublesStreak: player.doublesStreak,
     isBot: player.isBot,
     holdings: { ...player.holdings },
@@ -281,6 +284,9 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
     player.inJail        = saved.inJail;
     player.jailTurns     = saved.jailTurns;
     player.isBankrupt    = saved.isBankrupt;
+    // Older saves predate the field; a game resumed without it simply has the
+    // speed die live from the next roll, which is the safer of the two guesses.
+    player.hasLapped     = saved.hasLapped ?? true;
     player.doublesStreak = saved.doublesStreak;
     player.ownedTileIds  = new Set(saved.ownedTileIds);
     // Copied rather than referenced, and defaulted for a save written before

@@ -280,6 +280,12 @@ would swallow. A phase that holds must also *consume* whatever made it hold: the
 walk it starts comes back through it, and the speed die's bonus move would
 otherwise send the player round the board for ever.
 
+**19f. Even building is measured over the lots you *own*, not the group.** A
+level may ask for a `'majority'` — all but one, in a group of more than two —
+and the lot you do not own sits at level 0 for ever. Counting it holds the whole
+group at nothing, which looks exactly like the rule being implemented and
+permits no house. The same applies coming down.
+
 **19. What can be built is a ladder, and a level says which of two shapes it
 is.** `game/BuildLadder.ts`. A `BuildLevel` names a building, which tile types it
 stands on, how many fit, what the bank stocks — and crucially whether it charges

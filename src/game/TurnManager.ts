@@ -81,7 +81,7 @@ export class TurnManager {
     // Thrown first, and the phase entered second, so anything a rule set hangs
     // on ROLLING sees the dice and can still say something about them — a
     // variant that adds a third die works from there rather than from in here.
-    this.dice.roll();
+    this.dice.roll({ player: this.currentPlayer });
     this.enterPhase('ROLLING');
     const result = this.dice.lastResult!;
     bus.emit('dice:result', result);
@@ -315,6 +315,11 @@ export class TurnManager {
       this.endTurn();
       return;
     }
+
+    // Round the board once. Read by the speed die, and set here because this is
+    // the mover that *counts* — a card that carries you past GO is a jump, not a
+    // lap, which is the same distinction `PassContext.roll` already draws.
+    if (passedGo) player.hasLapped = true;
 
     dlog(
       `[TurnManager] movePlayer: ${player.name} | ` +

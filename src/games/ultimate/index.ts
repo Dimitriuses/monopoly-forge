@@ -81,12 +81,17 @@ export const ULTIMATE_GAME: Game = {
      * `resolveRules` writes back over these.
      */
     buildLadder: [
+      // Houses and hotels go up on a **majority** here: 'if a color group has
+      // more than two properties, you may build houses and hotels once you own
+      // all but one property in that color group.'
       { id: 'house', label: 'House', perTile: 4, supply: 81,
-        on: ['property'], effect: 'tier', group: true },
+        on: ['property'], effect: 'tier', group: 'majority' },
       { id: 'hotel', label: 'Hotel', perTile: 1, supply: 31,
-        on: ['property'], effect: 'tier', group: true },
+        on: ['property'], effect: 'tier', group: 'majority' },
+      // The skyscraper is the exception, and the rule says so: it needs the
+      // full monopoly, not a majority.
       { id: 'skyscraper', label: 'Skyscraper', perTile: 1, supply: 16,
-        on: ['property'], effect: 'tier', group: true },
+        on: ['property'], effect: 'tier', group: 'group' },
       // "$100. A Train Depot doubles the rent due for the Railroad. Train
       // Depots may be sold back to the bank for $50 each."
       { id: 'trainDepot', label: 'Train Depot', perTile: 1, supply: 4,

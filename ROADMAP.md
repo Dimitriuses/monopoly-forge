@@ -1081,6 +1081,10 @@ All 24 are accounted for below — **3** wrong, **4** softened, **2** balance,
 rather than in the game — which is worth more than the fix, because it had been
 misread as the third appearance of an input-plugin bug.
 
+**13b is half done**: majority-ownership building and the speed die's lap rule
+are in and measured. The two left are the two that are not really engine work —
+spending and trading a holding, and the stock certificates.
+
 ### 13a — the three that are simply wrong · done
 
 Defects, in the order they would bite somebody.
@@ -1105,20 +1109,20 @@ Defects, in the order they would bite somebody.
       menu that cannot express "this rule is not available for this game"; the
       real answer is a field that knows when it does not apply.
 
-### 13b — printed rules still softened
+### 13b — printed rules still softened · two of four
 
 Each of these is a reduction taken deliberately, with the reason recorded. Closing
 one is a *balance* decision as much as an engineering one, which is why they are
 listed rather than assumed.
 
-- [ ] **Houses on a majority ownership.** Ultimate lets you build once you own all
+- [x] **Houses on a majority ownership.** Ultimate lets you build once you own all
       but one of a group larger than two, and reserves the full monopoly for
       skyscrapers. The rent half is implemented (`majorityRent`, `monopolyRent`);
       the building half is not. The shape of the fix is already visible:
       `BuildLevel.group` is a boolean and wants to be `'majority' | 'group' |
       false`. **Measure before and after** — it changes how fast every Ultimate
       game develops.
-- [ ] **The speed die is in play from the first roll.** It should not be until you
+- [x] **The speed die is in play from the first roll.** It should not be until you
       have been round the board once. A per-player flag, so it is game state and
       owes the snapshot a field.
 - [ ] **A bot never spends a travel voucher, and nobody can trade one.** Valuing a

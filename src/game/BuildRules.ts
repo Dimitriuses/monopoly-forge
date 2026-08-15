@@ -45,6 +45,25 @@ export function ownsWholeGroup(board: Board, player: Player, tile: PropertyTile)
   return group.length > 0 && group.every((t) => t.ownerId === player.id);
 }
 
+/**
+ * True when `player` holds all but one of a colour group of more than two.
+ *
+ * Ultimate Monopoly's **majority ownership**, and it is the *building* half of a
+ * rule whose renting half has been in `game/Rent.ts` since M11 (`majorityRent`).
+ * A group of two is excluded by the printed rule and by arithmetic alike: all
+ * but one of two is one lot, which is not ownership of anything.
+ */
+export function ownsMajority(board: Board, player: Player, tile: PropertyTile): boolean {
+  const group = board.groupTiles(tile.group);
+  if (group.length <= 2) return false;
+  return group.filter((t) => t.ownerId === player.id).length === group.length - 1;
+}
+
+/** The lots of this tile's group that the player actually holds. */
+function ownedInGroup(board: Board, player: Player, tile: PropertyTile): PropertyTile[] {
+  return board.groupTiles(tile.group).filter((t) => t.ownerId === player.id);
+}
+
 /** Total buildings the player has standing across a colour group. */
 export function groupBuildingCount(board: Board, tile: PropertyTile): number {
   return board.groupTiles(tile.group).reduce((n, t) => n + buildingLevel(t), 0);
@@ -76,13 +95,18 @@ export function canBuild(board: Board, bank: Bank, player: Player, tile: Tile & 
 
   if (kind.group) {
     if (!isProperty(tile)) return denied(`${tile.name} is not in a colour group.`);
-    const shared = developable(board, player, tile);
+    const shared = developable(board, player, tile, kind.group);
     if (!shared.ok) return shared;
 
     // Even building, and it is the *level* that has to stay even rather than the
     // house count: a group where one lot has a hotel and another has three
     // houses is uneven whether or not you call five "a hotel".
-    const lowest = Math.min(...board.groupTiles(tile.group).map(buildingLevel));
+    //
+    // Measured over the lots this player **owns**. On a full group that is every
+    // lot and nothing changes; on a majority the one you do not own sits at
+    // level 0 for ever, and counting it would forbid the first house.
+    const mine = ownedInGroup(board, player, tile);
+    const lowest = Math.min(...mine.map(buildingLevel));
     if (tile.level > lowest) {
       return denied(`${kind.label}s must go up evenly across the colour group.`);
     }
@@ -109,7 +133,7 @@ export function canSell(board: Board, bank: Bank, player: Player, tile: Tile & O
   if (!rung) return denied(`${tile.name} has nothing on it to sell.`);
 
   if (rung.kind.group && isProperty(tile)) {
-    const highest = Math.max(...board.groupTiles(tile.group).map(buildingLevel));
+    const highest = Math.max(...ownedInGroup(board, player, tile).map(buildingLevel));
     if (tile.level < highest) {
       return denied('Buildings must come down evenly across the colour group.');
     }
@@ -161,14 +185,24 @@ function houseCostOf(tile: Tile & Ownable): number {
   return (tile as { houseCost?: number }).houseCost ?? 0;
 }
 
-/** Ownership, monopoly and mortgage checks common to every group-built level. */
-function developable(board: Board, player: Player, tile: PropertyTile): RuleCheck {
+/** Ownership and mortgage checks common to every group-built level. */
+function developable(
+  board: Board, player: Player, tile: PropertyTile, needs: 'group' | 'majority',
+): RuleCheck {
   if (tile.ownerId !== player.id) return denied(`${tile.name} is not yours to build on.`);
-  if (!ownsWholeGroup(board, player, tile)) {
+
+  const whole = ownsWholeGroup(board, player, tile);
+  if (needs === 'group' && !whole) {
     return denied('You must own every lot in the colour group to build.');
   }
-  if (board.groupTiles(tile.group).some((t) => t.isMortgaged)) {
-    return denied('Nothing can be built while a lot in the group is mortgaged.');
+  if (needs === 'majority' && !whole && !ownsMajority(board, player, tile)) {
+    return denied('You must own all but one lot in the colour group to build.');
+  }
+
+  // Only the lots you hold. Somebody else's mortgage is their business, and on a
+  // majority it is not even a lot you could unmortgage.
+  if (ownedInGroup(board, player, tile).some((t) => t.isMortgaged)) {
+    return denied('Nothing can be built while a lot you own in the group is mortgaged.');
   }
   return ALLOWED;
 }

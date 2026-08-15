@@ -200,3 +200,50 @@ describe('The speed die', () => {
     expect(paid.some((p) => p.reason === 'go' && p.amount === board.rules.goSalary)).toBe(true);
   });
 });
+
+// ─── The lap rule ─────────────────────────────────────────────────────────────
+// "The speed die is not used until you have been round the board once."
+
+describe('the speed die waits for a lap', () => {
+  it('rolls two dice for a player who has not been round', () => {
+    const dice = new SpeedDice();
+    const fresh = { hasLapped: false };
+
+    // Enough rolls that a picture face would certainly have shown by now: the
+    // third die is six faces, three of which are pictures.
+    for (let i = 0; i < 40; i++) {
+      const result = dice.roll({ player: fresh });
+      expect(dice.lastFace).toBeNull();
+      expect(dice.lastNumber).toBeNull();
+      // The total is the two white dice and nothing else.
+      expect(result.total).toBe(result.die1 + result.die2);
+    }
+  });
+
+  it('brings the third die in once the lap is done', () => {
+    const dice = new SpeedDice();
+    const lapped = { hasLapped: true };
+
+    let sawSomething = false;
+    for (let i = 0; i < 40; i++) {
+      const result = dice.roll({ player: lapped });
+      if (dice.lastFace !== null || result.total !== result.die1 + result.die2) {
+        sawSomething = true;
+      }
+    }
+    expect(sawSomething).toBe(true);
+  });
+
+  /** No context at all is the simulator and every test that predates the rule. */
+  it('behaves as it always did when nobody says whose roll it is', () => {
+    const dice = new SpeedDice();
+    let sawSomething = false;
+    for (let i = 0; i < 40; i++) {
+      const result = dice.roll();
+      if (dice.lastFace !== null || result.total !== result.die1 + result.die2) {
+        sawSomething = true;
+      }
+    }
+    expect(sawSomething).toBe(true);
+  });
+});

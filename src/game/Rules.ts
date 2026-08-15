@@ -139,9 +139,9 @@ export const CLASSIC_RULES: GameRules = {
   housesBeforeHotel: 4,
   buildLadder: [
     { id: 'house', label: 'House', perTile: 4, supply: 32,
-      on: ['property'], effect: 'tier', group: true },
+      on: ['property'], effect: 'tier', group: 'group' },
     { id: 'hotel', label: 'Hotel', perTile: 1, supply: 12,
-      on: ['property'], effect: 'tier', group: true },
+      on: ['property'], effect: 'tier', group: 'group' },
   ],
   mortgageInterest: 0.1,
   monopolyRent: 2,

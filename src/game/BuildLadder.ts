@@ -50,12 +50,23 @@ export interface BuildLevel {
    */
   effect: 'tier' | { multiply: number };
   /**
-   * Whether the whole colour group must be owned before building, and whether
-   * building has to stay even across it. The two always travel together in this
-   * family of games — you may not build unevenly on a group you own outright,
-   * and there is no group to be even across when you do not need one.
+   * How much of the colour group this level wants before it may be built.
+   *
+   * - `'group'` — every lot in it. The classic rule, and Ultimate Monopoly's
+   *   skyscrapers: "if you own all of the properties of a color group, and have
+   *   built hotels on each, you may then build Skyscrapers."
+   * - `'majority'` — all but one, in a group of more than two: "if a color group
+   *   has more than two properties, you may build houses and hotels once you own
+   *   all but one property in that color group." A group of two is a group of
+   *   two, and needs both.
+   * - `false` — nothing but the deed. A train depot on a single railroad.
+   *
+   * Even building comes with either of the first two, and is measured across the
+   * lots the player **owns** rather than the whole group — on a majority the odd
+   * lot out belongs to somebody else and would otherwise hold the level at zero
+   * for ever.
    */
-  group: boolean;
+  group: false | 'group' | 'majority';
 }
 
 /** One rung: standing at `level` means `nth` of `kind` on this tile. */

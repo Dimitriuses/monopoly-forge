@@ -16,6 +16,13 @@ export class Player {
   jailCards: Card[];
   ownedTileIds: Set<number>;
   isBankrupt: boolean;
+  /**
+   * Whether this player has been round the board once. Only Ultimate Monopoly's
+   * speed die reads it — "the speed die is not used until you have been round
+   * the board once" — but it is per-player state either way, so it is in the
+   * snapshot like everything else that is (invariant 14).
+   */
+  hasLapped: boolean;
   doublesStreak: number;   // consecutive doubles this turn (resets on non-double or jail)
   /** Whether a bot takes this seat's turns. Part of the game, so it is saved. */
   isBot: boolean;
@@ -41,6 +48,7 @@ export class Player {
     this.jailCards = [];
     this.ownedTileIds = new Set();
     this.isBankrupt = false;
+    this.hasLapped = false;
     this.doublesStreak = 0;
     this.isBot = isBot;
     this.holdings = {};
@@ -80,6 +88,7 @@ export class Player {
       getOutOfJailCards: this.getOutOfJailCards,
       ownedTileIds: [...this.ownedTileIds],
       isBankrupt: this.isBankrupt,
+      hasLapped: this.hasLapped,
       isBot: this.isBot,
     };
   }

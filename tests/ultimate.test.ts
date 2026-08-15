@@ -14,7 +14,7 @@ import { EFFECT_TILE_TYPES, LADDERS } from '@/games/ultimate/tiles';
 import { bus } from '@/utils/EventBus';
 import { Bank } from '@/game/Bank';
 import { walkTo } from '@/game/Landing';
-import { canBuild } from '@/game/BuildRules';
+import { canBuild, isProperty, ownsMajority, ownsWholeGroup } from '@/game/BuildRules';
 import { rungAt, topLevel } from '@/game/BuildLadder';
 import { Dice } from '@/game/Dice';
 import { preferredOption, type ChoiceRequest } from '@/game/Choice';
@@ -455,6 +455,104 @@ describe('Ultimate Monopoly — the rules it is played by', () => {
       player.position = board.anchor('start');
       const paid = paidDuring(() => walkTo(board, player, payCorner(), { direct: true }));
       expect(paid).toEqual([LADDERS.payDay.even]);
+    });
+  });
+
+  // ─── Majority ownership ─────────────────────────────────────────────────────
+  // "If a color group has more than two properties, you may build houses and
+  // hotels once you own all but one property in that color group."
+
+  describe('building on a majority', () => {
+    let bank: Bank;
+    let ann: Player;
+    let bo: Player;
+
+    beforeEach(() => {
+      bank = new Bank(board.rules);
+      ann  = new Player('p1', 'Ann', 'car', false, 20_000);
+      bo   = new Player('p2', 'Bo', 'dog', false, 20_000);
+    });
+
+    /** A colour group with more than two lots, and one with exactly two. */
+    const bigGroup = () => board.tiles
+      .filter(isProperty)
+      .map((t) => t.group)
+      .find((g) => board.groupTiles(g).length > 2)!;
+
+    const give = (tile: { id: number; ownerId: string | null }, who: Player) => {
+      tile.ownerId = who.id;
+      who.ownedTileIds.add(tile.id);
+    };
+
+    it('lets you build with all but one of a group of three or more', () => {
+      const group = board.groupTiles(bigGroup());
+      group.slice(0, -1).forEach((lot) => give(lot, ann));
+      give(group[group.length - 1], bo);   // the odd one out is somebody else's
+
+      expect(ownsWholeGroup(board, ann, group[0])).toBe(false);
+      expect(ownsMajority(board, ann, group[0])).toBe(true);
+      expect(canBuild(board, bank, ann, group[0]).ok).toBe(true);
+    });
+
+    /**
+     * Even building is measured over the lots you *hold*. Counting the one you
+     * do not would pin the group at level 0 for ever, since it can never be
+     * built on — which is the trap this rule walks straight into.
+     */
+    it('keeps building even across the lots you hold, not the whole group', () => {
+      const group = board.groupTiles(bigGroup());
+      const mine  = group.slice(0, -1);
+      mine.forEach((lot) => give(lot, ann));
+      give(group[group.length - 1], bo);
+
+      expect(bank.build(ann, mine[0])).toBe(true);
+      // The second of mine is behind, so it is next; the first is not.
+      expect(canBuild(board, bank, ann, mine[0]).ok).toBe(false);
+      expect(canBuild(board, bank, ann, mine[1]).ok).toBe(true);
+    });
+
+    it('still wants both lots of a group of two', () => {
+      const pair = board.tiles.filter(isProperty)
+        .map((t) => t.group)
+        .find((g) => board.groupTiles(g).length === 2);
+      if (!pair) return;   // not every board has one
+
+      const group = board.groupTiles(pair);
+      give(group[0], ann);
+      give(group[1], bo);
+      expect(ownsMajority(board, ann, group[0])).toBe(false);
+      expect(canBuild(board, bank, ann, group[0]).ok).toBe(false);
+    });
+
+    /** The skyscraper is the exception the rule names: it wants the monopoly. */
+    it('refuses a skyscraper on a majority, however tall the rest is', () => {
+      const group = board.groupTiles(bigGroup());
+      const mine  = group.slice(0, -1);
+      mine.forEach((lot) => give(lot, ann));
+      give(group[group.length - 1], bo);
+
+      for (const lot of mine) lot.level = 5;      // hotels on everything of mine
+      const check = canBuild(board, bank, ann, mine[0]);
+      expect(rungAt(board.rules.buildLadder, mine[0].type, 6)?.kind.id).toBe('skyscraper');
+      expect(check.ok).toBe(false);
+      expect(check.reason).toMatch(/every lot in the colour group/);
+
+      // Buy the last one, and it is allowed.
+      bo.ownedTileIds.delete(group[group.length - 1].id);
+      give(group[group.length - 1], ann);
+      group[group.length - 1].level = 5;
+      expect(canBuild(board, bank, ann, mine[0]).ok).toBe(true);
+    });
+
+    it("is not somebody else's mortgage that stops you", () => {
+      const group = board.groupTiles(bigGroup());
+      const mine  = group.slice(0, -1);
+      mine.forEach((lot) => give(lot, ann));
+      const theirs = group[group.length - 1];
+      give(theirs, bo);
+      theirs.isMortgaged = true;
+
+      expect(canBuild(board, bank, ann, mine[0]).ok).toBe(true);
     });
   });
 

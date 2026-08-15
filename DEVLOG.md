@@ -2921,3 +2921,91 @@ build is the hotel and the ladder is what stops the sixth.
 Ultimate plays at a median 252 turns against 240 before, 0 unfinished, no
 invariant broken. Hotels standing at the end fell from 11.0 to 1.4, which is not a
 regression: they are being upgraded into the sixteen skyscrapers.
+
+## M13a & M13b — working through the open list — 2026-08-15
+
+M13 is the milestone that unlocks nothing. Its value is in sorting: of the 24
+entries open in KNOWNISSUES, three were defects, four were printed rules softened
+on purpose, two were balance, seven wanted a decision before they wanted code,
+and eight should stay exactly as they are.
+
+### The defect that was not one
+
+The pick of 13a was "the roll button dies after a theme change on a short
+Ultimate run" — intermittent, and the third apparent sighting of a family this
+project has been bitten by twice: a button re-registered with Phaser's input
+plugin at the wrong moment, sitting there at full alpha and never firing.
+
+It was not that. I instrumented instead of guessing, and the answer came in one
+line:
+
+    before : active=p2  (in jail, jailTurns 2)
+    after  : active=p3   positions unchanged
+    button : visible, alpha 1, hasInput true, enabled true
+
+The click worked perfectly. **A turn is not always a movement.** A player sitting
+in jail who rolls and fails to make doubles has taken a real turn and gone
+nowhere, so `isAnimating` never goes true — and the check was waiting for exactly
+that. `--turns 16` was simply the seed and turn count where somebody happened to
+be in jail at that instant; at 30 nobody was, which is what made it look
+intermittent.
+
+The check now asks whether *anything* happened: the active player, the phase, or
+any player's position, cash or jail state. `__forge.buttons()` and
+`__forge.paused()` were built while chasing it and kept, because a dead input
+object looks identical to a disabled one from outside and identical to a working
+one in a screenshot.
+
+Two more bugs turned up while I was in there, both mine and both silent: the
+screenshot early-exit fired without `--shots`, which had hollowed out every
+non-Classic playtest into "the board rendered" while still exiting 0; and the
+harness printed `bank houses/hotels undefined/undefined`, because M12d changed
+the bank to stock by kind and nobody re-read the summary line.
+
+### Direct movement, arrived at from two milestones
+
+The Subway and a travel voucher were paying salaries for pay corners they flew
+over. `walkTo` takes `{ direct: true }` now and announces only the square arrived
+on — but the *other* half of that printed rule ("collect the largest amount
+offered by that space, regardless of what you rolled") needed nothing at all,
+because a direct arrival already reports `roll: null`, which M12c taught pay
+corners to read as their maximum. Two milestones, one rule, and they met without
+being introduced.
+
+### Majority ownership, and the subtlety that would have faked it
+
+`BuildLevel.group` became `'group' | 'majority' | false`. Ultimate's houses and
+hotels take a majority — all but one, in a group of more than two — and its
+skyscrapers still take the whole set, exactly as the rule reserves them.
+
+The part worth recording is what nearly made it a no-op. **Even building has to
+be measured over the lots you own, not over the group.** The lot you do not own
+sits at level 0 and can never be built on, so counting it holds the group at zero
+for ever: the rule would have been implemented, every ownership test would have
+passed, and no house would ever have gone up. The same applies coming down.
+
+Measured over 80 games either side, as the roadmap demanded: hotels standing at
+the end 1.5 → 2.8, median 250 → 241 turns, and the bank stopped running short of
+houses. More development, slightly faster, no instability.
+
+### A roll that knows whose it is
+
+"The speed die is not used until you have been round the board once" needed one
+thing the engine did not have: a roll that knows who is rolling. `Dice.roll()`
+takes an optional `RollContext`, the base dice ignore all of it, and `SpeedDice`
+returns two plain dice until that player `hasLapped`.
+
+`TurnManager` sets the flag when a **walk** passes GO — a walk, because a card
+that carries you past GO is a jump rather than a lap, which is the same
+distinction `PassContext.roll` already draws for pay corners. `hasLapped` is
+per-player state, so it is in the snapshot; a save written before the field
+existed restores it as `true`, which is the safer guess about a game already in
+progress.
+
+And it broke two playtests, which is the useful part. Turning the third die off
+for a lap changes the PRNG stream, so every seeded speed-die game now deals
+itself a different sequence — and one step had been clicking the board after
+`waitFor(idle)` rather than settling. A walk goes idle a moment *before* its
+landing draws a card; the modal swallowed the click, and that step had simply
+been lucky for eleven milestones. It settles now, which is the rule CLAUDE.md
+already had written down.

@@ -2,7 +2,7 @@ import { rng } from '@/utils/PRNG';
 import { bus } from '@/utils/EventBus';
 import { dlog } from '@/utils/log';
 import { isOwnable } from '@/tiles/Tile';
-import { Dice, type DiceResult } from './Dice';
+import { Dice, type DiceResult, type RollContext } from './Dice';
 import { registerVariant } from './Variants';
 import { registerRollRule, rollRuleNamed } from './RollRules';
 import type { Board } from './Board';
@@ -26,9 +26,11 @@ import type { PhaseContext, TurnFlow } from './TurnFlow';
 //   * doubles, unchanged  → `SpeedDice` reports `isDoubles` from the two white
 //                           dice, so the three-doubles jail rule is untouched
 //
-// Deliberately *not* implemented: the official "roll a triple and move anywhere"
-// rule, and "the speed die is not used until you have been round once". The
-// first needs a pick-a-tile prompt that both a person and a bot must answer, and
+// Both rules this variant used to leave out are in now: "roll a triple and move
+// anywhere" (M10a, once a roll rule could say what a triple meant and a prompt
+// existed that a bot could answer), and "the speed die is not used until you have
+// been round once" (M13b, once a roll could be told whose it was). What the first
+// needed was a pick-a-tile prompt that both a person and a bot answer, and
 // the second is a per-player flag that would have to go in the snapshot. Both
 // are real work, neither is a face effect, and half of either would be worse
 // than none. See KNOWNISSUES.
@@ -52,8 +54,18 @@ export class SpeedDice extends Dice {
   /** The number the third die showed, or null on a picture face. Triples need it. */
   lastNumber: number | null = null;
 
-  override roll(): DiceResult {
-    const white = super.roll();
+  override roll(ctx?: RollContext): DiceResult {
+    const white = super.roll(ctx);
+
+    // "The speed die is not used until you have been round the board once."
+    // Before that this is an ordinary pair of dice, which is what the printed
+    // rule says and what the first lap of a real game feels like.
+    if (ctx?.player && !ctx.player.hasLapped) {
+      this.lastFace = null;
+      this.lastNumber = null;
+      this.lastResult = white;
+      return white;
+    }
     // Third draw from the same stream as the other two: a seeded speed-die game
     // is reproducible, it is simply not the same game as a two-dice one.
     const index = Math.min(SPEED_FACES.length - 1, Math.floor(rng.next() * SPEED_FACES.length));
