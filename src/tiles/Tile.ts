@@ -57,6 +57,24 @@ export function isOwnable(tile: Tile): tile is Tile & Ownable {
   return 'ownerId' in tile;
 }
 
+/**
+ * What a walk knows about itself, handed to every tile underfoot.
+ *
+ * One field, and it stays one field until a rule needs a second: a context that
+ * accumulates whatever seemed handy is how `onLand` would have ended up with the
+ * whole game in it, which is the thing `tile:effect` exists to avoid.
+ *
+ * `roll` is **null when the dice are not what moved you** — a card, a travel
+ * voucher, a subway, a bonus move. That is not an "unknown"; it is a state the
+ * printed rules have their own word for (*direct* movement), and the tiles that
+ * care read it as one. Ultimate Monopoly's Pay Day pays its maximum for a direct
+ * arrival, which is exactly `roll === null`.
+ */
+export interface PassContext {
+  /** The dice total that produced this walk, or null if the dice did not. */
+  roll: number | null;
+}
+
 // ─── Base Tile class ──────────────────────────────────────────────────────────
 
 export abstract class Tile {
@@ -76,8 +94,17 @@ export abstract class Tile {
    */
   abstract onLand(playerId: string): void;
 
-  /** Optional: called when a player passes this tile (only Go uses this) */
-  onPass(_playerId: string): void {}
+  /**
+   * Called for every tile a forward walk set foot on, **the landing tile
+   * included** — see `Board.announcePassing`. `onPass` is what a tile charges
+   * you for being there; `onLand` is what *else* happens when you stop.
+   *
+   * `ctx` is what the walk knows about itself, and deliberately nothing else: a
+   * tile can see the roll that took a player past it, and cannot see the game.
+   * Most tiles ignore it — an override may simply take `(playerId)` and
+   * TypeScript is happy.
+   */
+  onPass(_playerId: string, _ctx: PassContext): void {}
 
   /**
    * Ownership is reported here rather than by each subclass. It used to be

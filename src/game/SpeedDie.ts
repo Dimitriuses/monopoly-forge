@@ -122,7 +122,8 @@ function bonusMove(ctx: PhaseContext): void {
   const path = ctx.board.pathTo(from, target);
   if (path === null || path.length === 0) return;
 
-  ctx.board.announcePassing(path, player.id);
+  // A bonus move to a tile the rule went looking for, not a count of pips.
+  ctx.board.announcePassing(path, player.id, { roll: null });
   player.position = target;
 
   bus.emit('ui:notification', {

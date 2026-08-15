@@ -196,16 +196,72 @@ describe('Ultimate Monopoly — the rules it is played by', () => {
     expect(asked.size).toBe(EFFECT_TILE_TYPES.length);
   });
 
-  it('pays a pass and a stop on every pay corner, the stop being the larger', () => {
-    for (const corner of [LADDERS.payDay, LADDERS.bonus]) {
-      expect(corner.landing).toBeGreaterThan(corner.passing);
-    }
-    // GO, Pay Day and Bonus: one on each track, so a lap of any of them pays.
+  it('has a pay corner on each track, so a lap of any of them pays', () => {
     const payers = board.tiles.filter(
       (t) => t.type === 'go' || t.type === 'payDay' || t.type === 'bonus',
     );
     expect(payers.map((t) => board.trackOf(t.id).id).sort())
       .toEqual(['inner', 'middle', 'outer']);
+  });
+
+  /**
+   * The two shapes a pay corner takes, and the reason they are worth reading
+   * together. BONUS charges more for stopping, so `onLand` pays the difference.
+   * PAY DAY charges by the *roll* — the same whether you stop or walk over — so
+   * `onLand` pays nothing extra.
+   */
+  it('pays more for stopping on Bonus', () => {
+    expect(LADDERS.bonus.landing).toBeGreaterThan(LADDERS.bonus.passing);
+  });
+
+  describe('Pay Day pays by the roll, not by whether you stopped', () => {
+    const payDayId = () => board.tiles.find((t) => t.type === 'payDay').id;
+
+    /** Every `rent:pay` a walk over one tile produces. */
+    function paidFor(roll: number | null): number[] {
+      const paid: number[] = [];
+      const off = bus.on<{ amount: number; creditorId: string }>(
+        'rent:pay', (p) => { if (p.creditorId === 'p1') paid.push(p.amount); },
+      );
+      board.announcePassing([payDayId()], 'p1', { roll });
+      off?.();
+      return paid;
+    }
+
+    it('pays $300 for an odd roll and $400 for an even one', () => {
+      expect(paidFor(7)).toEqual([LADDERS.payDay.odd]);
+      expect(paidFor(8)).toEqual([LADDERS.payDay.even]);
+      expect(LADDERS.payDay.odd).toBe(300);
+      expect(LADDERS.payDay.even).toBe(400);
+    });
+
+    /**
+     * "If you move directly to PAY DAY (via an ACTION CARD or TRAVEL SPACE) you
+     * collect $400, regardless of what you rolled previously." A direct move is
+     * the one that reports no roll, which is every mover in the build but the
+     * dice.
+     */
+    it('pays the maximum when the dice are not what moved you', () => {
+      expect(paidFor(null)).toEqual([LADDERS.payDay.even]);
+    });
+
+    /**
+     * Landing pays once, not twice. `onPass` fires for the landing tile too, so
+     * a corner that charges the same for stopping must add nothing in `onLand` —
+     * the trap CLAUDE.md records, and the one this square used to be an example
+     * of rather than a warning against.
+     */
+    it('pays once when you stop on it, not the pass and a top-up', () => {
+      const paid: number[] = [];
+      const off = bus.on<{ amount: number; creditorId: string }>(
+        'rent:pay', (p) => { if (p.creditorId === 'p1') paid.push(p.amount); },
+      );
+      const tile = board.getTile(payDayId());
+      board.announcePassing([tile.id], 'p1', { roll: 9 });
+      tile.onLand('p1');
+      off?.();
+      expect(paid).toEqual([LADDERS.payDay.odd]);
+    });
   });
 
   /**

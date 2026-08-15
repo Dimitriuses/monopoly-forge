@@ -1,4 +1,4 @@
-import { Tile, type TileDefinition } from '@/tiles/Tile';
+import { Tile, type PassContext, type TileDefinition } from '@/tiles/Tile';
 import { createTile } from '@/tiles/registry';
 import { resolveRules, type GameRules } from './Rules';
 import { CLASSIC_MAP } from '@/maps/classic';
@@ -240,9 +240,15 @@ export class Board {
    * Forward walks only. Going back three spaces over GO has never paid a salary
    * and must not start now — `move` reports `direction` through `passedGo`, and
    * the one caller that walks backwards does not call this.
+   *
+   * `ctx` says what the walk was. It has **no default on purpose**: every caller
+   * has to state whether the dice are what moved this player, because the answer
+   * changes what a pay corner hands over and a forgotten argument would quietly
+   * pay the maximum. There are five movers in this build and only one of them is
+   * the dice.
    */
-  announcePassing(path: number[], playerId: string): void {
-    for (const id of path) this.getTile(id).onPass(playerId);
+  announcePassing(path: number[], playerId: string, ctx: PassContext): void {
+    for (const id of path) this.getTile(id).onPass(playerId, ctx);
   }
 
   /** Every tile one step forward from here — two of them at a junction. */

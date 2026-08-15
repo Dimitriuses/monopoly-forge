@@ -1,6 +1,6 @@
 import { bus } from '@/utils/EventBus';
 import { rng } from '@/utils/PRNG';
-import { Tile, isOwnable, type TileDefinition } from '@/tiles/Tile';
+import { Tile, isOwnable, type PassContext, type TileDefinition } from '@/tiles/Tile';
 import { RailroadTile, UtilityTile } from '@/tiles/SpecialTiles';
 import { registerTileType } from '@/tiles/registry';
 import { registerTileEffect } from '@/game/TileEffects';
@@ -75,17 +75,41 @@ class LadderUtilityTile extends UtilityTile {
 // `onPass` fires for the landing tile too. `onPass` is what a tile charges for
 // being there at all; `onLand` is the *extra* for stopping. Write the landing
 // amount in `onLand` instead and every pass would pay twice.
+//
+// The two of them are the two shapes that rule takes, which is why they are
+// worth reading together: BONUS pays more for stopping, so it pays the
+// difference in `onLand`. PAY DAY pays the same either way — its number comes
+// from the *roll*, not from whether you stopped — so it pays nothing extra.
 
+/**
+ * "When a player passes or lands on PAY DAY they collect $300 if they rolled an
+ * odd number or $400 if they rolled an even number. If you move directly to PAY
+ * DAY (via an ACTION CARD or TRAVEL SPACE) you collect $400, regardless of what
+ * you rolled previously."
+ *
+ * Both halves of that fall out of `ctx.roll`, which is what M12c added: the
+ * parity when the dice moved you, and `null` — the maximum — when something else
+ * did. Until then a tile could not see the roll at all, and this square paid
+ * $300 for passing and $400 for landing: a rule that reads plausibly, appears
+ * nowhere in the book, and is right about a quarter of the time by accident.
+ */
 class PayDayTile extends Tile {
-  static readonly PASSING = 300;
-  static readonly LANDING = 400;
+  static readonly ODD  = 300;
+  static readonly EVEN = 400;
 
-  override onPass(playerId: string): void {
-    payFromBank(playerId, this.id, PayDayTile.PASSING);
+  /** Direct arrivals pay the maximum, and a direct arrival is `roll === null`. */
+  static amountFor(roll: number | null): number {
+    return roll === null || roll % 2 === 0 ? PayDayTile.EVEN : PayDayTile.ODD;
+  }
+
+  override onPass(playerId: string, ctx: PassContext): void {
+    payFromBank(playerId, this.id, PayDayTile.amountFor(ctx.roll));
   }
 
   onLand(playerId: string): void {
-    payFromBank(playerId, this.id, PayDayTile.LANDING - PayDayTile.PASSING);
+    // Nothing extra. `onPass` has already fired for this tile — that is what
+    // "the landing tile included" means — and Pay Day pays the same for
+    // stopping as for walking over.
     bus.emit('player:landed', { playerId, tileId: this.id });
   }
 }
@@ -466,7 +490,8 @@ function registerUltimateEffects(): void {
 export const LADDERS = {
   cab: CabCompanyTile.RENT,
   utility: LadderUtilityTile.LADDER,
-  payDay: { passing: PayDayTile.PASSING, landing: PayDayTile.LANDING },
+  // Not passing/landing: Pay Day is the one corner keyed off the roll instead.
+  payDay: { odd: PayDayTile.ODD, even: PayDayTile.EVEN },
   bonus: { passing: BonusTile.PASSING, landing: BonusTile.LANDING },
 };
 

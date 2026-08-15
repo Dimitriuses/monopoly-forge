@@ -128,7 +128,9 @@ export class TurnManager {
       this.endTurn();
       return;
     }
-    this.board.announcePassing(path, player.id);
+    // A rule picked this square rather than the dice counting to it, so the walk
+    // is a direct one — the speed die's triples are the only thing here today.
+    this.board.announcePassing(path, player.id, { roll: null });
     const from = player.position;
     player.position = tileId;
     bus.emit('player:move', {
@@ -321,7 +323,9 @@ export class TurnManager {
       (isDoubles ? ' [doubles]' : ''),
     );
 
-    this.board.announcePassing(path, player.id);
+    // The one mover in the build that *is* the dice, so the one that can tell a
+    // tile what was rolled. Ultimate Monopoly's Pay Day pays by the parity of it.
+    this.board.announcePassing(path, player.id, { roll: steps });
 
     player.position = to;
     bus.emit('player:move', { playerId: player.id, from, to, path, steps, isDoubles });

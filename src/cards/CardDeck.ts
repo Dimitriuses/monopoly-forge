@@ -202,7 +202,9 @@ export class CardEffects {
       `"${destTile.name}" (${path.length} steps)`,
     );
 
-    this.board.announcePassing(path, player.id);
+    // A card, not the dice: "if you move directly to PAY DAY via an action card
+    // you collect $400, regardless of what you rolled previously."
+    this.board.announcePassing(path, player.id, { roll: null });
     player.position = targetTile;
     bus.emit('player:move', {
       playerId: player.id, from, to: targetTile, path, steps: path.length, isDoubles: false,

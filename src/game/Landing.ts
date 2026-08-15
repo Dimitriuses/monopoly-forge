@@ -142,7 +142,9 @@ export function walkTo(board: Board, player: Player, tileId: number): boolean {
   const path = board.pathTo(from, tileId);
   if (path === null || path.length === 0) return false;
 
-  board.announcePassing(path, player.id);
+  // Everything that walks somebody without rolling comes through here — a
+  // voucher, a subway, a bus ticket — and none of them is a dice roll.
+  board.announcePassing(path, player.id, { roll: null });
   player.position = tileId;
   bus.emit('player:move', {
     playerId: player.id, from, to: tileId, path, steps: path.length, isDoubles: false,

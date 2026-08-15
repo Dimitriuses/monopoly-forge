@@ -88,12 +88,23 @@ of the roll). Three things follow and all three have already been got wrong:
   normalisation is done up front; removing it puts an out-of-range index back.
 
 **6d. `onPass` fires for every tile underfoot, the landing tile included.**
-`board.announcePassing(path, playerId)` is the only caller. So **`onPass` is what
-a tile charges you for being there and `onLand` is what else happens** — a pay
-corner that pays more for stopping pays the *difference* in `onLand`, and one
+`board.announcePassing(path, playerId, ctx)` is the only caller. So **`onPass` is
+what a tile charges you for being there and `onLand` is what else happens** — a
+pay corner that pays more for stopping pays the *difference* in `onLand`, and one
 that pays the same pays nothing extra. Writing the full landing amount in
 `onLand` makes every pass pay twice. Forward walks only: going back three spaces
 over GO has never paid, which is why `goBack` moves without calling it.
+
+**6e. `PassContext` is what the walk knows about itself, and `roll: null` means
+*direct*.** One field, and it stays one field until a rule needs a second: a
+context that accumulates whatever seemed handy is how `onLand` would have ended
+up with the whole game in it. `roll` is the dice total that produced the walk, or
+**null when the dice are not what moved you** — a card, a voucher, a subway, a
+bonus move. That null is not an absence of information; it is the state the
+printed rules call *direct movement*, and Ultimate's Pay Day reads it as "pay the
+maximum". **The argument has no default on purpose**: there are five movers in
+this build and exactly one of them is the dice, so a new one has to say which it
+is rather than silently paying the top rate.
 
 **6b. Tiles are drawn in their own frame.** Every tile is a rectangle whose local
 top edge faces the middle of the board, positioned at `layout.x/y` and turned by
@@ -323,6 +334,11 @@ card whose tile turns out to be unowned cannot overcharge somebody next turn.
 
 The GO salary fires *during* that walk (`onPass` → `rent:pay` with `reason: 'go'`),
 so that branch must return before anything consumes `arrivalRent`.
+
+A pay corner keyed off the dice is the same problem one step further on, and it
+is solved the other way: the roll travels *with the walk* in `PassContext`
+(6e) rather than being parked on the scene, because every tile underfoot needs it
+and only the landing tile needs `arrivalRent`.
 
 ### Cards that move the player must not also end the turn
 

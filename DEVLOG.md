@@ -2698,3 +2698,79 @@ the baseline, and correctly survives every reset. Both the scoping test and the
 validation test were asking about the fixture's own kind and getting an answer
 about the baseline. They ask through a real game now: Ultimate registers its
 voucher from `Game.register`, which is after.
+
+## M12c — a tile can see the roll that took a player past it — 2026-08-15
+
+The smallest-looking item in M12, and the one with an actual design question in
+it. `Tile.onLand` can reach the dice through the `tile:effect` indirection.
+`Tile.onPass` could reach nothing at all: `Board.announcePassing` walked the path
+handing each tile a player id and nothing else.
+
+So Ultimate Monopoly's PAY DAY was implemented as "$300 for passing, $400 for
+landing". The board says **"$300 if they rolled an odd number or $400 if they
+rolled an even number"**. The two agree about a quarter of the time, by accident.
+
+### The design question, and what answered it
+
+The ROADMAP flagged the real work as *deciding* whether every tile should get a
+context on every step of every walk, rather than the plumbing. Two things settled
+it, and the second was a surprise.
+
+**What goes in it.** One field. A context that accumulates whatever seemed handy
+is exactly how `onLand` would have ended up carrying the whole game, which is the
+thing `tile:effect` was built to prevent. So: `roll`, and nothing else until a
+rule needs a second.
+
+**What `null` means.** This is the part that made the design feel right rather
+than merely small. `roll` is null whenever the dice are not what moved you — a
+card, a travel voucher, a subway, a bonus move. I expected to need a second flag
+for "arrived directly", because the book has a separate sentence about it: *"if
+you move directly to PAY DAY, via an ACTION CARD or TRAVEL SPACE, you collect
+$400, regardless of what you rolled previously."*
+
+It does not need one. A direct arrival **is** `roll === null` — there are five
+movers in this build and exactly one of them is the dice — so one field covers
+both sentences of the printed rule, and `PayDayTile.amountFor(null)` returning
+the maximum is the whole of the second one.
+
+That is also why the argument is **not optional**. A default of `{ roll: null }`
+would have been convenient and would have meant a new mover silently pays the top
+rate at every pay corner. Making it required is how the next person who adds a
+way to move somebody is asked the question I had to answer five times.
+
+### Pay Day was never a pass/land tile
+
+Fixing the number turned up the better finding. CLAUDE.md's invariant 6d has said
+since M11 that a pay corner charging *more* for stopping pays the difference in
+`onLand`, and one charging the *same* pays nothing extra. Pay Day is the second
+kind — its amount comes from the roll, not from whether you stopped — so its
+`onLand` now pays nothing at all and simply announces the landing.
+
+It had been modelled as the first kind, which is what "300 passing / 400 landing"
+was: a plausible reading of two numbers printed on a square, invented rather than
+looked up. BONUS *is* the first kind ($250 passing, $300 landing). The two now
+sit next to each other in `games/ultimate/tiles.ts` with a comment saying why they
+are different shapes, because the interesting thing about either is the other.
+
+A test pins the trap directly: pass and then land, and assert **one** payment.
+
+### What it did not move
+
+The economy, which is the answer I wanted. Pay Day now averages $350 a crossing
+where it paid a flat $300, and 60 games of Ultimate come out at a median 240
+turns against 244 before, 0 unfinished, and no invariant broken. A rules fix that
+visibly changed the game would have meant the rest of the balance was leaning on
+the wrong number.
+
+### And one thing left written down rather than fixed
+
+Building the mechanism made an adjacent deviation visible. Both the Subway and a
+travel voucher move a player with `walkTo`, which announces every tile on the
+route — so riding the Subway past PAY DAY collects a salary the book says it must
+not: *"since traveling via Subway is a direct route, you do not collect any
+salary for passing a PAY CORNER."*
+
+M12c did not cause that and does not fix it. It is in KNOWNISSUES with the fix
+described — announce only the destination, the way the Holland Tunnel already
+moves — because it changes what two squares pay, and that is a decision about the
+game rather than a loose end in a milestone about the dice.

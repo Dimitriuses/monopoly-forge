@@ -42,7 +42,7 @@ state to a player.**
 
 **M12 is the plan that came out of it** — four engine gaps, each with at least
 three customers already in the tree, and each named by what it unlocks rather
-than by what it generalises. **12a and 12b are done**; 12c and 12d are not started.
+than by what it generalises. **12a, 12b and 12c are done**; 12d is not started.
 
 **M10 — refinement — is done.** The corners the rules cut are closed (10a), the
 things a player asks for are in (10b), the menus are a tree (10d), and the bots
@@ -958,21 +958,34 @@ player: cash, net worth, deeds, complete groups, buildings, jail cards and
 holdings. All of it is on the board already, so it is a summary rather than a
 leak. **Clicking a player in the HUD** opens theirs directly.
 
-### 12c — a tile can see the roll that took a player past it
+### 12c — a tile can see the roll that took a player past it · done
 
-**Unlocks:** Pay Day's real rule, and anything else keyed off the dice rather
+**Unlocked:** Pay Day's real rule, and anything else keyed off the dice rather
 than off stopping.
 
-The smallest item here. `Tile.onLand` reaches the dice through the `tile:effect`
-indirection; `Tile.onPass` cannot reach anything, because
-`Board.announcePassing` walks the path with an id and nothing else. So Pay Day
-pays "$300 passing, $400 landing" where the board says "$300 odd, $400 even".
+`Tile.onLand` reaches the dice through the `tile:effect` indirection;
+`Tile.onPass` could not reach anything, because `Board.announcePassing` walked
+the path with an id and nothing else. So Pay Day paid "$300 passing, $400
+landing" where the board says "$300 odd, $400 even" — a rule that reads
+plausibly, appears nowhere in the book, and is right about a quarter of the time
+by accident.
 
-- [ ] `announcePassing(path, playerId, ctx)` and an optional second argument to
-      `onPass`, carrying the roll.
-- [ ] Decide deliberately whether *every* tile should get a context on every step
-      of every walk. That is the actual design question, and the reason this is
-      not a five-minute change.
+- [x] `announcePassing(path, playerId, ctx)`, and a second argument to `onPass`
+      carrying the roll. Not optional: five things in this build move a player
+      and exactly one of them is the dice, so a new mover has to say which it is.
+      An override that does not care still writes `onPass(playerId)`.
+- [x] **Every tile gets a context on every step — with one field in it.** The
+      design question, answered by what the field turned out to mean. `roll` is
+      the dice total or **null**, and null is not an absence: it is the state the
+      printed rules call *direct movement*, which is why "move directly to PAY
+      DAY and collect $400 regardless of what you rolled" needs no second flag.
+      One concept covers the card, the voucher, the subway and the bonus move.
+
+Pay Day also stopped being a pass/land tile: it pays the same either way, so it
+pays nothing extra in `onLand`. That is the other half of invariant 6d, and this
+square is now the worked example of it rather than a violation of it. Bonus is
+the shape that *does* charge more for stopping, and the two sit together in
+`games/ultimate/tiles.ts` so the difference is read once.
 
 ### 12d — buildings are a ladder, not houses-then-a-hotel
 

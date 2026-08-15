@@ -165,6 +165,25 @@ refused is **two**, not three:
   localStorage. Saving it would mean the *asker* being re-entrant — able to ask
   again from saved state — which is per-asker work rather than one mechanism.
 
+### The Subway and a travel voucher pay salaries they should not
+
+*Seen clearly in M12c.* Both move a player with `walkTo`, which fires `onPass`
+for every tile on the route — so riding the Subway past PAY DAY collects a
+salary. The book is explicit that it should not: "since traveling via Subway is a
+direct route, you do not collect any salary for passing a PAY CORNER (if you
+choose to move directly to a PAY CORNER from the Subway, you collect the largest
+amount of salary from that space)". A travel voucher is the near-opposite special
+case — it *does* collect, and always the largest amount.
+
+M12c is what made the difference visible rather than what caused it: until a tile
+could see the roll, every crossing paid the same thing anyway. The fix is small
+and known — announce only the destination, the way the Holland Tunnel already
+moves — but it changes what those two squares pay, so it is written down here
+rather than folded into a milestone about the dice.
+
+Pay Day itself is now right in both directions: the parity when the dice moved
+you, and the maximum when anything else did.
+
 ### A bot hoards travel vouchers, and nobody can trade one
 
 *Added in M12b.* Holdings work: a game gives a player something the engine has
