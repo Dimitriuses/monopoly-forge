@@ -27,7 +27,8 @@ order, tallied by policy — the only honest way to compare two), `--round-limit
 invariant breaks; a game that outruns the cap is reported, because Monopoly
 genuinely does not always terminate.
 
-`npm run playtest` accepts `--turns N`, `--seed N`, `--headed` (watch it play),
+`npm run playtest` accepts `--turns N`, `--seed N`, `--players N` (2–6; the
+menus are what a full table breaks, not the board), `--headed` (watch it play),
 `--url <url>` (drive a deployed site instead of `dist/`),
 `--game <id>`, `--variants <a,b>`, `--house-rules` and `--theme <id>`. The last
 four go through the URL (`?game=`, `?variants=`, `?houseRules=`, `?theme=`)
@@ -419,6 +420,46 @@ paid for:
 
 Bump `SNAPSHOT_VERSION` when the shape changes; `validateSnapshot` refuses a save
 this build cannot read rather than half-restoring it.
+
+### A game may give a player something the engine has never heard of
+
+**18. Holdings are countable and keyed by kind** (`game/Holdings.ts`), because
+that is what makes them a `Record<string, number>` and therefore trivially
+saveable. Anything needing identity is a card, and cards have a home. Use
+`giveHolding` / `takeHolding` rather than writing to `player.holdings`: a kind
+may have a limit, and the helpers report what actually moved.
+
+**18b. Four places owe a new holding something**, and three of them are lessons
+already paid for: the **snapshot** carries it, **`transferEstate`** moves or
+forfeits it *by name* (the deck census bug came from an implicit "destroy"), the
+**invariant census** counts it, and a **`value`** says what it is worth. The
+census is a census, not a conservation law — a game mints holdings, so a fixed
+total would be checking something untrue, which is the mistake M8d nearly made
+with total cash.
+
+**18e. `estateValue` counts a holding; `liquidValue` must never.** Wealth and
+what a fire sale can raise are different questions and this is the first thing
+to separate them — nothing can sell a travel voucher, so counting one in
+`liquidValue` would let `settleDebt` believe a debt coverable that is not.
+
+**18c. `validateSnapshot` loads the game before checking what it registers.**
+Holdings, turn orders, win conditions and variants are all scoped, and validation
+runs from the **menu** — where the game in force is whichever was played last.
+Checking first refused Ultimate Monopoly's own saves.
+
+**18d. Spending is a game's business, not the engine's.** The registry knows a
+voucher exists, is worth $60 and survives its owner; it does not know that
+playing one asks where you would like to go. `GameScene.SPENDABLE` maps a kind to
+the tile effect that plays it.
+
+**18f. A menu screen is as long as the table, so it must not grow per seat.**
+The Inventory listed every player's cash, deeds, buildings and holdings on one
+screen, which is five rows a seat and ran off the bottom of an 800px canvas at
+four players. It is a seat *list* now, one row each, opening one screen per
+player. Anything else that renders per player owes the same shape — `ui/Menu.ts`
+does not scroll, deliberately, and a second scrolling mechanism is worth more
+than the screen it would save. The playtest asserts every inventory row is
+on the canvas, which is the check that was missing when it broke.
 
 ### A bot claim is a measurement or it is nothing
 

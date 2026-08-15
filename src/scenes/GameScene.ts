@@ -52,7 +52,9 @@ const MAX_BOT_BUILDS = 6;
 const BOT_CARD_LINGER = 1600;
 /** How quickly the tokens already on a tile shuffle over to make room. */
 const CLUSTER_SHUFFLE = 140;
-import { settleDebt, announceSettlement, chargeMortgageInterest } from '@/game/Estate';
+import {
+  settleDebt, announceSettlement, chargeMortgageInterest, estateValue,
+} from '@/game/Estate';
 import {
   payRent, payTax, drawCard, isSelfTerminating, applyLandingRules, type LandingContext,
 } from '@/game/Landing';
@@ -60,6 +62,34 @@ import {
   applyTileEffect, effectContext, type TileEffectPayload,
 } from '@/game/TileEffects';
 import { askChoice, preferredOption, type ChoiceRequest } from '@/game/Choice';
+import { describeHolding, heldByPlayer } from '@/game/Holdings';
+
+/** One seat's holdings, as the pause menu's Inventory screen shows them. */
+export interface InventoryView {
+  playerId: string;
+  name: string;
+  cash: number;
+  /** Cash, what a fire sale would raise, and what they hold — `estateValue`. */
+  worth: number;
+  bankrupt: boolean;
+  deeds: number;
+  /** Colour groups held complete, by name. */
+  groups: string[];
+  houses: number;
+  hotels: number;
+  jailCards: number;
+  holdings: Array<{ name: string; count: number; label: string; spendable: boolean }>;
+}
+
+/**
+ * Holdings a player may *play*, and the tile effect that plays one.
+ *
+ * A map rather than a flag on `HoldingKind`, because what spending does is a
+ * *game's* business and `game/Holdings.ts` is the engine's: the registry knows a
+ * voucher exists, is worth $60 and survives its owner, and deliberately does not
+ * know that playing one asks where you would like to go.
+ */
+const SPENDABLE = new Map<string, string>([['travelVoucher', 'playVoucher']]);
 import { Menu } from '@/ui/Menu';
 import { gameById, decksFor, rulesFor, GAMES } from '@/games';
 import { Auction, tileSubject, type AuctionSubject } from '@/game/Auction';
@@ -266,6 +296,53 @@ export class GameScene extends Phaser.Scene {
     this.boardView.setSelected(this.auction.tileId);
     this.auctionPanel.show(this.auctionView(this.auction));
     this.botDecideBid();
+  }
+
+  /**
+   * What each seat is holding, for the pause menu's Inventory screen. Assembled
+   * here because it needs the board (to count buildings and completed groups),
+   * which a menu has no business reaching into.
+   */
+  private inventoryView(): InventoryView[] {
+    return this.players.map((player) => {
+      const deeds = [...player.ownedTileIds].map((id) => this.board.getTile(id));
+      const lots  = deeds.filter((t): t is PropertyTile => t instanceof PropertyTile);
+      const groups = [...new Set(lots.map((lot) => lot.group))]
+        .filter((group) => ownsWholeGroup(this.board, player, this.board.groupTiles(group)[0]));
+
+      return {
+        playerId: player.id,
+        name: player.name,
+        cash: player.cash,
+        worth: estateValue(this.board, player),
+        bankrupt: player.isBankrupt,
+        deeds: deeds.length,
+        groups,
+        houses: lots.reduce((n, lot) => n + lot.houses, 0),
+        hotels: lots.filter((lot) => lot.hasHotel).length,
+        jailCards: player.jailCards.length,
+        holdings: heldByPlayer(player).map(({ name, count }) => ({
+          name,
+          count,
+          label: describeHolding(name, 1).replace(/^1 /, ''),
+          // Only the seat whose turn it is, and only a person: a bot spends its
+          // own on its own turn, and a holding nothing can do anything with is
+          // shown but not offered.
+          spendable: SPENDABLE.has(name)
+            && player.id === this.turnManager.currentPlayer.id
+            && !player.isBot && !player.isBankrupt,
+        })),
+      };
+    });
+  }
+
+  /** Play one of something held. The effect it names does the rest. */
+  private spendHolding(playerId: string, holding: string): void {
+    const effect = SPENDABLE.get(holding);
+    if (!effect) return;
+    const player = this.players.find((p) => p.id === playerId);
+    if (!player) return;
+    bus.emit('tile:effect', { playerId, tileId: player.position, effect });
   }
 
   /**
@@ -501,6 +578,13 @@ export class GameScene extends Phaser.Scene {
     this.registerBusListeners();
 
     this.scene.launch('UIScene', { players: this.players });
+    // Pressing a seat in the HUD opens that player's inventory. Subscribed once,
+    // on the HUD's own emitter — `launch` has not run its `create` yet, but the
+    // scene object and its emitter exist, which is all this needs.
+    this.scene.get('UIScene')?.events.on(
+      'player:inspect',
+      ({ playerId }: { playerId: string }) => this.openPause(playerId),
+    );
     if (this.resumedPhase) this.resumeSavedTurn(this.resumedPhase);
     else                   this.turnManager.startTurn();
     // After the turn, not before: an auction opening over a landing that is
@@ -1305,16 +1389,19 @@ export class GameScene extends Phaser.Scene {
    * scrim, and every timer and tween is held rather than cancelled — a paused
    * `delayedCall` is exactly what the turn-generation guard expects to survive.
    */
-  private openPause(): void {
+  private openPause(inventoryFor?: string): void {
     if (this.scene.isActive('PauseScene')) return;
     const blocked = this.saveBlockedBecause();
     this.scene.pause();
     this.scene.launch('PauseScene', {
+      inventoryFor,
       canSave: blocked === null,
       saveReason: blocked ?? undefined,
       gameId: this.gameId,
       round: this.turnManager.round,
       transcript: () => this.notif.transcript(),
+      inventory:  () => this.inventoryView(),
+      onSpend:    (playerId: string, holding: string) => this.spendHolding(playerId, holding),
       onTheme: (id: string) => this.applyThemeLive(id),
       onSave: (slot: number) => this.saveGame(slot),
       onQuit: () => {

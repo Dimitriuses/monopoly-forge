@@ -42,7 +42,7 @@ state to a player.**
 
 **M12 is the plan that came out of it** — four engine gaps, each with at least
 three customers already in the tree, and each named by what it unlocks rather
-than by what it generalises. **12a is done**; the other three are not started.
+than by what it generalises. **12a and 12b are done**; 12c and 12d are not started.
 
 **M10 — refinement — is done.** The corners the rules cut are closed (10a), the
 things a player asks for are in (10b), the menus are a tree (10d), and the bots
@@ -892,10 +892,12 @@ gave the person who nominated a property first refusal on it, close to the
 opposite of "the Banker auctions it off". There is an `auction:open` event now,
 handled by both drivers, that goes straight under the hammer.
 
-### 12b — a player can hold something the engine has never heard of
+### 12b — a player can hold something the engine has never heard of · done
 
-**Unlocks:** travel vouchers, stock certificates, Roll Three cards — and, past
-Ultimate Monopoly, anything a future game wants a player to *have*.
+**Unlocked:** travel vouchers, earned at Bus Ticket and at every transit station
+and spent to travel anywhere. Stock certificates and Roll Three cards are now
+*expressible* and still reduced — what they want is each rule's own behaviour,
+which is a game's work rather than the engine's.
 
 The single gap behind four of the six reduced rules. `Player` has cash, a
 position, deeds and Get Out of Jail Free cards, and no room for a fifth kind of
@@ -909,7 +911,9 @@ export interface HoldingKind {
   /** Most a player may hold at once. */
   limit?: number;
   /** What one is worth in cash, so a bot can price it in a trade. */
-  value?(ctx: LandingContext, player: Player): number;
+  value?: number;
+  /** Whether it passes to the creditor or evaporates. */
+  onBankruptcy?: 'transfer' | 'forfeit';
 }
 export const HOLDINGS = new Registry<HoldingKind>('holdings');
 
@@ -920,25 +924,39 @@ holdings: Record<string, number>;   // countable, keyed by kind
 Countable is enough for all three: a stock company is its own kind
 (`stock.acmeMotors`), not a bag of objects with identity.
 
-Four things it must not get wrong, three of which the engine has already been
+Four things it must not get wrong, three of which the engine had already been
 bitten by:
 
-- [ ] **The snapshot.** `captureGame` / `restoreGame` carry `holdings`, and
-      `validateSnapshot` refuses a save naming a kind this build has not
-      registered — the same rule a turn order gets.
-- [ ] **Bankruptcy.** `transferEstate` must move or forfeit them *explicitly*.
-      This is exactly where the deck census bug came from in M8d: a bankrupt
-      player's cards were destroyed and the deck quietly drained.
-- [ ] **An invariant.** `sim/Invariants.ts` gains a holdings census — counts
-      non-negative, every kind registered, a bankrupt player holding none.
-- [ ] **The bot.** Pricing one in a trade is `value()`. *Spending* one well is
-      not general, and should stay a per-game policy rather than being guessed
-      at in `Bot.ts`.
+- [x] **The snapshot.** `captureGame` / `restoreGame` carry `holdings`, and
+      `validateSnapshot` refuses a kind this build has not registered. It has to
+      **load the game first**, which it was not doing — the check runs from the
+      menu, where the game in force is whichever was played last, so Ultimate's
+      own saves were refused. The turn-order and variant checks had the same
+      latent bug and moved with it.
+- [x] **Bankruptcy.** `transferEstate` moves or forfeits them by name, a kind
+      says which with `onBankruptcy`, and a receiver's limit is respected.
+- [x] **An invariant.** A census, not a conservation law: every kind registered,
+      no count negative or over its limit, a bankrupt player holding none. A game
+      mints holdings, so a fixed total would be checking something untrue.
+- [x] **The bot.** `value` is what a kind is worth, and `estateValue` is where
+      it lands: cash, what a player could raise, and what they hold. It is
+      deliberately *not* added to `liquidValue` — a fire sale that counted a
+      voucher nobody can sell would think a debt coverable that is not. The
+      round-limit win condition decides on it, which is what keeps the field
+      honest rather than decorative.
 
-The open question worth answering before writing any of it: **can a bot be taught
-to value a held thing it has never heard of?** `value()` is the cheap answer and
-may be enough. If it is not, holdings are tradeable but not playable by a bot,
-and that is worth knowing before the panel is built.
+**The open question, answered — half.** Valuing a held thing the engine has never
+heard of generalises. *Spending* one does not: a travel voucher is played by
+choosing where you would like to go, and nothing generic answers that well. So a
+person plays them and a bot hoards them, which KNOWNISSUES says rather than
+papers over. `GameScene.SPENDABLE` is the seam a per-game spend policy would grow
+from — and **offering one in a trade** is the other thing left, since a
+`TradeOffer` is still deeds and cash.
+
+Holdings are visible in **Pause → Inventory** — a seat list, then one screen per
+player: cash, net worth, deeds, complete groups, buildings, jail cards and
+holdings. All of it is on the board already, so it is a summary rather than a
+leak. **Clicking a player in the HUD** opens theirs directly.
 
 ### 12c — a tile can see the roll that took a player past it
 

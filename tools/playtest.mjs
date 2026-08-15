@@ -6,6 +6,7 @@
 //   node tools/playtest.mjs --shots      also write screenshots/ PNGs
 //   node tools/playtest.mjs --turns 40   play more turns
 //   node tools/playtest.mjs --headed     watch it play
+//   node tools/playtest.mjs --players 6  fill every seat
 //   node tools/playtest.mjs --url <url>  drive a deployed site instead of dist/
 //
 // The game is a single canvas with no DOM controls, so every interaction is a
@@ -64,6 +65,13 @@ const HOUSE_RULES = NO_AUCTION ? 'noAuction'
   : null;
 /** Which palette to draw in — `--theme parchment` is the one that is not default. */
 const THEME = value('theme', null);
+/**
+ * How many seats. Three is enough for the HUD panel and every step below, and
+ * six is what the *menus* have to survive — the inventory ran off the bottom of
+ * the screen at four until M12b, and nothing here noticed because the harness
+ * had no way to sit more than three people down.
+ */
+const PLAYERS = Math.min(6, Math.max(2, Number(value('players', 3))));
 
 // The Phaser canvas is a fixed 1280×800 with no scale manager, so game
 // coordinates map 1:1 onto canvas pixels.
@@ -84,6 +92,10 @@ const HOTSPOTS = {
   auctionPass:  [512, 484],  // AuctionPanel pass button
   trade:        [180, 738],  // GameScene.buildButtons
   pause:        [300, 738],  // GameScene.buildButtons — was SAVE before M10
+  // The HUD's first player row: UIScene.PX + PW/2, and PlayerPanel's y=252 plus
+  // half its 58px row. A seat is a button now — pressing one opens that player's
+  // inventory — so it belongs in this table with the rest of the scene's buttons.
+  hudSeat1:     [1167, 280],
   // The trade panel is not in this table any more. Its deed list is measured
   // rather than reserved, so its buttons sit wherever the players' holdings put
   // them — it reports its own positions through `__forge.tradeSpots()`.
@@ -365,18 +377,19 @@ async function main() {
     await menuPress(page, box, 'back');
     await menuPress(page, box, 'back');
 
-    // Three players makes the HUD panel worth looking at.
-    await menuSet(page, box, 'count', '3');
+    // Three players makes the HUD panel worth looking at; `--players` fills more.
+    await menuSet(page, box, 'count', String(PLAYERS));
     if (BOTS) {
       // Seat 1 is yours by default; hand it over too, so nobody has to click.
       await menuPress(page, box, 'seat1', { adjust: 1 });
     } else if (BOT_TRADES) {
-      // Seat 1 stays a person and seats 2–3 stay bots: exactly the table an
+      // Seat 1 stays a person and the rest stay bots: exactly the table an
       // uninvited offer needs.
     } else {
       // All-human keeps the buy prompt, auction and trade steps below on rails.
-      await menuPress(page, box, 'seat2', { adjust: 1 });
-      await menuPress(page, box, 'seat3', { adjust: 1 });
+      for (let seat = 2; seat <= PLAYERS; seat += 1) {
+        await menuPress(page, box, `seat${seat}`, { adjust: 1 });
+      }
     }
     await sleep(200);
     await shot(page, box, '1b-play');
@@ -406,8 +419,8 @@ async function main() {
     console.log('  ✓ tokens on GO are clustered, not stacked');
 
     const start = await page.evaluate(() => window.__forge.state());
-    if (start.players.length !== 3) {
-      throw new Error(`expected 3 players, got ${start.players.length}`);
+    if (start.players.length !== PLAYERS) {
+      throw new Error(`expected ${PLAYERS} players, got ${start.players.length}`);
     }
 
     // A variant that reshapes the turn has to be *in* the turn — and if the
@@ -880,6 +893,34 @@ async function main() {
 
       await clickGame(page, box, HOTSPOTS.pause);
       await sleep(400);
+      // The inventory, on the way past: it is the one screen that reads the
+      // *model* rather than a setting, so an empty one means the view is broken.
+      // Two screens since M12b — a seat list that fits six players, and one
+      // seat's detail — so both are walked rather than the first one only.
+      await menuPress(page, box, 'inventory');
+      const seatRows = (await menuSpots(page)).filter((r) => r.id.startsWith('who.'));
+      if (seatRows.length === 0) throw new Error('the inventory screen listed no seats');
+      // Every row has to be on the canvas. This is the check the milestone was
+      // asked for: the old one-screen version ran off the bottom at four players
+      // and nothing in the harness noticed, because a row that is drawn at y=980
+      // still reports its position quite happily.
+      const offscreen = seatRows.filter((r) => r.y < 0 || r.y > 800);
+      if (offscreen.length) {
+        throw new Error(`${offscreen.length} inventory row(s) drawn off the canvas`);
+      }
+      await shot(page, box, '17-inventory');
+
+      await menuPress(page, box, seatRows[0].id);
+      const detail = await menuSpots(page);
+      for (const row of ['cash', 'worth', 'deeds', 'built']) {
+        if (!detail.some((r) => r.id === row)) {
+          throw new Error(`a seat's inventory showed no ${row} row`);
+        }
+      }
+      console.log(`  ✓ inventory lists ${seatRows.length} seat(s), each openable`);
+      await menuPress(page, box, 'back');
+      await menuPress(page, box, 'back');
+
       await menuPress(page, box, 'settings');
       const wasName = (await menuSpots(page)).find((r) => r.id === 'theme').value;
       await menuPress(page, box, 'theme', { adjust: 1 });
@@ -937,6 +978,45 @@ async function main() {
       }
     }
 
+    // ── A seat in the HUD opens its inventory ─────────────────────────────────
+    // The short route in, added in M12b: the pause menu is three presses away and
+    // a player row is one. Worth its own check because it is the only place in
+    // the build where `UIScene` talks *back* to `GameScene`, and because the row
+    // is a `setInteractive` on a scene that a theme change rebuilds.
+    if (!BOTS) {
+      await settleTurn(page, box);
+      await clickGame(page, box, HOTSPOTS.hudSeat1);
+      await sleep(500);
+
+      const landed = await page.evaluate(() => (window.__menu
+        ? { title: window.__menu.title(), depth: window.__menu.depth() }
+        : null));
+      if (!landed) throw new Error('pressing a seat in the HUD opened no menu');
+      if (landed.depth !== 3) {
+        throw new Error(`a seat opened at depth ${landed.depth}, expected 3 (root › seats › seat)`);
+      }
+      const detail = await menuSpots(page);
+      if (!detail.some((r) => r.id === 'worth')) {
+        throw new Error(`pressing a seat opened "${landed.title}", which is not an inventory`);
+      }
+      await shot(page, box, '18-seat-inventory');
+
+      // And Back walks out the way it would have done if you had pressed the
+      // rows to get here — the whole reason the deep link pushes the stack
+      // rather than replacing the root.
+      await menuPress(page, box, 'back');
+      if (await page.evaluate(() => window.__menu.title()) !== 'Inventory') {
+        throw new Error('Back from a seat did not land on the seat list');
+      }
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Escape');
+      await sleep(500);
+      if (!(await waitFor(page, ready, { timeout: 9000 }))) {
+        throw new Error('the game was not playable after looking at a seat');
+      }
+      console.log(`  ✓ pressing ${landed.title} in the HUD opened their inventory`);
+    }
+
     // ── Saving in the middle of a turn ────────────────────────────────────────
     // The case M10b opened. Roll, catch the token *while it is walking*, and save
     // there: the model is already at the destination and its landing is still
@@ -953,6 +1033,7 @@ async function main() {
         const midWalk = await page.evaluate(() => ({
           positions: window.__forge.state().players.map((p) => p.position),
           player:    window.__forge.activeId(),
+          seats:     window.__forge.state().players.map((p) => p.id),
         }));
 
         await clickGame(page, box, HOTSPOTS.pause);
@@ -987,9 +1068,18 @@ async function main() {
             `mid-walk restore moved somebody: ${midWalk.positions} became ${back.positions}`,
           );
         }
-        if (back.player !== midWalk.player) {
+        // Same seat, or the one after it. Not `=== midWalk.player`: the restore
+        // *resolves* the landing it was saved owing, and a landing on a tile
+        // that asks nothing ends the turn — correctly, and within the settle
+        // above. Which of the two happens depends on where the walk finished,
+        // so pinning the stricter version passed at three players and failed at
+        // six for a reason that was never a bug. What would be a bug is the turn
+        // going backwards or skipping a seat, and that is what this catches.
+        const wasAt  = midWalk.seats.indexOf(midWalk.player);
+        const allowed = [midWalk.player, midWalk.seats[(wasAt + 1) % midWalk.seats.length]];
+        if (!allowed.includes(back.player)) {
           throw new Error(
-            `mid-walk restore changed whose turn it is: ${midWalk.player} became ${back.player}`,
+            `mid-walk restore lost the turn: ${midWalk.player} became ${back.player}`,
           );
         }
 

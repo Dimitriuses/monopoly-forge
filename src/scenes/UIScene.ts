@@ -100,6 +100,10 @@ export class UIScene extends Phaser.Scene {
     }).setOrigin(0.5, 0);
 
     this.playerPanel = new PlayerPanel(this, this.PX, 252, this.PW);
+    // Pressing a seat asks `GameScene` to open its inventory. It goes out on
+    // this scene's emitter, which is the channel the two already use in the
+    // other direction — a UI-only message has no business on the model's bus.
+    this.playerPanel.onSelect = (playerId) => this.events.emit('player:inspect', { playerId });
 
     // Whatever was on screen before goes back on it — a change of colour must
     // not blank the dice or forget whose turn it is.

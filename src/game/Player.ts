@@ -19,6 +19,13 @@ export class Player {
   doublesStreak: number;   // consecutive doubles this turn (resets on non-double or jail)
   /** Whether a bot takes this seat's turns. Part of the game, so it is saved. */
   isBot: boolean;
+  /**
+   * Things a *game* gave this player that the engine has no word for — travel
+   * vouchers, stock certificates. Countable and keyed by kind; see
+   * `game/Holdings.ts`, and use its helpers rather than writing here directly,
+   * because a kind may have a limit.
+   */
+  holdings: Record<string, number>;
 
   constructor(
     id: string, name: string, token: TokenType,
@@ -36,6 +43,7 @@ export class Player {
     this.isBankrupt = false;
     this.doublesStreak = 0;
     this.isBot = isBot;
+    this.holdings = {};
   }
 
   get getOutOfJailCards(): number {

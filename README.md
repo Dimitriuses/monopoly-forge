@@ -34,6 +34,7 @@ Everything is mouse-driven — there is no keyboard input.
 | Change the rules | **Play → Game Settings.** Starting cash, the salary, the jail fine and term, the house supply, how a full colour group is charged, how the game ends — about twenty of them, in sections, each showing what this game would have played |
 | Trade with a bot | Bots offer *you* trades on their own turn, in the same panel you build one in. Rationed so it is not every turn, and switchable off in **Play → Game Settings → House rules** |
 | Pause | **Escape**, or the MENU button. Resume, save to one of three slots, copy or download the turn log, change the sound, switch the palette **without restarting**, or quit to the title. A save may be taken **mid-turn** — a walking token, an open buy prompt and a live auction all survive a reload |
+| See what a player holds | **Click their row in the HUD**, on the right — or **Pause → Inventory** for the list. Cash, net worth, deeds, complete colour groups, houses and hotels, Get Out of Jail Free cards and anything the game itself hands out. Your own spendable ones are rows you press |
 | Choose 2–6 players | Click a number on the menu |
 | Change a player's token | Click the token name next to `P1`, `P2`, … to cycle |
 | Play against the computer | Each seat says **🙋 Human** or **🤖 Bot** — click to swap. Seats 2+ are bots by default |
@@ -155,12 +156,12 @@ Three axes of customisation, none of which should require editing engine code:
 | **Maps** | A board of any length and shape — not 40 tiles in a square — with your own tiles, groups, prices and named anchors (where "jail" is, where "start" is). *Done: see the round and multi-ring boards that ship* |
 | **Rules** | New tile types and card effects registered from outside, a rule set that decides jail terms, building rules and the economy, and a turn whose phases, order and win condition come from that rule set. *Done — the speed die is the proof: its own dice and an extra phase, with the engine never learning what one is* |
 | **Presentation** | How each element draws — tiles, tokens, panels, HUD — swapped per theme, without touching the rules. *Done: two themes ship, and how a tile type draws is a registered decoration rather than a branch in the renderer* |
-| **A game** | All three of the above in one place — a folder holding a board, a rule set, decks, a theme and whatever else it needs, picked as a single choice and launched. *Not yet: today you supply the parts separately, and there is no single thing you can hand somebody and call a game. That is [M9](ROADMAP.md), and its first half runs before the simulator* |
+| **A game** | All three of the above in one place — a folder holding a board, a rule set, decks, a theme and whatever else it needs, picked as a single choice and launched. *Done: `src/games/<id>/` is a game, `gameById` loads it, six ship — including Ultimate Monopoly's 120 tiles and three loops — and [docs/authoring-a-game.md](docs/authoring-a-game.md) is how to add one* |
 
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 546 unit tests pin down.
+it is what the 568 unit tests pin down.
 
 ### What already supports it
 
@@ -265,6 +266,8 @@ src/
 │   ├── Board.ts          Tile registry, anchors by role, validated getTile/move
 │   ├── BoardLayout.ts    Turns a map's shape into tile coordinates
 │   ├── Player.ts         Position, cash, holdings, jail state
+│   ├── Holdings.ts       Countable things a *game* invents — travel vouchers,
+│   │                     tickets, shares: saved, traded, transferred, counted
 │   ├── Dice.ts           Rolls via the seeded PRNG
 │   ├── Bank.ts           Transfers, purchase, mortgage, house/hotel stock
 │   ├── BuildRules.ts     Colour-group, even-building and mortgage legality

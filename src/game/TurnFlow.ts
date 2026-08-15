@@ -1,5 +1,5 @@
 import { dwarn } from '@/utils/log';
-import { liquidValue } from './Estate';
+import { estateValue } from './Estate';
 import { applyVariants } from './Variants';
 import { Registry } from '@/utils/Registry';
 // Side-effect import: the variants that ship register themselves, the same way
@@ -213,10 +213,11 @@ registerWinCondition('lastSolvent', ({ players }) => {
 
 /**
  * A fixed number of rounds, then the richest estate wins — the variant people
- * actually play when they do not have three hours. Wealth is `liquidValue`:
- * cash plus what the player could raise, which is the only measure the engine
- * already agrees on (it is what a fire sale draws from). A tie goes to the
- * earlier seat, so the result is reproducible.
+ * actually play when they do not have three hours. Wealth is `estateValue`:
+ * cash, what the player could raise, and what they are holding. Not
+ * `liquidValue`, which is what a fire sale draws from and correctly refuses to
+ * count a travel voucher nobody can sell. A tie goes to the earlier seat, so the
+ * result is reproducible.
  *
  * `rules.roundLimit` of 0 means no limit, and this behaves as `lastSolvent`.
  */
@@ -228,7 +229,7 @@ registerWinCondition('roundLimit', ({ players, board, round, rules }) => {
   if (!limit || round <= limit) return null;
 
   const richest = left.reduce((best, p) => (
-    liquidValue(board, p) > liquidValue(board, best) ? p : best
+    estateValue(board, p) > estateValue(board, best) ? p : best
   ));
   return { winnerId: richest.id };
 });

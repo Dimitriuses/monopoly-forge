@@ -165,6 +165,35 @@ refused is **two**, not three:
   localStorage. Saving it would mean the *asker* being re-entrant — able to ask
   again from saved state — which is per-asker work rather than one mechanism.
 
+### A bot hoards travel vouchers, and nobody can trade one
+
+*Added in M12b.* Holdings work: a game gives a player something the engine has
+never heard of, and it is saved, transferred or forfeited on bankruptcy, counted
+by an invariant, and worth something — `estateValue` counts it, so it can decide
+a round-limited game.
+
+Two things are missing, and they are the same shape.
+
+**A bot never spends one.** Valuing a holding generalises; *playing* one does
+not, because a travel voucher is played by choosing where on the board you would
+like to be, and no generic policy answers that well. So bots draw them, hold them
+to the limit of four and never use them, while a person plays one from the
+inventory. It costs them little, but a bots-only Ultimate game ends with vouchers
+unspent — which is why the simulator's numbers for it are a floor rather than a
+verdict.
+
+**Nobody can offer one in a trade.** A `TradeOffer` is deeds and cash; holdings
+are not in it, so the only way one changes hands is a bankruptcy. Both fixes are
+per-game or per-panel work rather than a gap in the mechanism.
+
+### Stock certificates and Roll Three cards are still reduced
+
+*Narrowed in M12b.* The mechanism that blocked them is gone: a stock company
+would be a holding kind (`stock.acmeMotors`) and a Roll Three card is a number
+you keep. What is left is each rule's own behaviour — a dividend paid to every
+shareholder when anybody lands on the Stock Exchange, three numbers matched
+against a roll — which is a game's work, not the engine's.
+
 ### Three things a bot still cannot be asked
 
 *Narrowed in M10a.* `game/Choice.ts` closed the "nothing can ask a player to pick

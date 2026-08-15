@@ -1,6 +1,10 @@
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable, type Ownable, type Tile } from '@/tiles/Tile';
 import { bus } from '@/utils/EventBus';
+import {
+  describeHolding, giveHolding, heldByPlayer, holdingKind, takeHolding,
+  valueOfHoldings,
+} from './Holdings';
 import { buildingLevel, canSellHotel, canSellHouse, canMortgage } from './BuildRules';
 import type { Board } from './Board';
 import type { Bank } from './Bank';
@@ -59,6 +63,19 @@ export function liquidValue(board: Board, player: Player): number {
     if (!tile.isMortgaged) total += tile.mortgage;
   }
   return total;
+}
+
+/**
+ * What a player is *worth*, which is deliberately not what they can raise. A
+ * holding counts — four travel vouchers are $240 of having-been-lucky — but
+ * nothing can turn one into cash, so it belongs here and must never be added to
+ * `liquidValue`: a fire sale that counted one would think a debt coverable that
+ * is not, and clamp somebody out of a bankruptcy they are actually in.
+ *
+ * The distinction is why `HoldingKind.value` exists at all.
+ */
+export function estateValue(board: Board, player: Player): number {
+  return liquidValue(board, player) + valueOfHoldings(player);
 }
 
 /**
@@ -229,6 +246,21 @@ export function transferEstate(
       tiles.filter((t) => t.isMortgaged), board.rules.mortgageInterest,
     );
     if (owed > 0) actions.push(`${creditor.name} paid $${owed} mortgage interest`);
+  }
+
+  // Holdings, by name and by the kind's own rule. Explicit rather than implicit
+  // because the implicit answer once was "destroy them": a bankrupt player's
+  // Get Out of Jail Free cards vanished from the game, and the deck census found
+  // it a hundred simulated games later. A kind that should not survive its owner
+  // says `forfeit`; everything else follows the deeds.
+  for (const { name, count } of heldByPlayer(debtor)) {
+    takeHolding(debtor, name, count);
+    if (holdingKind(name)?.onBankruptcy === 'forfeit' || !creditor) {
+      actions.push(`${describeHolding(name, count)} forfeited`);
+      continue;
+    }
+    const moved = giveHolding(creditor, name, count);
+    actions.push(`${describeHolding(name, moved)} passed to ${creditor.name}`);
   }
 
   if (debtor.jailCards.length) {

@@ -12,6 +12,7 @@ import { Dice, type DiceResult } from './Dice';
 import { Player } from './Player';
 import { TurnManager } from './TurnManager';
 import { knownTurnOrders, knownWinConditions, type TurnPhase } from './TurnFlow';
+import { knownHoldings } from './Holdings';
 import type { AuctionSnapshot, AuctionSubject } from './Auction';
 import { diceFor, knownVariants } from './Variants';
 
@@ -34,7 +35,7 @@ import { diceFor, knownVariants } from './Variants';
 // A restore resumes at the start of the saved player's turn. Mid-move state is
 // deliberately not captured: see `restoreGame`.
 
-export const SNAPSHOT_VERSION = 9;
+export const SNAPSHOT_VERSION = 10;
 
 export interface TileSnapshot {
   id: number;
@@ -57,6 +58,8 @@ export interface PlayerSnapshot {
   isBankrupt: boolean;
   doublesStreak: number;
   isBot: boolean;
+  /** What a *game* gave them — see `game/Holdings.ts`. Absent in pre-M12b saves. */
+  holdings?: Record<string, number>;
 }
 
 export interface DeckSnapshot {
@@ -213,6 +216,7 @@ function capturePlayer(player: Player): PlayerSnapshot {
     isBankrupt: player.isBankrupt,
     doublesStreak: player.doublesStreak,
     isBot: player.isBot,
+    holdings: { ...player.holdings },
   };
 }
 
@@ -275,6 +279,9 @@ export function restoreGame(snapshot: GameSnapshot): GameParts {
     player.isBankrupt    = saved.isBankrupt;
     player.doublesStreak = saved.doublesStreak;
     player.ownedTileIds  = new Set(saved.ownedTileIds);
+    // Copied rather than referenced, and defaulted for a save written before
+    // holdings existed.
+    player.holdings      = { ...(saved.holdings ?? {}) };
     // By id, so the card is the same object the deck knows about.
     player.jailCards = saved.jailCardIds
       .map((id) => allCards.find((c) => c.id === id))
@@ -324,6 +331,17 @@ export function validateSnapshot(snapshot: unknown): snapshot is GameSnapshot {
   if (!s.turn || !Number.isFinite(s.turn.currentPlayerIndex)) return reject('no turn state');
   if (s.turn.currentPlayerIndex >= s.players.length) return reject('turn points at nobody');
 
+  // **Load the game before checking anything it registers.** The same rule
+  // `gameById` follows, and it bites here for the same reason: holdings, turn
+  // orders, win conditions and variants are all *scoped* to the loaded game, and
+  // this runs from the **menu** — where the game in force is whatever was played
+  // last, or none at all. Checking first refused Ultimate Monopoly's own saves
+  // for naming a travel voucher that was, at that moment, unregistered.
+  if (typeof s.gameId !== 'string' || !GAMES[s.gameId]) {
+    return reject(`unknown game "${s.gameId}"`);
+  }
+  const board = new Board(gameById(s.gameId).map);
+
   // A rule set names its turn order and win condition, and this build may not
   // have them registered — refuse rather than let `TurnFlow` throw mid-restore.
   const rules = s.rules;
@@ -339,11 +357,15 @@ export function validateSnapshot(snapshot: unknown): snapshot is GameSnapshot {
     }
   }
 
-  // The game may have changed under the save — or be missing from this build.
-  if (typeof s.gameId !== 'string' || !GAMES[s.gameId]) {
-    return reject(`unknown game "${s.gameId}"`);
+  // A holding this build has never registered cannot be restored into anything,
+  // and half-restoring one is how a resumed game comes back quietly wrong. The
+  // same rule a turn order gets, for the same reason.
+  for (const player of s.players as Array<{ holdings?: Record<string, number> }>) {
+    for (const name of Object.keys(player.holdings ?? {})) {
+      if (!knownHoldings().includes(name)) return reject(`unknown holding "${name}"`);
+    }
   }
-  const board = new Board(gameById(s.gameId).map);
+
   for (const tile of s.tiles) {
     if (!Number.isFinite(tile?.id) || tile.id < 0 || tile.id >= board.size) {
       return reject(`tile ${tile?.id} is not on this board`);

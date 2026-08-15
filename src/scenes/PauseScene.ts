@@ -5,6 +5,7 @@ import { theme, knownThemes } from '@/ui/Theme';
 import { Menu, backItem, type MenuItem, type MenuScreen } from '@/ui/Menu';
 import { sfx } from '@/ui/Sfx';
 import { copyText, downloadText, transcriptFilename } from '@/ui/Download';
+import type { InventoryView } from '@/scenes/GameScene';
 
 // ─── PauseScene ───────────────────────────────────────────────────────────────
 // The same menu as the title screen, over a game in progress.
@@ -30,9 +31,19 @@ export interface PauseData {
   transcript(): string;
   /** Repaint the running game in a different palette. */
   onTheme(id: string): void;
+  /** What each seat is holding, for the inventory screen. */
+  inventory(): InventoryView[];
+  /** Spend a holding — closes the menu, because spending usually asks a question. */
+  onSpend(playerId: string, holding: string): void;
   /** Which game is being played, for the slot list. */
   gameId: string;
   round: number;
+  /**
+   * Open straight onto this seat's inventory — what pressing a player in the
+   * HUD does. The root and the seat list go on the stack underneath, so Back
+   * walks out the way it would have if you had got here by pressing rows.
+   */
+  inventoryFor?: string;
 }
 
 export class PauseScene extends Phaser.Scene {
@@ -78,6 +89,13 @@ export class PauseScene extends Phaser.Scene {
     // Escape on the root closes the pause menu, which is what pressed it.
     this.menu.onExitRoot = () => this.resume();
     this.menu.render();
+
+    if (this.paused.inventoryFor) {
+      const id = this.paused.inventoryFor;
+      this.menu.open(() => this.inventoryScreen());
+      this.menu.open(() => this.seatScreen(id));
+    }
+
     this.exposeMenuHandle();
   }
 
@@ -89,6 +107,8 @@ export class PauseScene extends Phaser.Scene {
         enabled: this.paused.canSave,
         reason: this.paused.saveReason ?? 'Finish what you are doing first',
         onPress: () => this.menu.open(() => this.saveScreen()) },
+      { id: 'inventory', label: 'Inventory', kind: 'submenu',
+        onPress: () => this.menu.open(() => this.inventoryScreen()) },
       { id: 'log', label: 'Turn log', kind: 'submenu',
         value: this.logNote ?? undefined,
         onPress: () => this.menu.open(() => this.logScreen()) },
@@ -148,6 +168,83 @@ export class PauseScene extends Phaser.Scene {
           } },
         backItem(this.menu),
       ],
+    };
+  }
+
+  /**
+   * Who to look at. One row per seat rather than every seat's detail on one
+   * screen, which is what the first version did and what stopped fitting at four
+   * players: a seat costs a heading and four rows, so six of them ran off the
+   * bottom. A menu that scrolls would be a second scrolling mechanism in this
+   * build; a menu one level deeper is free.
+   */
+  private inventoryScreen(): MenuScreen {
+    const items: MenuItem[] = this.paused.inventory().map((seat) => ({
+      id: `who.${seat.playerId}`,
+      label: seat.name,
+      kind: 'submenu' as const,
+      value: `$${seat.cash.toLocaleString()}`,
+      hint: seat.bankrupt ? 'bankrupt' : summarise(seat),
+      onPress: () => this.menu.open(() => this.seatScreen(seat.playerId)),
+    }));
+
+    items.push(backItem(this.menu));
+    return { title: 'Inventory', subtitle: 'Whose?', items };
+  }
+
+  /**
+   * One seat: cash, what it is worth, deeds, what is built on them, jail cards
+   * and anything a *game* handed out (`game/Holdings.ts`).
+   *
+   * Any seat rather than only yours, because Monopoly is a game about what the
+   * other players can afford — and every one of these facts is on the board in
+   * front of you already. It is a *summary*, not a secret.
+   *
+   * Looked up by id on every render rather than captured, because a screen is
+   * data rebuilt each time (see `ui/Menu.ts`) — a seat held from the moment its
+   * row was pressed would still show the cash it had before the rent was paid.
+   */
+  private seatScreen(playerId: string): MenuScreen {
+    const seat = this.paused.inventory().find((s) => s.playerId === playerId);
+    if (!seat) return { title: 'Inventory', items: [backItem(this.menu)] };
+
+    const items: MenuItem[] = [
+      { id: 'cash', label: 'Cash', kind: 'value',
+        value: `$${seat.cash.toLocaleString()}` },
+      { id: 'worth', label: 'Net worth', kind: 'value',
+        value: `$${seat.worth.toLocaleString()}`,
+        hint: 'cash, what a fire sale would raise, and what they hold' },
+      { id: 'deeds', label: 'Deeds', kind: 'value',
+        value: String(seat.deeds),
+        hint: seat.groups.length ? `complete: ${seat.groups.join(', ')}` : undefined },
+      { id: 'built', label: 'Built', kind: 'value',
+        value: `${seat.houses} 🏠  ${seat.hotels} 🏨` },
+    ];
+
+    if (seat.jailCards > 0) {
+      items.push({ id: 'jail', label: 'Get Out of Jail Free', kind: 'value',
+        value: String(seat.jailCards) });
+    }
+
+    for (const holding of seat.holdings) {
+      items.push({
+        id: `hold.${holding.name}`,
+        label: holding.label,
+        kind: 'value',
+        value: String(holding.count),
+        // Only your own, and only what the game says can be spent.
+        onPress: holding.spendable
+          ? () => { this.paused.onSpend(seat.playerId, holding.name); this.resume(); }
+          : undefined,
+        hint: holding.spendable ? 'press to play one' : undefined,
+      });
+    }
+
+    items.push(backItem(this.menu));
+    return {
+      title: seat.name,
+      subtitle: seat.bankrupt ? 'Bankrupt — out of the game' : undefined,
+      items,
     };
   }
 
@@ -225,6 +322,19 @@ export class PauseScene extends Phaser.Scene {
       back: () => { this.menu.back(); },
     };
   }
+}
+
+/**
+ * The small print on a seat's row: only what it actually has, so a player
+ * holding nothing reads as empty rather than as a row of zeroes.
+ */
+function summarise(seat: InventoryView): string {
+  const parts: string[] = [`${seat.deeds} deed${seat.deeds === 1 ? '' : 's'}`];
+  if (seat.houses)    parts.push(`${seat.houses} 🏠`);
+  if (seat.hotels)    parts.push(`${seat.hotels} 🏨`);
+  if (seat.jailCards) parts.push(`${seat.jailCards} jail card${seat.jailCards === 1 ? '' : 's'}`);
+  for (const holding of seat.holdings) parts.push(`${holding.count} ${holding.label}`);
+  return parts.join(' · ');
 }
 
 function describeSlot(slot: SlotSummary): string {

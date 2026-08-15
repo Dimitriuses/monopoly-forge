@@ -1,4 +1,5 @@
 import { PropertyTile } from '@/tiles/PropertyTile';
+import { heldByPlayer, holdingKind, knownHoldings } from '@/game/Holdings';
 import { isOwnable } from '@/tiles/Tile';
 import type { Board } from '@/game/Board';
 import type { Bank } from '@/game/Bank';
@@ -41,6 +42,7 @@ export function checkInvariants(ctx: InvariantContext): Violation[] {
     ...buildingCensus(ctx),
     ...deckCensus(ctx),
     ...bankruptcyIsFinal(ctx),
+    ...holdingsAreSane(ctx),
   ];
 }
 
@@ -169,9 +171,45 @@ function deckCensus({ decks, players }: InvariantContext): Violation[] {
 /** A bankrupt player holds nothing — that is what bankrupt means. */
 function bankruptcyIsFinal({ players }: InvariantContext): Violation[] {
   return players
-    .filter((p) => p.isBankrupt && (p.ownedTileIds.size > 0 || p.jailCards.length > 0))
+    .filter((p) => p.isBankrupt
+      && (p.ownedTileIds.size > 0 || p.jailCards.length > 0 || heldByPlayer(p).length > 0))
     .map((p) => ({
       what: 'bankruptcy',
-      detail: `${p.id} is bankrupt but holds ${p.ownedTileIds.size} deed(s) and ${p.jailCards.length} card(s)`,
+      detail: `${p.id} is bankrupt but holds ${p.ownedTileIds.size} deed(s), `
+            + `${p.jailCards.length} card(s) and ${heldByPlayer(p).length} kind(s) of holding`,
     }));
+}
+
+/**
+ * Every holding is a kind this build registered, and no count is negative or
+ * over its limit.
+ *
+ * A census rather than a conservation law, deliberately: a game *mints* travel
+ * vouchers and spends them, so the total is not fixed and checking that it were
+ * would be checking something untrue — the mistake the M8d roadmap made about
+ * total cash.
+ */
+function holdingsAreSane({ players }: InvariantContext): Violation[] {
+  const problems: Violation[] = [];
+  const known = new Set(knownHoldings());
+
+  for (const player of players) {
+    for (const [name, count] of Object.entries(player.holdings)) {
+      if (!known.has(name)) {
+        problems.push({ what: 'holdings', detail: `${player.id} holds unregistered "${name}"` });
+        continue;
+      }
+      if (!Number.isInteger(count) || count < 0) {
+        problems.push({ what: 'holdings', detail: `${player.id} holds ${count} × ${name}` });
+      }
+      const limit = holdingKind(name)?.limit;
+      if (limit !== undefined && count > limit) {
+        problems.push({
+          what: 'holdings',
+          detail: `${player.id} holds ${count} × ${name}, over the limit of ${limit}`,
+        });
+      }
+    }
+  }
+  return problems;
 }

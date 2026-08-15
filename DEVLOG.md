@@ -2553,3 +2553,148 @@ now — the dice back on offer — which is the same lesson as the headless cloc
 arrived at sideways. The harness also gained `__forge.choice()`, because the two
 prompts 12a added are answered by clicking a board tile and nothing else on that
 handle said which tiles would be accepted.
+
+## M12b — a player can hold something the engine has never heard of — 2026-08-15
+
+Ultimate Monopoly's bus tickets have been reduced since M11, and the reason was
+always the same: a player could hold a deed, a jail card and cash, and nothing
+else. Four of its six reduced rules wanted a fourth kind of thing.
+
+`game/Holdings.ts` is that thing, and it is deliberately the smallest version
+that works: **a count, keyed by a registered kind**. `Record<string, number>` on
+the player, which is why it survives `JSON.stringify` without a single line of
+custom serialisation. Anything needing identity is a card, and cards already have
+a home; anything needing state of its own is a tile. What is left — vouchers,
+tickets, shares, tokens — is a number you have some of.
+
+A kind declares four optional things and each earns its place: a `label` (and a
+`plural`, because "1 travel vouchers" is how a game looks unfinished), a `limit`
+(Ultimate's four), a `value` saying what one is worth, and `onBankruptcy` to say
+whether it passes to the creditor or evaporates.
+
+### The four things it must not get wrong
+
+Three were known before writing any of it, and the fourth was the question.
+
+**The snapshot** carries `holdings` and `validateSnapshot` refuses a kind this
+build has not registered — the same rule a turn order gets. That check is where
+the one real bug of the milestone was: it ran **before** the game was loaded.
+Holdings, turn orders, win conditions and variants are all *scoped*, and
+validation runs from the **menu**, where the game in force is whichever was
+played last — or none, on a cold start. So Ultimate's own saves were refused for
+naming a travel voucher that was, at that instant, unregistered. The load moved
+to the top and the other three checks came with it; they had the same latent bug
+and nobody had reached it yet.
+
+**Bankruptcy** moves them by name, which is the shape M8d's deck census bug
+argued for: a bankrupt player's cards were once destroyed implicitly and the deck
+quietly drained. A receiver's limit is respected rather than overfilled, and
+`transferEstate` does it *after* the deeds move, beside the mortgage interest.
+
+**The invariant** is a census — every kind registered, no count negative,
+non-integer or over its limit, and a bankrupt player holding none. It is
+deliberately **not** a conservation law. A game mints vouchers and spends them,
+so a fixed total would be checking something untrue — the same reason total cash
+is not checked.
+
+### The fourth, which was a question
+
+*Can a bot be taught to value a held thing it has never heard of?*
+
+**Half of one.** A declared `value` is enough to say what a holding is *worth*,
+and that much is genuinely general. **Spending** one is not: a travel voucher is
+played by choosing where on the board you would like to be, and no generic policy
+answers that well without knowing why you want to go there.
+
+That left `value` at risk of being a decorative field, which is worse than not
+having one — so it got a real consumer, and finding the right one was the more
+interesting half. The obvious candidate was `liquidValue`, and it is **wrong**:
+that function is what a fire sale draws from, nothing can sell a voucher, and a
+`settleDebt` that counted one would believe a debt coverable that is not and
+clamp somebody out of a bankruptcy they were actually in. So wealth and
+raisable-cash are two questions now — `estateValue` is `liquidValue` plus what
+you hold, and the round-limit win condition decides on it. Three vouchers can win
+you a short game; none of them can pay a rent.
+
+The rest is written down rather than papered over. Bots hoard vouchers and never
+play one, nobody can put one in a trade offer (a `TradeOffer` is deeds and cash),
+and KNOWNISSUES says both. `GameScene.SPENDABLE` maps a kind to the tile effect
+that plays it — one line per game, and the seam a spend policy would grow from.
+
+### What it bought Ultimate
+
+Travel vouchers are real now. Landing on a Bus Ticket square draws one, and so
+does landing directly on a transit station — both printed rules, both reduced
+until now. You spend one from the inventory and the board rings every square you
+could travel to, through the same `askChoice` 12a built.
+
+Stock certificates and Roll Three cards are **still** reduced, but for a
+different reason than yesterday, and that is the useful part: the *mechanism* is
+no longer missing. A stock company is `stock.acmeMotors` and a Roll Three card is
+a number you keep. What they need is each rule's own behaviour — a dividend to
+every shareholder, three numbers matched against a roll — which is a game's work
+and not the engine's.
+
+### The inventory screen
+
+A holding you cannot see is a holding nobody believes in, so **Pause →
+Inventory** lists every seat: cash, deeds, complete colour groups, what is built,
+jail cards, and everything a game handed out.
+
+Every seat rather than only yours, on purpose. Monopoly is a game about what the
+other players can afford, and every one of those facts is already on the board in
+front of you — the screen is a *summary*, not a leak. It is rows in `ui/Menu.ts`
+like everything else; a holding of yours the game says can be spent is a row you
+press, and pressing it closes the menu because spending one asks a question.
+
+### …which was the wrong shape, and the harness could not have told me
+
+The first version put every seat on one screen. Five rows a seat, an 800px
+canvas, rows starting at y=205: it fits three players and runs off the bottom at
+four. I built and looked at it with three.
+
+The fix is a level of nesting — a seat *list*, one row each, opening one screen
+per player — and it is better than what it replaced for a reason beyond fitting:
+a screen per player has room for things the shared one could not afford, which is
+where **net worth** went. But the interesting part is why nothing caught it.
+
+`--players` did not exist. The harness sat three people down, hardcoded, and
+asserted `players.length !== 3` for good measure — so every menu in this build
+had only ever been driven at the one seat count where the bug was invisible. It
+takes a flag now, the inventory step walks both screens, and it fails if any row
+is drawn off the canvas: a row at y=980 reports its position quite happily, which
+is exactly why "the menu rendered" kept passing.
+
+**And a full table found a second thing, in the harness rather than the game.**
+The mid-walk save step asserted the restored turn belonged to the same player it
+was saved on. It does — unless the landing it was saved *owing* resolves to a
+tile that asks nothing, in which case the turn correctly ends inside the settle,
+and which tile that is depends on the dice, which depend on the seat count. Six
+players failed on a rule that had never been true; it now allows the same seat or
+the next one, and still catches the turn going backwards or skipping.
+
+### The short route in
+
+A player row in the HUD is a button now, and pressing one opens that player's
+inventory. It is the only place in the build where `UIScene` talks *back* to
+`GameScene` — over the HUD's own emitter, which is the channel the two already
+use in the other direction, rather than the model's bus, which has no business
+carrying a UI gesture.
+
+Two details are load-bearing. The deep link **pushes the stack** (root, then the
+seat list, then the seat) rather than replacing the root, so Back walks out the
+way it would have if you had pressed the rows to get there. And registering
+`setInteractive` on those rows is safe *here* specifically because `UIScene` is
+never paused — `GameScene.openPause` pauses only itself — which is the one thing
+that distinguishes this from the trap in CLAUDE.md that killed the buttons when a
+theme change rebuilt them mid-pause.
+
+### What the tests could not ask, and what they ask instead
+
+Two tests here had to be rewritten around a subtlety worth recording. The
+baseline `loadGame` restores to is captured on the **first** load in a process —
+so a kind registered by a test fixture *before* any game loads becomes part of
+the baseline, and correctly survives every reset. Both the scoping test and the
+validation test were asking about the fixture's own kind and getting an answer
+about the baseline. They ask through a real game now: Ultimate registers its
+voucher from `Game.register`, which is after.

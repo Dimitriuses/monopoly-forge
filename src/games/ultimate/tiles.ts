@@ -4,6 +4,7 @@ import { Tile, isOwnable, type TileDefinition } from '@/tiles/Tile';
 import { RailroadTile, UtilityTile } from '@/tiles/SpecialTiles';
 import { registerTileType } from '@/tiles/registry';
 import { registerTileEffect } from '@/game/TileEffects';
+import { giveHolding, registerHolding, takeHolding } from '@/game/Holdings';
 import { askChoice } from '@/game/Choice';
 import { tileSubject } from '@/game/Auction';
 import { TUNNELS } from './board';
@@ -104,23 +105,39 @@ class BonusTile extends Tile {
 }
 
 /**
- * Half a junction. Landing on one draws a travel voucher in the printed rules,
- * and this build has no vouchers — see KNOWNISSUES — so stopping here does
- * nothing. Its real work happens in `game/Movement.ts` when somebody goes *past*.
+ * Half a junction. "If a player lands directly on the TRANSIT STATION space,
+ * they should draw a TRAVEL VOUCHER" — which it does, since M12b gave a player
+ * somewhere to keep one. Its *other* work happens in `game/Movement.ts`, when
+ * somebody goes past rather than stopping.
+ *
+ * A `tile:effect` rather than a direct `giveHolding`, because a tile is handed a
+ * player id and nothing else — it cannot reach the player it is talking about.
  */
 class TransitTile extends Tile {
   onLand(playerId: string): void {
-    bus.emit('ui:notification', {
-      message: 'Transit Station — an even roll from here rides to the other track.',
-      type: 'info',
-    });
-    bus.emit('player:landed', { playerId, tileId: this.id });
+    bus.emit('tile:effect', { playerId, tileId: this.id, effect: 'busTicket' });
   }
 }
 
 // ─── Registration ─────────────────────────────────────────────────────────────
 
+/** The kind a travel voucher is. Named once, used by the tiles and the menu. */
+export const VOUCHER = 'travelVoucher';
+
 export function registerUltimateTiles(): void {
+  registerHolding(VOUCHER, {
+    label: 'travel voucher',
+    plural: 'travel vouchers',
+    // The printed game deals 36 between everybody; four in one hand is already
+    // more than a turn can spend, and a cap keeps the census honest.
+    limit: 4,
+    // What a bot will pay for one in a trade. A voucher reaches any square, so
+    // it is worth about what a mid-priced deed is worth *reaching*.
+    value: 60,
+    // They go with the estate, like the deeds and the jail cards.
+    onBankruptcy: 'transfer',
+  });
+
   registerTileType('cabCompany', (def) => new CabCompanyTile(def));
   registerTileType('utility',    (def) => new LadderUtilityTile(def));
   registerTileType('transit',    (def) => new TransitTile(def));
@@ -133,6 +150,9 @@ export function registerUltimateTiles(): void {
   ]) {
     registerTileType(effect, (def) => new EffectTile(def, effect));
   }
+  // `playVoucher` has no tile of its own — nobody lands on it. It is an effect a
+  // *player* asks for from the inventory, which is what makes a holding
+  // something you spend rather than something you merely have.
 
   registerUltimateEffects();
 }
@@ -322,23 +342,57 @@ function registerUltimateEffects(): void {
   });
 
   /**
-   * A bus ticket is a card you keep and play later, and a held card is per-player
-   * state this build cannot save — see KNOWNISSUES. Spent immediately instead,
-   * which is what it does when it is played: on to the next Chance or Chest.
+   * A bus ticket is a card you **keep and play later**, and since M12b it is one:
+   * landing here draws a travel voucher into your inventory instead of spending
+   * it on the spot. What to do with it is Pause → Inventory, or a bot's own turn.
+   *
+   * Landing directly on a transit station draws one too — the printed rule — and
+   * that is `TransitTile`'s business rather than this one's.
    */
-  registerTileEffect('busTicket', (ctx, player, { tileId }) => {
-    const target = ctx.board.scan(
-      player.position, (tile) => tile.type === 'chance' || tile.type === 'communityChest',
-    );
-    if (target === null) {
+  registerTileEffect('busTicket', (_ctx, player, { tileId }) => {
+    const drawn = giveHolding(player, VOUCHER);
+    bus.emit('ui:notification', {
+      message: drawn
+        ? `🎟️ ${player.name} takes a travel voucher.`
+        : `${player.name} is holding all the vouchers they may.`,
+      type: drawn ? 'success' : 'info',
+    });
+    bus.emit('player:landed', { playerId: player.id, tileId });
+  });
+
+  /**
+   * Spend one: travel to any space on the board. The same question the Subway
+   * asks, and deliberately the same weights — a voucher is worth most for
+   * reaching a deed nobody owns.
+   */
+  registerTileEffect('playVoucher', (ctx, player, { tileId }) => {
+    if (takeHolding(player, VOUCHER) === 0) {
       bus.emit('player:landed', { playerId: player.id, tileId });
       return;
     }
-    bus.emit('ui:notification', {
-      message: `🚌 ${player.name} takes the bus to ${ctx.board.getTile(target).name}.`,
-      type: 'info',
+    const asked = askChoice({
+      id: 'voucher',
+      playerId: player.id,
+      prompt: 'Travel voucher — go to any space',
+      style: 'board',
+      options: ctx.board.tiles
+        .map((tile, id) => ({
+          id: String(id),
+          label: tile.name,
+          tileId: id,
+          weight: isOwnable(tile) && tile.ownerId === null ? tile.price : 0,
+        }))
+        .filter((option) => option.tileId !== player.position),
+      answer: (optionId) => {
+        const target = Number(optionId);
+        bus.emit('ui:notification', {
+          message: `🎟️ ${player.name} spends a voucher for ${ctx.board.getTile(target).name}.`,
+          type: 'info',
+        });
+        ctx.walkTo(player, target);
+      },
     });
-    ctx.walkTo(player, target);
+    if (!asked) bus.emit('player:landed', { playerId: player.id, tileId });
   });
 
   /**
