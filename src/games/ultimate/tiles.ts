@@ -249,7 +249,9 @@ function registerUltimateEffects(): void {
         message: `🚈 ${player.name} rides the Subway to ${ctx.board.getTile(target).name}.`,
         type: 'info',
       });
-      ctx.walkTo(player, target);
+      // "Movement from SUBWAY is considered direct movement, and does not
+      // entitle you to salary collected for passing any PAY CORNER."
+      ctx.walkTo(player, target, { direct: true });
     };
 
     const asked = askChoice({
@@ -413,7 +415,14 @@ function registerUltimateEffects(): void {
           message: `🎟️ ${player.name} spends a voucher for ${ctx.board.getTile(target).name}.`,
           type: 'info',
         });
-        ctx.walkTo(player, target);
+        // A voucher is travel, so it is direct like the Subway. The printed rule
+        // is about the *destination* — "if you use a TRAVEL VOUCHER to pass or
+        // advance to a PAY CORNER, collect the highest amount offered by that
+        // space, regardless of what you rolled" — which the arrival's
+        // `roll: null` already gives. Whether the squares flown over also pay is
+        // the ambiguous half, and it is read the same way as the Subway rather
+        // than left to depend on which square you happened to choose.
+        ctx.walkTo(player, target, { direct: true });
       },
     });
     if (!asked) bus.emit('player:landed', { playerId: player.id, tileId });

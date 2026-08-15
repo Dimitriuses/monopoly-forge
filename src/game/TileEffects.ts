@@ -32,7 +32,12 @@ export interface TileEffectContext extends LandingContext {
    * every tile passed gets its `onPass`. The landing is resolved by the driver
    * when the walk finishes — an effect must not call `onLand` itself.
    */
-  walkTo(player: Player, tileId: number): void;
+  /**
+   * Walk somebody to a square. `direct` skips the squares in between — no pay
+   * corner passed, no salary collected — which is what the Subway, a travel
+   * voucher and the Holland Tunnel all are.
+   */
+  walkTo(player: Player, tileId: number, options?: { direct?: boolean }): void;
   /** Take money, raising cash and settling a bankruptcy if it comes to that. */
   charge(debtor: Player, creditor: Player | null, amount: number): void;
   /** Pay from the bank. */
@@ -59,7 +64,7 @@ export interface TileEffectHandler {
 export function effectContext(ctx: LandingContext): TileEffectContext {
   return {
     ...ctx,
-    walkTo: (player, tileId) => { walkTo(ctx.board, player, tileId); },
+    walkTo: (player, tileId, options) => { walkTo(ctx.board, player, tileId, options); },
     charge: (debtor, creditor, amount) => {
       if (amount <= 0) return;
       announceSettlement(debtor, creditor, settleDebt(ctx.board, ctx.bank, debtor, creditor, amount));

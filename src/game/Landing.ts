@@ -137,14 +137,27 @@ export function applyLandingRules(
  * tunnel, a subway and a bus ticket all do, and a second copy of this is exactly
  * the drift `Landing.ts` exists to prevent.
  */
-export function walkTo(board: Board, player: Player, tileId: number): boolean {
+export function walkTo(
+  board: Board, player: Player, tileId: number, { direct = false } = {},
+): boolean {
   const from = player.position;
   const path = board.pathTo(from, tileId);
   if (path === null || path.length === 0) return false;
 
+  // **Direct movement is a rule, not an optimisation.** Ultimate Monopoly says
+  // so twice: "since traveling via Subway is a direct route, you do not collect
+  // any salary for passing a PAY CORNER", and the Holland Tunnel "is a direct
+  // route between tracks, no PAY CORNERS are passed and no salaries collected".
+  //
+  // So a direct move announces **only the square it arrives on**. That is not a
+  // special case bolted on: the arrival still goes through `onPass` and still
+  // reports `roll: null`, which is what a pay corner reads as "collect the
+  // largest amount offered by that space, regardless of what you rolled" — the
+  // other half of the same printed rule.
+  //
   // Everything that walks somebody without rolling comes through here — a
   // voucher, a subway, a bus ticket — and none of them is a dice roll.
-  board.announcePassing(path, player.id, { roll: null });
+  board.announcePassing(direct ? [tileId] : path, player.id, { roll: null });
   player.position = tileId;
   bus.emit('player:move', {
     playerId: player.id, from, to: tileId, path, steps: path.length, isDoubles: false,

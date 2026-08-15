@@ -103,25 +103,6 @@ refused is **two**, not three:
   localStorage. Saving it would mean the *asker* being re-entrant — able to ask
   again from saved state — which is per-asker work rather than one mechanism.
 
-#### The Subway and a travel voucher pay salaries they should not
-
-*Seen clearly in M12c.* Both move a player with `walkTo`, which fires `onPass`
-for every tile on the route — so riding the Subway past PAY DAY collects a
-salary. The book is explicit that it should not: "since traveling via Subway is a
-direct route, you do not collect any salary for passing a PAY CORNER (if you
-choose to move directly to a PAY CORNER from the Subway, you collect the largest
-amount of salary from that space)". A travel voucher is the near-opposite special
-case — it *does* collect, and always the largest amount.
-
-M12c is what made the difference visible rather than what caused it: until a tile
-could see the roll, every crossing paid the same thing anyway. The fix is small
-and known — announce only the destination, the way the Holland Tunnel already
-moves — but it changes what those two squares pay, so it is written down here
-rather than folded into a milestone about the dice.
-
-Pay Day itself is now right in both directions: the parity when the dice moved
-you, and the maximum when anything else did.
-
 #### A bot hoards travel vouchers, and nobody can trade one
 
 *Added in M12b.* Holdings work: a game gives a player something the engine has
@@ -142,23 +123,6 @@ verdict.
 **Nobody can offer one in a trade.** A `TradeOffer` is deeds and cash; holdings
 are not in it, so the only way one changes hands is a bankruptcy. Both fixes are
 per-game or per-panel work rather than a gap in the mechanism.
-
-#### The roll button can die after a theme change on a short Ultimate run
-
-*Seen in M12d, and it predates it.* `node tools/playtest.mjs --game ultimate
---turns 16` fails at the mid-game palette switch with "the roll button was dead
-after a theme change". The same command at `--turns 30`, and at six players,
-passes; so does every other game. It reproduces on the commit before the M12d
-work, so the build ladder and the merged junctions are not the cause.
-
-It is the failure mode CLAUDE.md already records twice — a button re-registered
-with the input plugin at the wrong moment — reached from a turn count that lands
-the theme change on a different phase. Ultimate is the only game that plays with
-the speed die by default, so its turn has seven phases rather than six, which is
-the first place to look.
-
-Not chased in M12d because the milestone was the ladder, and a rules change is
-the wrong thing to be holding when you go after an input-plugin bug.
 
 #### Houses cannot be built on a majority ownership
 
@@ -196,22 +160,6 @@ good as the weight the *asker* supplies. Triples weights every tile by price, so
 a bot always jumps to Boardwalk — correct often and not always, because it takes
 no account of what the bot already owns or of what it would have to pay to land
 there. The weights are a first pass, not a policy.
-
-#### The menu can set a rule that the game it is set for refuses
-
-*Added in M10d.*
-
-`RULE_FIELDS` deliberately excludes `movement`, because a tracks board played as
-a `circuit` is a pairing `validateGame` refuses and the menu would be offering a
-choice that silently falls back to Classic. Nothing stops the *other* direction
-being reachable, though: `winCondition: 'roundLimit'` with `roundLimit: 0` is a
-game with no limit and no knockout ending either, and the settings screen will
-happily let you build it.
-
-The screen does not validate a combination before starting. It should — the
-check exists (`validateGame`) and the screen has the resolved rule set in hand —
-so a refused combination could be a row that says why instead of a game that
-quietly plays something else. Small, and not written.
 
 #### A game can bring artwork, but only for a texture that already exists
 
@@ -541,6 +489,54 @@ even", passing or landing. What ships pays $300 for passing and $400 for
 stopping, which is the same pair of numbers keyed off the wrong thing. Widening
 `onPass` is easy; deciding whether *every* tile should get a context on every
 step of every walk is the part worth thinking about.
+
+#### The Subway and a travel voucher pay salaries they should not
+
+*Closed in M13a.* `walkTo` takes `{ direct: true }`, which announces **only the
+square arrived on** rather than every square underfoot. The Subway and a travel
+voucher both use it, which is what the book says twice over — "since traveling
+via Subway is a direct route, you do not collect any salary for passing a PAY
+CORNER".
+
+The other half needed nothing: a direct arrival already reports `roll: null`
+(M12c), which a pay corner reads as "collect the largest amount offered by that
+space, regardless of what you rolled". One rule, arrived at from two milestones.
+
+A voucher's own wording — "pass **or** advance to a PAY CORNER" — leaves it
+ambiguous whether squares flown over pay. It is read the same way as the Subway,
+deliberately, rather than left to depend on which square you happened to pick.
+
+#### The roll button can die after a theme change on a short Ultimate run
+
+*Closed in M13a — and it was the harness, not the game.* The check clicked ROLL
+and waited for `isAnimating`. **A turn is not always a movement:** a player
+sitting in jail who rolls and fails to make doubles has taken a perfectly good
+turn and gone nowhere, so nothing ever animates.
+
+`--game ultimate --turns 16` was simply the seed and turn count where somebody
+happened to be in jail at that exact moment; at 30 turns nobody was, which is why
+it looked like an intermittent input bug — the family this project has been
+bitten by twice before. The button was fine the whole time: `__forge.buttons()`
+reported it visible, interactive and enabled, and the state before and after the
+click showed the turn had passed from the jailed player to the next.
+
+The check now asks whether **anything happened** — the active player, the phase,
+or any player's position, cash or jail state — rather than whether a token moved.
+`__forge.buttons()` and `__forge.paused()` were added while chasing it and kept:
+a dead input object looks exactly like a disabled one from outside, and exactly
+like a working one in a screenshot.
+
+#### The menu can set a rule that the game it is set for refuses
+
+*Closed in M13a.* The Start row runs `validateGame` on the **resolved** rule set —
+classic → the game's → the player's — and refuses with the reason when the
+combination is one the loader would reject. It is the same bargain the pause
+menu's Save row already makes: a row that says why it is dead beats a button that
+starts something quietly different.
+
+`RULE_FIELDS` still excludes `movement`, and now for a smaller reason: it belongs
+to the board rather than to a preference. A pairing that *is* offered and turns
+out to be invalid is now caught rather than played.
 
 #### What a repeated dice face means is still hardcoded
 

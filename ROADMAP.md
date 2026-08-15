@@ -1077,11 +1077,15 @@ Sorting them is most of the value.
 All 24 are accounted for below — **3** wrong, **4** softened, **2** balance,
 **7** awaiting a decision, and **8** that should stay exactly as they are.
 
-### 13a — the three that are simply wrong
+**13a is done**, and one of its three turned out to be a defect in the *harness*
+rather than in the game — which is worth more than the fix, because it had been
+misread as the third appearance of an input-plugin bug.
+
+### 13a — the three that are simply wrong · done
 
 Defects, in the order they would bite somebody.
 
-- [ ] **The roll button dies after a theme change on a short Ultimate run.**
+- [x] **The roll button dies after a theme change on a short Ultimate run.**
       `--game ultimate --turns 16` fails at the mid-game palette switch; the same
       command at 30 turns, and at six players, passes. It reproduces on the commit
       before M12d, so the build ladder did not cause it. This is the third
@@ -1089,13 +1093,13 @@ Defects, in the order they would bite somebody.
       at the wrong moment — and the first that is *intermittent*, which makes it
       worth more than the ten minutes the other two took. Ultimate is the only
       game that defaults to the speed die's seven-phase turn; start there.
-- [ ] **The Subway and a travel voucher pay salaries they should not.** Both move
+- [x] **The Subway and a travel voucher pay salaries they should not.** Both move
       a player with `walkTo`, which announces every tile on the route, so riding
       the Subway past PAY DAY collects a salary the book denies twice over. The
       fix is known and small — announce only the destination, the way the Holland
       Tunnel already moves — and it is here rather than in M12c because it changes
       what two squares pay.
-- [ ] **The menu can set a rule the game it is set for refuses.** `RULE_FIELDS`
+- [x] **The menu can set a rule the game it is set for refuses.** `RULE_FIELDS`
       excludes `movement` because a tracks board played as a `circuit` is a
       pairing `validateGame` rejects. Excluding the field is a workaround for a
       menu that cannot express "this rule is not available for this game"; the

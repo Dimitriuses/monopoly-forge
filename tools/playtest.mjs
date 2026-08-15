@@ -106,6 +106,31 @@ const HOTSPOTS = {
 // on screen (the title screen or the pause screen), so the same three helpers
 // drive both.
 
+/**
+ * Everything about a game that a *turn* should move. Used to ask "did anything
+ * happen?" without assuming what — a jailed player's turn moves no token, and a
+ * check that waits for movement calls that a dead button.
+ */
+/**
+ * What the bank still holds, by building kind. Not `houses/hotels`: the bank
+ * has stocked a `Record` since M12d because a game may build five different
+ * things, and printing two named fields of it quietly said "undefined/undefined"
+ * on every board — including the classic one.
+ */
+function describeStock(bank) {
+  const stock = bank && bank.stock;
+  if (!stock) return 'unknown';
+  return Object.entries(stock).map(([kind, n]) => `${n} ${kind}`).join(', ');
+}
+
+async function stateSignature(page) {
+  return page.evaluate(() => JSON.stringify([
+    window.__forge.activeId(),
+    window.__forge.phase(),
+    window.__forge.state().players.map((q) => [q.position, q.cash, q.inJail]),
+  ]));
+}
+
 async function menuSpots(page) {
   return page.evaluate(() => (window.__menu ? window.__menu.spots() : []));
 }
@@ -262,10 +287,10 @@ async function clickGame(page, canvasBox, [gx, gy]) {
 }
 
 /** Poll a predicate evaluated in the page until it holds, or time out. */
-async function waitFor(page, fn, { timeout = 8000, interval = 60 } = {}) {
+async function waitFor(page, fn, { timeout = 8000, interval = 60, arg } = {}) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    if (await page.evaluate(fn)) return true;
+    if (await page.evaluate(fn, arg)) return true;
     await sleep(interval);
   }
   return false;
@@ -470,7 +495,10 @@ async function main() {
     // rest out would prove nothing this game's own playtest does not already
     // prove, and would make `npm run screenshots` hostage to every step after
     // this one — which is not a bargain worth making to take a photograph.
-    if (CLAIM && CLAIM.only === '2-board') {
+    // `TAKE_SHOTS` is half the condition and the important half: without it this
+    // is an ordinary playtest of that game, and returning here would hollow it
+    // out to "the board rendered" while still exiting 0.
+    if (TAKE_SHOTS && CLAIM && CLAIM.only === '2-board') {
       captured = CLAIM.as;
       return;
     }
@@ -705,7 +733,7 @@ async function main() {
       console.log(`  positions      ${end.players.map((p) => p.position).join(', ')}`);
       console.log(`  cash           ${end.players.map((p) => `$${p.cash}`).join(', ')}`);
       console.log(`  tiles owned    ${owned}`);
-      console.log(`  bank h/h       ${end.bank.houses}/${end.bank.hotels}`);
+      console.log(`  bank stock     ${describeStock(end.bank)}`);
       const built = end.board.tiles.reduce((n, t) => n + (t.houses ?? 0), 0);
       // Straight from the turn log, which now keeps everything rather than the
       // dozen lines that happened to fit on screen.
@@ -1015,9 +1043,37 @@ async function main() {
         const stuck = await page.evaluate(() => window.__forge.phase());
         throw new Error(`the game was not playable after a theme change (${stuck})`);
       }
+      // **Something happened**, not "a token moved". Those are not the same
+      // thing and the difference cost an afternoon: a player sitting in jail who
+      // rolls and fails to make doubles has taken a perfectly good turn and
+      // moved nowhere, so `isAnimating` never goes true. That made this check
+      // fail on `--game ultimate --turns 16` — the one seed and turn count where
+      // somebody happened to be in jail at this exact point — and report a dead
+      // button, which is a bug in the harness dressed as a bug in the game.
+      const wasState = await stateSignature(page);
       await clickGame(page, box, HOTSPOTS.roll);
-      if (!(await waitFor(page, () => window.__forge.isAnimating(), { timeout: 6000 }))) {
-        throw new Error('the roll button was dead after a theme change');
+
+      const moved = await waitFor(page, () => window.__forge.isAnimating(), { timeout: 2500 });
+      const changed = moved || await waitFor(
+        page, (was) => JSON.stringify([
+          window.__forge.activeId(),
+          window.__forge.phase(),
+          window.__forge.state().players.map((q) => [q.position, q.cash, q.inJail]),
+        ]) !== was,
+        { timeout: 6000, arg: wasState },
+      );
+
+      if (!changed) {
+        const why = await page.evaluate(() => ({
+          phase: window.__forge.phase(),
+          active: window.__forge.activeId(),
+          buttons: window.__forge.buttons(),
+          menuStillOpen: Boolean(window.__menu),
+          scenePaused: window.__forge.paused(),
+        }));
+        throw new Error(
+          `the roll button did nothing after a theme change: ${JSON.stringify(why)}`,
+        );
       }
       await waitFor(page, idle, { timeout: 9000 });
       await shot(page, box, '16-theme-live');
@@ -1391,7 +1447,7 @@ async function main() {
     console.log(`  rounds played     ${end.turn.round}`);
     console.log(`  biggest pot       $${biggestPot}${jackpot ? '' : ' (jackpot rule off)'}`);
     console.log(`  panel opened on   ${panelTileId === null ? 'nothing' : `tile ${panelTileId}`}`);
-    console.log(`  bank houses/hotels ${end.bank.houses}/${end.bank.hotels}`);
+    console.log(`  bank stock        ${describeStock(end.bank)}`);
     console.log('');
 
     if (problems.length) failure = problems.join('\n  ');

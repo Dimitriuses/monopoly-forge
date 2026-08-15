@@ -13,6 +13,7 @@ import { isOwnable } from '@/tiles/Tile';
 import { EFFECT_TILE_TYPES, LADDERS } from '@/games/ultimate/tiles';
 import { bus } from '@/utils/EventBus';
 import { Bank } from '@/game/Bank';
+import { walkTo } from '@/game/Landing';
 import { canBuild } from '@/game/BuildRules';
 import { rungAt, topLevel } from '@/game/BuildLadder';
 import { Dice } from '@/game/Dice';
@@ -405,6 +406,55 @@ describe('Ultimate Monopoly — the rules it is played by', () => {
       const check = canBuild(board, bank, ann, util as never);
       expect(check.ok).toBe(false);
       expect(check.reason).toMatch(/Nothing can be built/);
+    });
+  });
+
+  // ─── Direct movement ────────────────────────────────────────────────────────
+  // "Since traveling via Subway is a direct route, you do not collect any salary
+  // for passing a PAY CORNER (if you choose to move directly to a PAY CORNER
+  // from the Subway, you collect the largest amount of salary from that space)."
+
+  describe('travel is direct, and direct means no salary on the way', () => {
+    /** Every payment made to p1 while `run` executes. */
+    function paidDuring(run: () => void): number[] {
+      const paid: number[] = [];
+      const off = bus.on<{ amount: number; creditorId: string }>(
+        'rent:pay', (e) => { if (e.creditorId === 'p1') paid.push(e.amount); },
+      );
+      run();
+      off?.();
+      return paid;
+    }
+
+    const payCorner = () => board.tiles.find((t) => t.type === 'payDay')!.id;
+
+    it('pays nothing for a pay corner flown over', () => {
+      const player = new Player('p1', 'Ann', 'car', false, 100);
+      const start = board.anchor('start');
+      // Three back from GO, to three past it: a route that certainly crosses it,
+      // and ends on an ordinary square that pays nothing of its own.
+      const from = board.move(start, -3).to;
+      const to   = board.move(start, 3).to;
+
+      player.position = from;
+      const walked = paidDuring(() => walkTo(board, player, to));
+      player.position = from;
+      const direct = paidDuring(() => walkTo(board, player, to, { direct: true }));
+
+      // Walking over GO collects the salary; flying over it collects nothing.
+      expect(walked).toEqual([board.rules.goSalary]);
+      expect(direct).toEqual([]);
+    });
+
+    /**
+     * The other half of the same rule: arriving still pays, and pays the
+     * *maximum*, because a direct arrival reports no roll.
+     */
+    it('pays the pay corner it arrives on, at its highest rate', () => {
+      const player = new Player('p1', 'Ann', 'car', false, 100);
+      player.position = board.anchor('start');
+      const paid = paidDuring(() => walkTo(board, player, payCorner(), { direct: true }));
+      expect(paid).toEqual([LADDERS.payDay.even]);
     });
   });
 

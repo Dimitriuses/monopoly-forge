@@ -604,6 +604,18 @@ export class GameScene extends Phaser.Scene {
     (window as unknown as Record<string, unknown>).__forge = {
       state:       () => this.serialize(),
       phase:       () => this.turnManager.phase,
+      /**
+       * Whether the buttons under the board can actually be pressed. Read-only,
+       * and it exists because "the button is there and does nothing" has now
+       * been three separate bugs: a dead input object looks exactly like a
+       * disabled one from outside, and exactly like a working one in a
+       * screenshot.
+       */
+      paused: () => this.scene.isPaused(),
+      buttons: () => ({
+        roll: describeButton(this.rollBtn),
+        jail: describeButton(this.jailBtn),
+      }),
       // What a turn is made of *in this game*, so the harness can check the
       // phase it ends in without keeping its own copy of the list — a rule set
       // may have added one.
@@ -2673,4 +2685,18 @@ function countOf(board: Board, tile: Tile & Ownable, kind: string): number {
 /** Which kind is standing there, if any. */
 function topKind(board: Board, tile: Tile & Ownable): string | null {
   return standingOn(board.rules.buildLadder, tile.type, tile.level)?.kind.id ?? null;
+}
+
+/** What a button's input state actually is — see `__forge.buttons()`. */
+function describeButton(btn: Phaser.GameObjects.Text | undefined): object | null {
+  if (!btn) return null;
+  return {
+    visible: btn.visible,
+    alpha: btn.alpha,
+    // `input` is null when the object is not in the input plugin's list at all,
+    // which is the state `removeInteractive` leaves behind and the one that
+    // looks identical to a working button.
+    hasInput: Boolean(btn.input),
+    enabled: btn.input ? btn.input.enabled : false,
+  };
 }

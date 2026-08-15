@@ -2,7 +2,8 @@ import Phaser from 'phaser';
 import type { TokenType } from '@/config';
 import { TOKEN_LABELS } from '@/config';
 import { SaveLoad, type SlotSummary } from '@/utils/SaveLoad';
-import { GAMES, DEFAULT_GAME, rulesFor } from '@/games';
+import { GAMES, DEFAULT_GAME, gameById, rulesFor } from '@/games';
+import { validateGame } from '@/games/Game';
 import { validateSnapshot, type GameSnapshot } from '@/game/Snapshot';
 import {
   RULE_FIELDS, RULE_GROUPS, formatRuleValue, nudgeRuleValue, variantFields,
@@ -121,7 +122,18 @@ export class MenuScene extends Phaser.Scene {
     });
 
     items.push(
-      { id: 'start', label: 'Start', primary: true, onPress: () => this.startGame() },
+      {
+        id: 'start', label: 'Start', primary: true,
+        // The settings screen can build a rule set the game refuses — the menu
+        // holds a `Partial<GameRules>` and never asked whether the two go
+        // together. `validateGame` is the check that already exists, and this is
+        // the one place that has both halves in hand, so the row answers for
+        // itself the way Save does rather than starting a game that quietly
+        // plays something else.
+        enabled: this.rulesProblem() === null,
+        reason: this.rulesProblem() ?? undefined,
+        onPress: () => this.startGame(),
+      },
       { id: 'cancel', label: 'Cancel', onPress: () => this.menu.back() },
     );
     return { title: 'Play', items };
@@ -337,6 +349,24 @@ export class MenuScene extends Phaser.Scene {
       players: this.players,
       snapshot: saved.state as unknown as GameSnapshot,
     });
+  }
+
+  /**
+   * Why the chosen rules cannot be played, or null.
+   *
+   * Asked of the *resolved* set — classic → the game's → the player's — because
+   * that is what would actually be played, and a pairing is only ever wrong as a
+   * pair. The board is not built here: `validateGame` does that itself, and
+   * doing it twice is how the menu would come to disagree with the loader.
+   */
+  private rulesProblem(): string | null {
+    const game = gameById(this.gameId);
+    const problems = validateGame({ ...game, rules: rulesFor(game, this.overrides) });
+    if (!problems.length) return null;
+    const [first] = problems;
+    return problems.length === 1
+      ? `${first.where} ${first.problem}`
+      : `${first.where} ${first.problem} (and ${problems.length - 1} more)`;
   }
 
   private startGame(): void {
