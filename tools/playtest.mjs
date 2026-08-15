@@ -298,8 +298,55 @@ async function checkTokenSpacing(page, where) {
   return null;
 }
 
+// ─── Which screenshots a run owns ─────────────────────────────────────────────
+// Every `shot()` used to write a fixed filename whatever the run was playing, so
+// `--game ultimate --shots` — a perfectly reasonable way to refresh one picture —
+// silently overwrote thirteen Classic screenshots with Ultimate ones. The names
+// are in README.md, so the damage is invisible until somebody opens the readme.
+//
+// A run now **owns** a set of names and can write nothing else. Three shapes own
+// anything at all, and `npm run screenshots` is all of them in sequence:
+//
+//   plain (Classic, three humans)  the canonical set — the readme's gallery
+//   --bots                         12-bots, and nothing else
+//   --game <not classic>           that board's picture, and nothing else
+//
+// Anything else — a variant, a house rule, six players, a theme — owns nothing,
+// because those runs exist to prove the game still plays, not to be photographed.
+
+/** The one picture a non-Classic game's run is allowed to leave behind. */
+const BOARD_SHOTS = {
+  roundabout: '13-round-board',
+  orbits:     '14-orbit-board',
+  ultimate:   '15-ultimate-board',
+};
+
+/**
+ * `null` means this run owns the canonical set; otherwise the single name it may
+ * write, and what to save it as.
+ */
+function shotClaim() {
+  // A run bent out of its default shape is not a photograph of anything.
+  const bent = VARIANTS || HOUSE_RULES || BOT_TRADES || THEME || PLAYERS !== 3;
+
+  if (GAME && GAME !== 'classic') {
+    const as = BOARD_SHOTS[GAME];
+    if (bent || !as) return { only: null };
+    // The board is photographed at `2-board`; it is saved under this game's name.
+    return { only: '2-board', as };
+  }
+  if (BOTS) return bent ? { only: null } : { only: '12-bots', as: '12-bots' };
+  return bent ? { only: null } : null;
+}
+
+const CLAIM = shotClaim();
+
 async function shot(page, canvasBox, name) {
   if (!TAKE_SHOTS) return;
+  if (CLAIM) {
+    if (CLAIM.only === null || name !== CLAIM.only) return;
+    name = CLAIM.as;
+  }
   await mkdir(SHOTS, { recursive: true });
   const file = path.join(SHOTS, `${name}.png`);
   await page.screenshot({ path: file, clip: canvasBox });
@@ -327,7 +374,11 @@ async function main() {
             + (HOUSE_RULES ? `&houseRules=${HOUSE_RULES}` : '')
             + (THEME ? `&theme=${THEME}` : '');
   console.log(`▶ playtest: ${url}`);
-  console.log(`  ${TURNS} turns, seed ${SEED}${TAKE_SHOTS ? ', capturing screenshots' : ''}`);
+  const shots = !TAKE_SHOTS ? ''
+    : CLAIM === null ? ', capturing the screenshot set'
+    : CLAIM.only === null ? ', capturing nothing (this run owns no screenshots)'
+    : `, capturing ${CLAIM.as}.png only`;
+  console.log(`  ${TURNS} turns, seed ${SEED}${shots}`);
 
   const browser = await chromium.launch({
     headless: !HEADED,
@@ -346,6 +397,8 @@ async function main() {
   });
 
   let failure = null;
+  /** Set when a board-picture run has what it came for and stops early. */
+  let captured = null;
   try {
     await page.goto(url, { waitUntil: 'load' });
 
@@ -412,6 +465,15 @@ async function main() {
     }
     console.log(`  ✓ a rule changed on the menu reached the game (jail fine $${wantedJailFine})`);
     await shot(page, box, '2-board');
+
+    // A board-picture run is finished the moment it has the picture. Playing the
+    // rest out would prove nothing this game's own playtest does not already
+    // prove, and would make `npm run screenshots` hostage to every step after
+    // this one — which is not a bargain worth making to take a photograph.
+    if (CLAIM && CLAIM.only === '2-board') {
+      captured = CLAIM.as;
+      return;
+    }
 
     // Everyone starts on GO — the busiest square a game ever has.
     const stacked = await checkTokenSpacing(page, 'at the start');
@@ -1348,6 +1410,11 @@ async function main() {
   if (failure) {
     console.error(`✗ playtest failed:\n  ${failure}`);
     process.exit(1);
+  }
+
+  if (captured) {
+    console.log(`✓ captured screenshots/${captured}.png — no console errors`);
+    return;
   }
 
   console.log('✓ playtest passed — no console errors, game state consistent');

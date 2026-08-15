@@ -22,11 +22,12 @@ the game itself: Monopoly does not always terminate, which is why "every game
 reaches a winner" is *not* one of the invariants it checks.
 
 **M9 gives the parts somewhere to live together, and it is done.**
-`src/games/<id>/` is one folder, one playable thing, picked as one choice. Five
+`src/games/<id>/` is one folder, one playable thing, picked as one choice. Six
 ship: the classic board, a circle, a three-ring spiral, the classic board with
-the speed die, and **Pocket** — the classic board with its utilities swapped out,
-a trimmed deck, a round limit and its own artwork, which is the worked example
-[the authoring guide](docs/authoring-a-game.md) is written around. A game can be
+the speed die, **Ultimate Monopoly**, and **Pocket** — the classic board with its
+utilities swapped out, a trimmed deck, a round limit and its own artwork, which
+is the worked example [the authoring guide](docs/authoring-a-game.md) is written
+around. A game can be
 composed from one that already exists, and can bring artwork without the repo
 carrying any.
 
@@ -42,7 +43,7 @@ state to a player.**
 
 **M12 is the plan that came out of it** — four engine gaps, each with at least
 three customers already in the tree, and each named by what it unlocks rather
-than by what it generalises. **12a, 12b and 12c are done**; 12d is not started.
+than by what it generalises. **All four are done.**
 
 **M10 — refinement — is done.** The corners the rules cut are closed (10a), the
 things a player asks for are in (10b), the menus are a tree (10d), and the bots
@@ -851,7 +852,7 @@ which exists because of this list rather than ahead of it.
 
 ---
 
-## M12 — the rules Ultimate Monopoly could not have
+## M12 — the rules Ultimate Monopoly could not have · done
 
 M11 added the board. This is the four engine gaps that stopped six of its printed
 rules, written as a plan rather than a wish: each slice names **what it unlocks**,

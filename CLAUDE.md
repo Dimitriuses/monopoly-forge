@@ -4,6 +4,19 @@ Working notes for this repo — the commands, the invariants, and the traps that
 have already cost time. Read [KNOWNISSUES.md](KNOWNISSUES.md) before concluding
 that something is broken; several oddities here are known and deliberate.
 
+**What is not here, on purpose.** This file is read every session, so it keeps the
+rules and leaves the retellings elsewhere. Reach for these when you are actually
+in that corner of the repo:
+
+| When | Read |
+|---|---|
+| Working on, or breaking, the browser harness | [docs/playtest-harness.md](docs/playtest-harness.md) |
+| Changing a dependency | [docs/ci-and-dependencies.md](docs/ci-and-dependencies.md) |
+| Phaser doing something inexplicable | [docs/phaser-traps.md](docs/phaser-traps.md) |
+| Adding a game | [docs/authoring-a-game.md](docs/authoring-a-game.md) |
+| Wondering how the layers fit | [docs/architecture.md](docs/architecture.md) |
+| Wondering *why* a rule exists | [DEVLOG.md](DEVLOG.md) — every invariant here has an entry there |
+
 ## Commands
 
 ```bash
@@ -724,139 +737,62 @@ and which edge faces the board interior come from its `TileLayout`, so a new
 decoration is written once rather than four times. `GameScene` keeps the tokens,
 the buttons and the wiring.
 
-### Phaser API traps
-
-- `this.make.graphics({ add: false })` still *works* at runtime but no longer
-  type-checks — `add` was dropped from `Graphics.Options`. Use
-  `this.make.graphics({}, false)`; `addToScene` is the second argument. This is
-  why `npm run build` failed while `npm run dev` was fine: Vite transpiles without
-  type-checking, so `tsc` errors never surfaced during development.
-- Removing a container child: `removeAt(1, true)` removes *and* destroys in one
-  step. Calling `destroy()` first already removes it, so a following `removeAt(1)`
-  is out of bounds.
-- `setVisible(false)` does not remove an object from the input hit list — pair it
-  with `disableInteractive()`, as `setJailBtnVisible` does, or invisible buttons
-  still fire.
-- **Toggle a button with `disableInteractive()`, never `removeInteractive()`.**
-  The destructive one queues the object for removal from the input plugin's list.
-  Disable and re-enable it in the *same frame* — which every turn change does,
-  `turn:end` off and `turn:start` on — and the next `preUpdate` clears the input
-  object that `setInteractive()` just created while re-inserting the button. It
-  sits there at full alpha, looking fine, and never fires again. `setInteractive`
-  on an object that already has `input` just flips `enabled`, so the pair is safe.
-  This killed ROLL DICE after three doubles sent a player to jail; see DEVLOG.
-- **`Phaser.Scene` already owns some obvious field names**, and a scene field
-  that collides fails to compile with the misleading "type `this` is not
-  assignable to parameter of type `Scene`". Two have been hit: `renderer` (the
-  WebGL/Canvas renderer), which is why `GameScene` calls its `BoardRenderer`
-  `boardView`; and **`data`** (the scene's `DataManager`), which is why
-  `PauseScene` calls its init payload `paused`. Check the name before adding a
-  field — the error names neither the property nor the file.
-
-### A local `npm ci` does not prove CI will install
-
-**Run `npm run verify:install` after any dependency change.** A passing local
-`npm ci` is not evidence, because it uses *your* npm, and the lockfile is only
-valid for the npm that consumes it.
-
-This broke every CI job once. `npm install -D vitest@latest` brought in vitest 4,
-which requires `vite ^6 || ^7 || ^8` while `package.json` pinned `vite ^5`. npm 11
-resolved that by nesting a second Vite (the app built on Vite 5 while the tests
-ran on a nested Vite 8) and then wrote a lockfile that recorded the nested Vite
-but **not** its `esbuild@0.28.1` subtree. npm 11 reinstalls happily from its own
-incomplete lockfile; npm 10 — bundled with Node 22, therefore the npm on the
-runners — recomputed the tree, found 27 packages absent, and refused with
-`Missing: esbuild@0.28.1 from lock file`.
-
-Two rules follow:
-
-- **Keep dependency majors aligned.** If a dev tool wants a different major of
-  something `package.json` already pins, fix the range rather than letting npm
-  nest a second copy. Check 3 of `verify:install` fails on exactly that.
-- **Node and npm come as a pair.** CI resolves Node from `.nvmrc`
-  (`node-version-file`), so the npm major is whatever that Node bundles. Both
-  workflows print `node --version && npm --version` before installing.
-
 ### The playtest harness clicks fixed coordinates
 
-The game is one canvas with no DOM controls, so `tools/playtest.mjs` clicks board
-pixel positions from its `HOTSPOTS` table. **Move a button in a scene and you must
-update that table**, or the harness clicks empty space and fails with a vague
-"no property was bought in the whole run".
+The game is one canvas with no DOM, so `tools/playtest.mjs` clicks board pixel
+positions from its `HOTSPOTS` table. **Move a button in a scene and you must
+update that table**, or the harness clicks empty space and fails with something
+vague. Four rules follow, and the reasoning behind each is in
+**[docs/playtest-harness.md](docs/playtest-harness.md)**:
 
-`GameScene.exposeDebugHandle()` publishes `window.__forge` (state, phase,
-`isAnimating`, whether a prompt, card or property panel is open) so the harness can
-assert on real model state rather than pixels. It is gated on the same switch as
-debug logging, so a plain production load exposes nothing.
+- **Menus, tiles and trade rows are *not* in the table.** They report their own
+  positions (`__menu.spots()`, `__forge.tileCentre()`, `__forge.tradeSpots()`) and
+  the harness presses them **by name**. Keep it that way; the table is for scene
+  buttons only.
+- **Nothing may assume the board's size.** `__forge.board()` reports it. The
+  harness checked `position <= 39` for four milestones and failed Ultimate
+  Monopoly's 120-tile board with it.
+- **Poll for the end state, never for "nothing is open."** A walk goes idle a
+  moment before its landing draws a card. The headless clock also runs slow — a
+  `delayedCall(700)` can take ~2 s — so sleeping for the nominal delay is how you
+  get a "nothing happened" that is really impatience.
+- **A run owns the screenshots it may write.** `shot()` used to save a fixed
+  filename whatever the run was playing, so `--game ultimate --shots` — a
+  reasonable way to refresh one picture — overwrote thirteen Classic screenshots
+  with Ultimate ones, invisibly, because the names are only referenced from
+  README.md. Three run shapes own anything: plain Classic owns the gallery,
+  `--bots` owns `12-bots`, and a non-Classic game owns *its board picture only*
+  and stops as soon as it has it. Any other shape — a variant, a house rule, six
+  players, a theme — owns nothing. `npm run screenshots` is all five passes.
+- **A write-hook arranges the position, never the answer.**
+  `__forge.forceHouseShortage()`, `forceBankruptcy()` and `forceMutualKeys()` set
+  up a board the real rule then plays out. Keep new hooks read-only unless the
+  alternative is a rule with no end-to-end check at all.
 
-**The menu is not in `HOTSPOTS` either.** It is a tree whose rows move as games,
-variants and save slots are added, so it reports its own positions through
-`__menu.spots()` — id, label, current value, and where the ‹ › are — and the
-harness presses rows **by name**. `menuPress` throws when a row is missing or
-disabled rather than clicking empty space, because a silent miss is the failure
-mode the table had. The run also walks into Game Settings, changes a rule, and
-asserts it reached `__forge.rules()`.
+### Dependencies: a local `npm ci` does not prove CI will install
 
-**A prompt the harness cannot answer is a hung run.** `__forge.choice()` reports
-the question on screen and which tiles it would accept, so `settlePrompts` can
-answer a board-style choice by clicking one. And settling polls for the *end
-state* — the dice back on offer — never for "nothing is open", because a walk
-goes idle a moment before its landing draws a card, and the card then swallows
-the next click.
+**Run `npm run verify:install` after any dependency change.** A passing local
+`npm ci` is not evidence — it uses *your* npm, and a lockfile is only valid for
+the npm that consumes it. Keep dependency majors aligned rather than letting npm
+nest a second copy of something, and remember Node and npm come as a pair (CI
+resolves Node from `.nvmrc`). The failure that established all of this — it broke
+every CI job once — is in
+**[docs/ci-and-dependencies.md](docs/ci-and-dependencies.md)**.
 
-**Nothing in the harness may assume the board's size.** `__forge.board()` reports
-the size, the tracks and which squares charge a tax. It exists because the
-harness checked `position <= 39` for four milestones and failed Ultimate
-Monopoly's 120-tile board with it — the "never write 40" rule broken in the one
-file nothing type-checks.
+### Phaser API traps
 
-Board *tiles* are the exception to the hotspot table: `__forge.tileCentre(id)`
-returns a tile's centre, so the harness clicks tiles without keeping its own copy
-of the board geometry. Keep it that way — the table is for scene buttons only.
-The same applies to the turn: `__forge.phases()` reports what *this* game's turn
-is made of, so the harness checks the phase it ended in without a hardcoded list
-that a rule set adding a phase would falsify.
+Two bite often enough to keep here; the rest are in
+**[docs/phaser-traps.md](docs/phaser-traps.md)**.
 
-`__forge.forceHouseShortage()` and `__forge.forceBankruptcy()` are the two hooks
-on that handle that *write*. Both exist for the same reason: the rule they set up
-needs a board a played game reaches only at the very end, or not at all. The bot
-run calls them part-way in and then asserts that a house, and a returned estate,
-went under the hammer. `forceBankruptcy` settles the debt through `settleDebt` and
-`announceSettlement` rather than setting flags, so what it exercises is the real
-chain; `forceMutualKeys` rigs a *board* where two players hold each other's key
-and lets the real `proposeTrade` find the swap, rather than injecting an offer.
-That is the shape a write-hook must have — **arrange the position, never the
-answer.** Keep new hooks read-only unless the alternative is a rule with no
-end-to-end check at all.
-
-**A turn does not end while anything is under the hammer.** `safeEndTurn` waits
-on `this.auction` *and* `this.auctionQueue` — a bankruptcy mid-turn puts a whole
-estate up for sale, and the next player must not start rolling into it. A queued
-subject stays in the queue until it actually opens, so there is never a frame
-where the queue looks empty and the turn slips out underneath it.
-
-**Only the auction a declined property started ends the turn.** `auctionEndsTurn`
-says which one that is. A contested house and a returned estate both happen in the
-*middle* of somebody's turn — the estate sale can even open while a token is still
-walking — so ending the turn when they settle fires the walk's landing on the next
-player. That is the "🔴 BUG DETECTED — animation finished for Player 3 but the turn
-has already advanced to Player 2" the harness caught on Orbits.
-
-`TradePanel`'s hotspots are the fragile ones: its rows and buttons hang off
-`LIST_TOP` / `BUTTON_Y` / `H`, so changing any of those means recomputing
-`tradeRow1`, `tradePropose` and `tradeAccept` by hand. The symptom is a vague
-"accepting the trade did not close the panel".
-
-**The headless clock runs slow.** A `delayedCall(700)` can take ~2 s of wall time
-in headless Chromium, so anything driving the game from Playwright must poll for
-the state it wants rather than sleeping for the nominal delay. A "nothing
-happened" result there is usually impatience, not a bug.
-
-**A dead button is silent.** The harness clicks ROLL every turn whether or not
-anything happens, so a broken roll button used to leave the run passing on what
-the earlier turns had already done. It now fails after three consecutive rolls
-that change no state at all. Keep that check honest when adding modal flows —
-it skips turns where a card or buy prompt is open.
+- **Toggle a button with `disableInteractive()`, never `removeInteractive()`.**
+  The destructive one queues the object for removal from the input plugin's list,
+  and disabling then re-enabling in the *same frame* — which every turn change
+  does — leaves it at full alpha, looking fine, and never firing again.
+- **`Phaser.Scene` already owns some obvious field names.** A collision fails to
+  compile with the misleading "type `this` is not assignable to parameter of type
+  `Scene`", naming neither the property nor the file. `renderer` and `data` have
+  both been hit — which is why `GameScene` calls its renderer `boardView` and
+  `PauseScene` calls its init payload `paused`.
 
 ## Deployment
 

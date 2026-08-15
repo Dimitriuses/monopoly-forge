@@ -34,6 +34,29 @@ checking claims against the build rather than the claim itself.
 
 ---
 
+## Milestones
+
+Every milestone, in the order [ROADMAP.md](ROADMAP.md) lists them. One row each —
+the parts a milestone was split into are in its own entry below, not here.
+[CHANGELOG.md](CHANGELOG.md) is the same ground newest-first, in one line each.
+
+| Milestone | What it was | Status |
+|---|---|---|
+| [M1](#m1--foundation-scaffold) | Foundation — scaffold, board, tiles, decks, scenes | ✅ done |
+| [M2](#m2--core-loop) | The core loop — dice, movement, rent, tax, jail | ✅ done |
+| [M3](#m3--ownership-and-development--2026-08-12) | Ownership — houses, hotels, mortgages, colour groups | ✅ done |
+| [M4](#m4--cards-jail-and-rent-edge-cases--2026-08-12) | Cards, jail and the rent edge cases behind them | ✅ done |
+| [M5](#m5--multiplayer-interaction--2026-08-12) | Multiplayer — auctions, trading, bankruptcy | ✅ done |
+| [M6](#m6--polish--2026-08-12) | Polish — save/load, house rules, turn log, sound | ✅ done |
+| [M7](#m7--opponents-you-can-play-against--2026-08-12) | Opponents worth playing against | ✅ done |
+| [M8](#m8a--the-board-stops-being-40-tiles-in-a-square--2026-08-13) | **The engine** — a board is a file, rules are registries, presentation is a theme, and a simulator plays it a thousand times | ✅ done |
+| [M9](#m9a--a-game-is-a-folder) | A game is a folder — board, economy, deck, theme, artwork, picked as one choice | ✅ done |
+| [M10](#m10d--the-menus-become-a-tree--2026-08-14) | Refinement — the corners the rules cut, saves mid-turn, menus as a tree, bots measured rather than tuned | ✅ done |
+| [M11](#m11--a-board-that-is-not-a-circuit--2026-08-14) | A board that is not a circuit — Ultimate Monopoly's 120 tiles across three loops | ✅ done |
+| [M12](#m12a--the-last-two-reductions--2026-08-15) | The rules Ultimate Monopoly could not have — choices a bot can answer, holdings, the roll a tile can see, the build ladder | ✅ done |
+
+---
+
 ## M1 — Foundation (Scaffold)
 
 ### What was built
@@ -285,28 +308,6 @@ src/
     ├── PRNG.ts              Seeded Mulberry32 PRNG
     └── SaveLoad.ts          JSON save/load to localStorage
 ```
-
----
-
-## Milestone Status
-
-| Milestone | Status |
-|---|---|
-| M1 — Foundation | ✅ Complete |
-| M2 — Core Loop | ✅ Complete |
-| M3 — Ownership (houses/hotels, mortgage, color-group enforcement) | ✅ Complete — see [M3 below](#m3--ownership-and-development--2026-08-12) |
-| M4 — Cards & Jail (all edge cases) | ✅ Complete — see [M4 below](#m4--cards-jail-and-rent-edge-cases--2026-08-12) |
-| M5 — Multiplayer UI (trade dialog, auction system) | ✅ Complete — see [M5 below](#m5--multiplayer-interaction--2026-08-12) |
-| M6 — Polish (animations, sound, save/load, house rules) | ✅ Complete — see [M6 below](#m6--polish--2026-08-12) |
-| M7 — Opponents (bots you can play against) | ✅ Complete — see [M7 below](#m7--opponents-you-can-play-against--2026-08-12) |
-| **M8 — Engine** — the destination | ✅ **Complete.** Four parts, below |
-| M8a — A board is a file | ✅ `GameMap` + `validateMap`; a square, a circle and three concentric rings ship |
-| M8b — Rules are registries, not switches | ✅ Tile types, card effects, turn orders, win conditions, variants; a turn is a list of phases; the speed die is the proof; the last houses sold at auction |
-| M8c — Presentation is a theme | ✅ Colours, fonts and per-tile-type decoration in one object, two palettes; the panels update in place instead of rebuilding |
-| M8d — A simulation platform | ✅ A headless runner, six invariants after every turn, a batch CLI, a second policy measured, and a balance pass driven by the numbers |
-| **M9 — A game is a folder** (board + economy + deck + theme) | ✅ **Complete.** Six games ship, registration is scoped to the loaded one, a game can be composed from another and bring its own artwork, and [authoring a game](docs/authoring-a-game.md) is written down |
-| **M11 — A board that is not a circuit** | ✅ **Complete.** Ultimate Monopoly: 120 tiles across three loops. Movement became a named strategy, `move` reports its route, a tile's rule may mention somebody else, colour groups opened, and group rent stopped being a literal |
-| **M10 — Refinement** | ✅ **Complete.** All four printed-rule corners closed, both menus are a tree, saves work mid-turn and mid-auction, the turn log comes out, bots offer *you* trades and now trade their way out of a stalemate — 22 of 400 unfinished classic games became 0 — and the cleverer valuation that was meant to beat them was measured and does not |
 
 ---
 

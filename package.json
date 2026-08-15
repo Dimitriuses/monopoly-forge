@@ -14,7 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "playtest": "node tools/playtest.mjs",
-    "screenshots": "node tools/playtest.mjs --shots",
+    "screenshots": "node tools/playtest.mjs --shots && node tools/playtest.mjs --shots --bots && node tools/playtest.mjs --shots --game roundabout && node tools/playtest.mjs --shots --game orbits && node tools/playtest.mjs --shots --game ultimate",
     "verify:install": "node tools/verify-install.mjs",
     "simulate": "vite build -c vite.sim.config.ts --logLevel warn && node dist-sim/simulate.mjs"
   },

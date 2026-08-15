@@ -4,43 +4,26 @@ Measured against the current `main`, by running the game (`npm run playtest`) an
 the unit suite (`npm test`) rather than by reading the code. Anything here is
 reproducible; anything merely *planned* lives in [ROADMAP.md](ROADMAP.md) instead.
 
+**Two halves.** [Open](#open) is what is still true — the list to pick the next
+piece of work from. [Closed](#closed) is what used to be true, kept rather than
+deleted because each entry records why it was a problem and what shape the fix
+took. Several invariants in [CLAUDE.md](CLAUDE.md) exist because of an entry that
+is now in the second half.
+
+Each half is grouped the same way: **Gameplay** is what a player would notice,
+**Architecture** what a maintainer would, **Tooling** what the build and the
+harness would.
+
 ---
 
-## Gameplay
+## Open
 
-### A returned estate is sold as it stands, mortgages and all
+The list to choose from.
 
-*Fixed:* a player who goes under owing the **bank** now has their deeds auctioned
-one after another, as the standard rules require. `transferEstate` reports what
-went back unowned, and `GameScene` queues a `tileSubject` for each; the turn that
-caused the bankruptcy does not end until the queue is empty.
+### Gameplay
 
-What is still a simplification: a mortgaged deed goes under the hammer mortgaged,
-and the winner inherits the debt rather than being made to lift it or pay the
-interest there and then. That matches what already happens when an estate passes
-to a *creditor*, so both routes agree — but neither charges the 10%.
 
-### The winner of a contested house does not choose the lot
-
-The last houses *are* auctioned now (`game/Contention.ts`), which closes the gap
-that stood here from M5. Two readings of the rule were decided rather than asked,
-and both are deliberate:
-
-- **"Wishes to buy" means "could and can afford to."** A player who owns a lot
-  the build rules would allow a house on, and holds the cash, is bidding whether
-  they clicked anything or not. It is generous — somebody who was not going to
-  build still counts — which matters only when the bank is down to its last
-  houses, which is exactly when the rule is meant to bite.
-- **The winner does not nominate.** Whoever asked for the house gets the lot they
-  asked for; anybody else gets the cheapest lot they could legally build on. The
-  official rule lets the winner pick, and a hot-seat game could ask them — but
-  only with a prompt, which a bot would then also owe an answer to.
-
-Neither can be reached by a game played through: it needs two complete colour
-groups and a bank down to one house. `__forge.forceHouseShortage()` arranges it
-for the playtest, which is the only reason the browser run exercises it at all.
-
-### The speed die leaves out its triples rule
+#### The speed die leaves out its triples rule
 
 `game/SpeedDie.ts` implements the third die, the Mr. Monopoly face and the bus
 face. Two parts of the official variant are missing on purpose:
@@ -53,7 +36,7 @@ face. Two parts of the official variant are missing on purpose:
 Doubles are unaffected: `SpeedDice` reports them from the two white dice, so
 three doubles still means jail.
 
-### A bid has to be one of the three offered amounts
+#### A bid has to be one of the three offered amounts
 
 *Fixed in part:* the clock and the raises are rule-set values now
 (`auctionSeconds`, `bidIncrement`, `bidSteps`), so a map or a variant sets them
@@ -65,34 +48,7 @@ needs a stepper of the kind the trade panel has for cash, which moves the panel'
 buttons and so means recomputing the harness's `auctionBid` / `auctionPass`
 hotspots by hand.
 
-### A save cannot be taken mid-turn, and there is only one slot
-
-Saving is refused while a token is moving, an auction is running or a trade is
-open, because a restore resumes at the *start* of the saved player's turn and
-none of that state is captured. `SaveLoad` also keeps exactly one localStorage
-key, so a new save overwrites the old one with no warning.
-
-### A bot will not make an offer to a person
-
-*Fixed in part:* `Bot.proposeTrade` makes two shapes of offer — a monopoly for a
-monopoly (we hold the lot that completes their group, they hold ours, cash tops
-it up) and cash for a second railroad or utility. The cash is the smallest amount
-that gets a yes, found by asking the partner's own `acceptTrade` rather than
-guessing at it. A `--bots` run now shows several trades a game and colour groups
-that were completed on purpose.
-
-Making that possible needed one policy change, worth knowing about: a bot used to
-refuse to hand over the deed completing somebody else's group **at any price**,
-which meant the only deed worth asking for was the only deed nobody would ever
-part with. It will now part with one — but only in exchange for the deed that
-completes a group of its own. Cash alone still will not buy it.
-
-What is left: **a bot only proposes to another bot.** Whether an opponent should
-interrupt your turn with an unsolicited offer is a question about the game's
-manners rather than about the trade, and answering it means a modal that arrives
-uninvited, plus a harness that knows to answer it.
-
-### The bots are a baseline, and tuning their numbers does not help
+#### The bots are a baseline, and tuning their numbers does not help
 
 The policy is deliberately plain: a flat $150 reserve, a bid ceiling of 1.2× face
 value (1.7× for a deed that completes a group), build the cheapest complete group
@@ -110,7 +66,7 @@ different *shape* — one that values a deed by the rent it is likely to face
 rather than by its price — and that is now a measurable claim rather than an
 opinion.
 
-### What a repeated dice face means is still hardcoded
+#### What a repeated dice face means is still hardcoded
 
 The turn is a pipeline, a rule set names its order and win condition, and a
 variant can supply its own dice — but one turn rule is still an `if` inside
@@ -130,7 +86,7 @@ larger change to a method three bugs have already been fixed in. Both are worth
 doing only alongside the variant that needs them; the speed die's triples rule is
 the only candidate today, and it also needs a pick-a-tile prompt.
 
-### Monopoly does not always end
+#### Monopoly does not always end
 
 Across 500 four-player games, 24 of Classic's and 24 of Speed Die's ran past a
 6,000-turn cap — about 5%. One followed to 60,000 turns had four players holding
@@ -149,7 +105,7 @@ swap, so four players who are never simultaneously one-lot-short of two differen
 groups will never complete one. A stronger trading policy would shrink this, and
 the simulator is now the thing that could measure whether it did.
 
-### Three things cannot be saved, and one of them is only a callback
+#### Three things cannot be saved, and one of them is only a callback
 
 *Narrowed twice in M10b.* A save taken mid-turn works: the snapshot carries the
 phase, whether the turn was held, and whether a landing is owed, so a walk in
@@ -165,7 +121,7 @@ refused is **two**, not three:
   localStorage. Saving it would mean the *asker* being re-entrant — able to ask
   again from saved state — which is per-asker work rather than one mechanism.
 
-### The Subway and a travel voucher pay salaries they should not
+#### The Subway and a travel voucher pay salaries they should not
 
 *Seen clearly in M12c.* Both move a player with `walkTo`, which fires `onPass`
 for every tile on the route — so riding the Subway past PAY DAY collects a
@@ -184,7 +140,7 @@ rather than folded into a milestone about the dice.
 Pay Day itself is now right in both directions: the parity when the dice moved
 you, and the maximum when anything else did.
 
-### A bot hoards travel vouchers, and nobody can trade one
+#### A bot hoards travel vouchers, and nobody can trade one
 
 *Added in M12b.* Holdings work: a game gives a player something the engine has
 never heard of, and it is saved, transferred or forfeited on bankruptcy, counted
@@ -205,7 +161,7 @@ verdict.
 are not in it, so the only way one changes hands is a bankruptcy. Both fixes are
 per-game or per-panel work rather than a gap in the mechanism.
 
-### The roll button can die after a theme change on a short Ultimate run
+#### The roll button can die after a theme change on a short Ultimate run
 
 *Seen in M12d, and it predates it.* `node tools/playtest.mjs --game ultimate
 --turns 16` fails at the mid-game palette switch with "the roll button was dead
@@ -222,7 +178,7 @@ the first place to look.
 Not chased in M12d because the milestone was the ladder, and a rules change is
 the wrong thing to be holding when you go after an input-plugin bug.
 
-### Houses cannot be built on a majority ownership
+#### Houses cannot be built on a majority ownership
 
 *Added in M12d.* Ultimate Monopoly lets you build once you own **all but one** of
 a colour group with more than two properties — "that is called a MAJORITY
@@ -239,7 +195,7 @@ skyscraper level naming `'group'` while the house and hotel name `'majority'`.
 It is left out because it changes how quickly every Ultimate game develops, and
 that is a balance decision rather than a mechanism gap.
 
-### Stock certificates and Roll Three cards are still reduced
+#### Stock certificates and Roll Three cards are still reduced
 
 *Narrowed in M12b.* The mechanism that blocked them is gone: a stock company
 would be a holding kind (`stock.acmeMotors`) and a Roll Three card is a number
@@ -247,7 +203,7 @@ you keep. What is left is each rule's own behaviour — a dividend paid to every
 shareholder when anybody lands on the Stock Exchange, three numbers matched
 against a roll — which is a game's work, not the engine's.
 
-### Three things a bot still cannot be asked
+#### Three things a bot still cannot be asked
 
 *Narrowed in M10a.* `game/Choice.ts` closed the "nothing can ask a player to pick
 a tile" gap — triples, the contested-house lot, Ultimate Monopoly's Subway and
@@ -259,7 +215,7 @@ a bot always jumps to Boardwalk — correct often and not always, because it tak
 no account of what the bot already owns or of what it would have to pay to land
 there. The weights are a first pass, not a policy.
 
-### The menu can set a rule that the game it is set for refuses
+#### The menu can set a rule that the game it is set for refuses
 
 *Added in M10d.*
 
@@ -275,83 +231,7 @@ check exists (`validateGame`) and the screen has the resolved rule set in hand �
 so a refused combination could be a row that says why instead of a game that
 quietly plays something else. Small, and not written.
 
-### The playtest harness assumed a 40-tile board
-
-*Found and fixed in M11.*
-
-`tools/playtest.mjs` checked `position >= 0 && position <= 39` — the one place
-"never write 40 for the board" was broken, and it survived four milestones
-because every board that shipped was 40 tiles or fewer. Ultimate Monopoly's 120
-failed a perfectly good run.
-
-It asks `__forge.board()` now, which reports the size, the tracks and which
-squares charge a tax. The tax list is there for the same class of reason: the
-"jackpot rule is on but the pot is empty" assertion is only meaningful once a tax
-has actually been charged, and on a 120-tile board with two tax squares eleven
-rounds can pass without anybody meeting one.
-
-The general lesson is worth keeping: **the harness is the last place a hardcoded
-board constant hides**, because nothing type-checks it.
-
-### A game cannot add state to a player
-
-*Found in M11, by trying to add Ultimate Monopoly.*
-
-`Player` holds cash, a position, deeds, jail state and Get Out of Jail Free
-cards, and there is no way for a game to add a field to it. `game/Snapshot.ts`
-would not know to save one either, so even a game that reached in and set a
-property would lose it on a reload.
-
-That single gap is why six of Ultimate Monopoly's rules ship reduced. Each is a
-thing a player *holds*:
-
-- **Travel vouchers** (bus tickets) — drawn, kept, played on a later turn.
-- **Stock certificates** — bought at the Stock Exchange, paying dividends
-  whenever anybody lands there.
-- **Roll Three cards** — every player holds three numbers; landing on the space
-  rolls against everybody's.
-- **A facing** — Reverse Direction turns you round for your *next* turn.
-
-What ships instead is written in the ROADMAP's M11 table and commented at each
-handler. None of them is wrong to have shipped — a rule spent at once is still
-that rule's flavour — but none of them is the printed rule either.
-
-The fix has a shape: `Player.extras: Record<string, unknown>` captured and
-restored wholesale, with a game declaring what it puts there. It is not written,
-and the interesting question is whether the *bot* can be taught to value a held
-thing it has never heard of. Ask before building it.
-
-### Nothing can ask a player to pick a tile
-
-*Named in M8b, and it now has three customers.*
-
-There is no prompt that says "choose a square" and no bot policy that could
-answer one. It stopped the speed die's official triples rule ("roll a triple and
-move anywhere"); in M11 it also stopped Ultimate Monopoly's **Subway** ("travel
-to any space on your next turn") and its **Auction** space ("pick an unowned
-property for the banker to auction").
-
-Both shipped as deterministic reductions — the next unowned property, and the
-dearest unowned property — which are defensible and are not the rule. Any modal
-that waits for a click waits for ever on a bot's turn, so the prompt and the bot
-policy are one job, not two.
-
-### A tile cannot see the dice that brought a player to it
-
-*Found in M11.*
-
-`Tile.onPass(playerId)` and `Tile.onLand(playerId)` get an id. `tile:effect`
-handlers get the landing context, which includes `dice`, so a *landing* can read
-the roll — but a **pass** cannot, because `announcePassing` walks the path
-calling `onPass` with nothing else.
-
-Ultimate Monopoly's Pay Day pays "$300 if you rolled an odd number or $400 if
-even", passing or landing. What ships pays $300 for passing and $400 for
-stopping, which is the same pair of numbers keyed off the wrong thing. Widening
-`onPass` is easy; deciding whether *every* tile should get a context on every
-step of every walk is the part worth thinking about.
-
-### A game can bring artwork, but only for a texture that already exists
+#### A game can bring artwork, but only for a texture that already exists
 
 *Added in M9b:* `Game.assets` maps texture key → URL and replaces a drawn
 texture. Pocket ships two SVGs, drawn by hand for this repo, and the playtest
@@ -366,7 +246,7 @@ same shape as `registerTileDecoration` and would be the way to do it.
 Nor is there an asset *budget*: a game that brought a 4MB texture would simply be
 slow to start, and nothing says so.
 
-### The bots no longer stalemate, but Monopoly still can
+#### The bots no longer stalemate, but Monopoly still can
 
 *Changed in M10c.* Until the bots would sell a key, 22 of 400 classic games ended
 with no monopoly on the board at all and ran to the turn cap. That is now 0 of
@@ -380,7 +260,7 @@ refuse to trade would still sit in it. So *"every game reaches a winner"* remain
 un-implementable as an invariant, and `sim/Invariants.ts` still does not check
 it — the batch reports unfinished games rather than failing on them.
 
-### The games that are not Classic are unbalanced
+#### The games that are not Classic are unbalanced
 
 Roundabout and Orbits exist to prove the geometry is not hardcoded, and their
 tiles were written to fill a shape rather than to play well: rent ladders are
@@ -410,7 +290,7 @@ printed game puts them on 64 title deeds that are not in the reference material,
 so every lot outside the classic middle track charges `price / 12` scaled up the
 usual ladder. Consistent, plausible, and certainly not the designer's numbers.
 
-### The no-auction house rule is still untested
+#### The no-auction house rule is still untested
 
 *Fixed in part:* `npm run playtest -- --house-rules` plays with the Free Parking
 jackpot and the double GO salary on (`?houseRules=` selects them, the same way
@@ -424,9 +304,10 @@ of assertions.
 
 ---
 
-## Architecture
+### Architecture
 
-### Turn-end protection is split across two layers
+
+#### Turn-end protection is split across two layers
 
 Two separate mechanisms stop a turn ending twice, and neither is sufficient alone:
 
@@ -442,7 +323,7 @@ generation counter is the actual fix. Both behaviours are pinned by tests in
 `tests/turns.test.ts`, including one that documents the flag's *inability* to
 block a stale call, so nobody "fixes" it by deleting the counter.
 
-### The scene's turn-end delays are still tuned by feel
+#### The scene's turn-end delays are still tuned by feel
 
 *Narrowed twice.* In M4 the *rent* left the scene for `game/Rent.ts`. In M8d
 everything a landing **costs** left for `game/Landing.ts` — quoting, settling,
@@ -457,7 +338,7 @@ the instant its landing returns, which is the evidence that the *rules* no longe
 depend on the timing. Changing an animation's duration can still reorder what a
 watcher sees; it can no longer change the result.
 
-### A turn's phases are a list; the path between them is not
+#### A turn's phases are a list; the path between them is not
 
 `TurnFlow` made the phases of a turn data — named, ordered, insertable — and
 `TurnManager` enters them through one method. What is *not* data is the wiring
@@ -472,7 +353,7 @@ The consequence to know about: a phase a rule set adds runs on the way to
 move at all (a jailed player staying put). A handler that only makes sense after a
 landing has to check for itself.
 
-### Only one game can be loaded at a time
+#### Only one game can be loaded at a time
 
 *Fixed in M9a*, as far as it goes: five of the six registries are scoped to the
 loaded game, so two games cannot get each other's tile types, card effects, turn
@@ -489,7 +370,7 @@ so.
 a correctness problem, `themeById` already falls back, and scoping it would make
 `games/` import `ui/` for no gain.
 
-### A panel updates in place; the board does not
+#### A panel updates in place; the board does not
 
 *Fixed for the panels (M8c):* all three draw onto a `Surface` (`ui/Retained.ts`),
 so a view that has changed writes to the elements already on screen and only what
@@ -501,9 +382,189 @@ layer and re-creates every owner band, house and mortgage mark on every change.
 That is a smaller list than a panel's and it is redrawn far less often — but it is
 the same pattern, and the machinery to fix it now exists.
 
-### The turn log cannot be exported
+### Tooling
 
-*Fixed:* `Notification` keeps every entry (up to 500) and the drawn strip is a
+
+#### The lockfile is only valid for the npm that wrote it
+
+`npm ci` must be validated with **the npm major CI uses**, which is the one
+bundled with the Node version in `.nvmrc` — not necessarily the npm on your
+machine. This has already broken every CI job once: a lockfile written by npm 11
+was missing 27 packages that npm 10 requires, and npm 11 reinstalled from its own
+incomplete lockfile without complaint.
+
+`npm run verify:install` is the guard. Run it after any dependency change; a
+plain local `npm ci` is not sufficient evidence.
+
+#### `npm audit` is clean, and that is a moving target
+
+Currently **0 vulnerabilities**. It was three (one moderate, two high, all in
+`esbuild`/`postcss` under Vite 5) until the Vite 7 upgrade removed them. None
+reached the browser bundle in either case — the only runtime dependency is
+Phaser. Never run `npm audit fix --force`: it makes breaking major upgrades
+silently.
+
+#### The playtest harness clicks fixed canvas coordinates
+
+`tools/playtest.mjs` drives the game by clicking board pixel positions listed in
+its `HOTSPOTS` table, because the game is a single canvas with no DOM controls.
+Moving a button in a scene without updating that table makes the harness click
+empty space, which usually surfaces as "no property was bought in the whole run"
+rather than as a clear error.
+
+---
+
+## Closed
+
+Kept rather than deleted, because each one records *why* it was a problem and
+what shape the fix took — several of the invariants in
+[CLAUDE.md](CLAUDE.md) exist because of an entry on this list.
+
+### Gameplay
+
+#### A returned estate is sold as it stands, mortgages and all
+
+*Closed in M9b.* a player who goes under owing the **bank** now has their deeds auctioned
+one after another, as the standard rules require. `transferEstate` reports what
+went back unowned, and `GameScene` queues a `tileSubject` for each; the turn that
+caused the bankruptcy does not end until the queue is empty.
+
+What is still a simplification: a mortgaged deed goes under the hammer mortgaged,
+and the winner inherits the debt rather than being made to lift it or pay the
+interest there and then. That matches what already happens when an estate passes
+to a *creditor*, so both routes agree — but neither charges the 10%.
+
+#### The winner of a contested house does not choose the lot
+
+*Closed in M10a.* The winner is asked which lot the house goes on when more than
+one of theirs is legal — it was one of the four corners `game/Choice.ts` was
+built for. The old deterministic answer (whoever asked gets the lot they asked
+for; anybody else gets their cheapest) survives as the option **weight**, so the
+bots play exactly as they did and a person gets the prompt the printed rule
+gives them.
+
+The other reading is still decided rather than asked, and deliberately: **"wishes
+to buy" means "could and can afford to."** A player who owns a lot the build
+rules would allow a house on, and holds the cash, is bidding whether they clicked
+anything or not. It is generous, which matters only when the bank is down to its
+last houses — exactly when the rule is meant to bite.
+
+#### A save cannot be taken mid-turn, and there is only one slot
+
+*Closed in M10b.* A save may now be taken whenever the game is waiting on you —
+mid-walk, with a buy prompt open, or in the middle of an auction — because the
+snapshot records **where in the turn** it was taken (`turn.phase`, `turn.held`,
+`turn.pendingLanding`) and a restore picks the turn up rather than restarting it.
+There are three slots, and the pause menu says in a sentence why saving is
+refused when it is: `saveBlockedBecause()` returns the reason, and every reason
+left is somebody's half-finished input.
+
+#### A bot will not make an offer to a person
+
+*Closed in M10b.* Bots offer *you* trades on their own turn, in the same panel
+you would build one in. Whether an offer is worth making is `proposeTrade`;
+whether a bot may put one in front of somebody who did not ask is separate and
+pure — `mayInterrupt`, rationed by `botTradeCooldown` and switchable off with
+`botOffersTrades`.
+
+The bot's turn **holds until the offer is answered**, the same way it waits on an
+auction, because a question the game rolls past is a question nobody got to
+answer.
+
+#### The playtest harness assumed a 40-tile board
+
+*Closed in M11.*
+
+`tools/playtest.mjs` checked `position >= 0 && position <= 39` — the one place
+"never write 40 for the board" was broken, and it survived four milestones
+because every board that shipped was 40 tiles or fewer. Ultimate Monopoly's 120
+failed a perfectly good run.
+
+It asks `__forge.board()` now, which reports the size, the tracks and which
+squares charge a tax. The tax list is there for the same class of reason: the
+"jackpot rule is on but the pot is empty" assertion is only meaningful once a tax
+has actually been charged, and on a 120-tile board with two tax squares eleven
+rounds can pass without anybody meeting one.
+
+The general lesson is worth keeping: **the harness is the last place a hardcoded
+board constant hides**, because nothing type-checks it.
+
+#### A game cannot add state to a player
+
+*Closed in M12b* by `game/Holdings.ts` — a countable thing keyed by a
+registered kind, carried by the snapshot, moved or forfeited on bankruptcy and
+counted by an invariant. What follows is the problem as it stood.
+
+*Found in M11, by trying to add Ultimate Monopoly.*
+
+`Player` holds cash, a position, deeds, jail state and Get Out of Jail Free
+cards, and there is no way for a game to add a field to it. `game/Snapshot.ts`
+would not know to save one either, so even a game that reached in and set a
+property would lose it on a reload.
+
+That single gap is why six of Ultimate Monopoly's rules ship reduced. Each is a
+thing a player *holds*:
+
+- **Travel vouchers** (bus tickets) — drawn, kept, played on a later turn.
+- **Stock certificates** — bought at the Stock Exchange, paying dividends
+  whenever anybody lands there.
+- **Roll Three cards** — every player holds three numbers; landing on the space
+  rolls against everybody's.
+- **A facing** — Reverse Direction turns you round for your *next* turn.
+
+What ships instead is written in the ROADMAP's M11 table and commented at each
+handler. None of them is wrong to have shipped — a rule spent at once is still
+that rule's flavour — but none of them is the printed rule either.
+
+The fix has a shape: `Player.extras: Record<string, unknown>` captured and
+restored wholesale, with a game declaring what it puts there. It is not written,
+and the interesting question is whether the *bot* can be taught to value a held
+thing it has never heard of. Ask before building it.
+
+#### Nothing can ask a player to pick a tile
+
+*Closed in M10a* by `game/Choice.ts`, and the last two askers were rewritten in
+M12a. A choice is data — options with weights — and both drivers answer it, so
+the rule that used to decide for everybody is now just what a bot picks. What
+follows is the problem as it stood.
+
+*Named in M8b, and it now has three customers.*
+
+There is no prompt that says "choose a square" and no bot policy that could
+answer one. It stopped the speed die's official triples rule ("roll a triple and
+move anywhere"); in M11 it also stopped Ultimate Monopoly's **Subway** ("travel
+to any space on your next turn") and its **Auction** space ("pick an unowned
+property for the banker to auction").
+
+Both shipped as deterministic reductions — the next unowned property, and the
+dearest unowned property — which are defensible and are not the rule. Any modal
+that waits for a click waits for ever on a bot's turn, so the prompt and the bot
+policy are one job, not two.
+
+#### A tile cannot see the dice that brought a player to it
+
+*Closed in M12c.* `onPass` gets a `PassContext` carrying the roll, or `null`
+when something other than the dice moved the player — which is the state the
+printed rules call *direct movement*. What follows is the problem as it stood.
+
+*Found in M11.*
+
+`Tile.onPass(playerId)` and `Tile.onLand(playerId)` get an id. `tile:effect`
+handlers get the landing context, which includes `dice`, so a *landing* can read
+the roll — but a **pass** cannot, because `announcePassing` walks the path
+calling `onPass` with nothing else.
+
+Ultimate Monopoly's Pay Day pays "$300 if you rolled an odd number or $400 if
+even", passing or landing. What ships pays $300 for passing and $400 for
+stopping, which is the same pair of numbers keyed off the wrong thing. Widening
+`onPass` is easy; deciding whether *every* tile should get a context on every
+step of every walk is the part worth thinking about.
+
+### Architecture
+
+#### The turn log cannot be exported
+
+*Closed in M10b.* `Notification` keeps every entry (up to 500) and the drawn strip is a
 *window* onto them — the wheel scrolls back over the log, and a marker says how
 far. Nothing is destroyed on the way past the bottom any more, and the history is
 readable through `__forge.log()`, which the playtest now uses to count what the
@@ -513,7 +574,11 @@ What is missing is a way to get it *out*: no copy button, no download, and
 nothing is written to disk. A player who wants the record of a game after closing
 the tab still has nothing.
 
-### The HUD is drawn once and never re-themed
+#### The HUD is drawn once and never re-themed
+
+*Closed in M10b* — `GameScene.applyThemeLive` is the list of everything drawn in
+a colour, and the HUD restyles rather than restarting. What follows is what had
+been fixed before that.
 
 *Fixed in M8c:* `TradePanel` measures its deed list, and because that moves its
 buttons, it reports where they are (`__forge.tradeSpots()`) instead of the harness
@@ -528,31 +593,3 @@ re-baking; the HUD, the buttons and the board's static layer are drawn once at
 
 ---
 
-## Tooling
-
-### The lockfile is only valid for the npm that wrote it
-
-`npm ci` must be validated with **the npm major CI uses**, which is the one
-bundled with the Node version in `.nvmrc` — not necessarily the npm on your
-machine. This has already broken every CI job once: a lockfile written by npm 11
-was missing 27 packages that npm 10 requires, and npm 11 reinstalled from its own
-incomplete lockfile without complaint.
-
-`npm run verify:install` is the guard. Run it after any dependency change; a
-plain local `npm ci` is not sufficient evidence.
-
-### `npm audit` is clean, and that is a moving target
-
-Currently **0 vulnerabilities**. It was three (one moderate, two high, all in
-`esbuild`/`postcss` under Vite 5) until the Vite 7 upgrade removed them. None
-reached the browser bundle in either case — the only runtime dependency is
-Phaser. Never run `npm audit fix --force`: it makes breaking major upgrades
-silently.
-
-### The playtest harness clicks fixed canvas coordinates
-
-`tools/playtest.mjs` drives the game by clicking board pixel positions listed in
-its `HOTSPOTS` table, because the game is a single canvas with no DOM controls.
-Moving a button in a scene without updating that table makes the harness click
-empty space, which usually surfaces as "no property was bought in the whole run"
-rather than as a clear error.

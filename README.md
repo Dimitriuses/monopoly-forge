@@ -145,171 +145,21 @@ headless browser — see [tools/playtest.mjs](tools/playtest.mjs).
 
 ---
 
-## Where this is going — from game to engine
+## How it is built
 
-Monopoly Forge is meant to end up as an **engine for Monopoly-style games**: bring
-your own board, your own rules, your own artwork, and the engine runs the game.
-Three axes of customisation, none of which should require editing engine code:
+A **Phaser 3 + TypeScript** front end over a rules core that runs in plain Node —
+no Phaser, no DOM, no canvas — which is what makes the model unit-testable and the
+renderer replaceable. The two never call each other: state changes are announced
+on a typed `EventBus` and scenes subscribe.
 
-| Axis | What you should be able to supply |
-|---|---|
-| **Maps** | A board of any length and shape — not 40 tiles in a square — with your own tiles, groups, prices and named anchors (where "jail" is, where "start" is). *Done: see the round and multi-ring boards that ship* |
-| **Rules** | New tile types and card effects registered from outside, a rule set that decides jail terms, building rules and the economy, and a turn whose phases, order and win condition come from that rule set. *Done — the speed die is the proof: its own dice and an extra phase, with the engine never learning what one is* |
-| **Presentation** | How each element draws — tiles, tokens, panels, HUD — swapped per theme, without touching the rules. *Done: two themes ship, and how a tile type draws is a registered decoration rather than a branch in the renderer* |
-| **Buildings** | A ladder rather than houses-then-a-hotel: a game says what can be built, on which tile types, how many fit, what the bank stocks, and whether it charges the next rent tier or multiplies what the tile already charges. *Done: Ultimate Monopoly builds houses, hotels, **skyscrapers**, **train depots** on its railroads and **cab stands** on its cab companies* |
-| **A game** | All three of the above in one place — a folder holding a board, a rule set, decks, a theme and whatever else it needs, picked as a single choice and launched. *Done: `src/games/<id>/` is a game, `gameById` loads it, six ship — including Ultimate Monopoly's 120 tiles and three loops — and [docs/authoring-a-game.md](docs/authoring-a-game.md) is how to add one* |
-
-**Writing the classic game first was the point, not a detour.** A configurable
-engine whose only consumer is a toy proves nothing; the standard board is the
-reference implementation that says what the engine has to be able to express, and
-it is what the 583 unit tests pin down.
-
-### What already supports it
-
-Some of the groundwork is deliberately in place — it is why the architecture below
-looks the way it does:
-
-- **The rules core has no Phaser and no DOM**, so an engine consumer can run a
-  whole game headlessly — to validate a custom rule set, or simulate thousands of
-  games — with no renderer at all.
-- **The renderer only listens to events.** A different presentation layer
-  subscribes to the same bus; it does not subclass or import the model.
-- **Tiles are already data.** `TileDefinition` is a plain object and the board is
-  an array of them, which is most of the way to a map being a file.
-- **Tiles are already polymorphic** — `Tile.onLand()` is a real extension point.
-- **Games are deterministic from a seed**, which is what makes comparing two rule
-  sets, or reproducing a custom-map bug, tractable.
-- **The board's length and its anchors come from the map.** `Board` takes a
-  `TileDefinition[]`, publishes `board.size`, and resolves `start` / `jail` /
-  `goToJail` to indices by role; no `40` or `10` is left in the model. A 12-tile
-  board is a test case, not a thought experiment.
-- **The renderer is separate from the scene.** `BoardRenderer` draws everything
-  inside the board square from per-tile layout data, in one loop rather than one
-  per side.
-
-### What has to change first
-
-Honestly measured against the current code, not estimated:
-
-- **The board is still a square with equal sides.** `Board.computeLayout()` now
-  derives the corners from `(size - 4) / 4` instead of literal index ranges, and
-  rejects a length that cannot make a square — but an arbitrary shape needs
-  per-tile coordinates, or a segment description, supplied by the map.
-- **A map is not yet a file.** `BOARD_TILES` still lives in `config.ts`, with no
-  schema, loader or validation.
-- **Two closed `switch` statements** decide what can exist: tile construction in
-  `Board`, and card effects in `CardEffects.execute()`. Both need to become
-  registries so a game can add a type without editing the engine.
-- **Presentation is not yet a theme.** The renderer is extracted, but its colours,
-  fonts and decorations are still constants inside it and in `config.ts`.
-
-None of that is a rewrite — it is parameterising code that already has the right
-shape. The sequencing mattered more than the size: the board-length work and the
-renderer split were done **as part of** M3, before ownership markers, houses and
-hotels were drawn, because every feature added inside the old `drawBoard()` would
-have raised the cost of extracting it. The full breakdown is in
-[ROADMAP.md](ROADMAP.md).
-
----
-
-## Architecture
-
-The rule the codebase is built around: **a model class never imports a scene.**
-State changes are announced on a typed event bus and the scenes react to them.
-
-```
-      ┌──────────────── model (no Phaser, no DOM) ────────────────┐
-      │  Board · Player · Dice · Bank · TurnManager · CardDeck    │
-      │  Tile ▸ PropertyTile · SpecialTiles   PRNG · SaveLoad     │
-      └──────────────────────────┬───────────────────────────────┘
-                                 │  bus.emit('rent:pay', …)
-                          ┌──────▼──────┐
-                          │  EventBus   │   typed pub/sub singleton
-                          └──────┬──────┘
-                                 │  bus.on('rent:pay', …)
-      ┌──────────────────────────▼───────────────────────────────┐
-      │  scenes: Boot · Menu · Game · UI · Card                  │
-      │  ui: DiceView · PlayerPanel · Notification               │
-      └──────────────────────────────────────────────────────────┘
-```
-
-Three consequences worth the trouble:
-
-**The model runs in Node.** `src/config.ts` deliberately contains no Phaser
-import — the `Phaser.Game` options live in `main.ts` instead — so everything under
-`game/`, `tiles/`, `cards/` and `utils/` is reachable from a plain Node process.
-That is what lets 527 unit tests run in ~8 s with no jsdom, and it is the seam a
-headless AI opponent would plug into.
-
-**Games are reproducible.** Every dice roll and both deck shuffles draw from one
-seeded Mulberry32 generator (`src/utils/PRNG.ts`). `?seed=20260512` replays a game
-exactly — the screenshot run above produces byte-identical final state on every
-invocation, which is what makes the playtest harness a usable regression check.
-
-**The debug trace is still in the code, and switchable.** The turn/card/jail
-logging that found most of the bugs in [DEVLOG.md](DEVLOG.md) routes through
-`src/utils/log.ts`: silent by default, on automatically under `npm run dev`, and
-available on any build — including the deployed demo — with `?debug=1`.
-
-### Layout
-
-```
-src/
-├── main.ts               Phaser bootstrap, debug-logging switch
-├── config.ts             Tile sizes, economy constants, house rules  [no Phaser]
-├── games/                **A game is a folder**: board + economy + deck + theme
-│                         classic, roundabout, speed, orbits, pocket, ultimate
-│                         Game + validateGame · compose.ts — derive one from another
-│                         scope.ts — whose registrations are in force
-├── maps/                 GameMap + validateMap; classic, round and orbit boards
-├── game/
-│   ├── Rules.ts          The rule set: classic → the map's → the player's
-│   ├── Board.ts          Tile registry, anchors by role, validated getTile/move
-│   ├── BoardLayout.ts    Turns a map's shape into tile coordinates
-│   ├── Player.ts         Position, cash, holdings, jail state
-│   ├── Holdings.ts       Countable things a *game* invents — travel vouchers,
-│   │                     tickets, shares: saved, traded, transferred, counted
-│   ├── Dice.ts           Rolls via the seeded PRNG
-│   ├── Bank.ts           Transfers, purchase, mortgage, house/hotel stock
-│   ├── BuildRules.ts     Colour-group, even-building and mortgage legality
-│   ├── Rent.ts           What a tile charges: monopolies, railroads, utilities
-│   ├── Auction.ts        Round-robin bidding over a subject, reserve, settlement
-│   ├── Contention.ts     Who is claiming the bank's last houses, and where one goes
-│   ├── Variants.ts       Variant registry: a rule set's own dice and turn steps
-│   ├── SpeedDie.ts       The speed die, built entirely on those two seams
-│   ├── Trade.ts          Two-sided offers: validation, netting, counters
-│   ├── Estate.ts         Fire sales, debt settlement, bankruptcy transfer
-│   ├── Snapshot.ts       Capture/restore the whole game, and validate a save
-│   ├── Landing.ts        What a landing costs — shared by both drivers
-│   ├── Bot.ts            Opponent decisions — no Phaser, no randomness
-│   ├── TurnFlow.ts       A turn's phases, plus the turn-order and win-condition
-│   │                     registries a rule set picks from by name
-│   └── TurnManager.ts    Walks the flow: rolling, moving, jail, handing over
-├── tiles/                Tile base class ▸ PropertyTile, SpecialTiles, Ownable,
-│                         registry (registerTileType)
-├── cards/                Deck, discard/reshuffle, CardEffects, the classic decks,
-│                         effects registry (registerCardEffect)
-├── scenes/               Boot, Menu, Game (tokens + wiring), UI (HUD), Card
-├── ui/                   Theme + TileDecor (the palette and per-type drawing),
-│                         Retained (panels update in place), BoardRenderer,
-│                         PropertyPanel, AuctionPanel, TradePanel, DiceView,
-│                         PlayerPanel, Notification (turn log), Textures, Sfx
-├── sim/                  The headless driver — Runner, Invariants, Report
-└── utils/                EventBus, PRNG, SaveLoad, Registry, log
-tests/                    Vitest — model only, plain Node
-tools/playtest.mjs        Plays the built game in a real browser
-tools/simulate.ts         Plays it a thousand times with no browser at all
-docs/authoring-a-game.md  How to write one of your own
-```
-
-`src/games/` is the top of that tree, and everything under it is a part a game
-assembles. Four ship, and two of them — **Classic** and **Speed Die** — share a
-board and a deck and differ in one field, which is the shortest way to say what a
-bundle is for. Loading a game is also what puts its tile types and card effects in
-force: the registries are scoped to it, so a batch runner can load one game after
-another without them treading on each other.
-
----
+- **[docs/architecture.md](docs/architecture.md)** — the layers, the file layout,
+  and what each module is responsible for.
+- **[docs/engine.md](docs/engine.md)** — the three axes of customisation (maps,
+  rules, presentation), what already supports them, and what had to change.
+- **[docs/authoring-a-game.md](docs/authoring-a-game.md)** — adding a game of your
+  own, as a worked example.
+- **[CLAUDE.md](CLAUDE.md)** — the invariants a change has to respect, and the
+  traps that have already cost time.
 
 ## Quick start
 
@@ -374,15 +224,20 @@ dependency has been installed at two different majors. Run it whenever
 
 ## Roadmap and known limitations
 
-- [ROADMAP.md](ROADMAP.md) — what is planned, and what is deliberately deferred
-  (with the reasons — save/load in particular is blocked on more than a button)
-- [KNOWNISSUES.md](KNOWNISSUES.md) — measured defects in the current build
+- [CHANGELOG.md](CHANGELOG.md) — what changed, newest first, one entry a milestone
+- [ROADMAP.md](ROADMAP.md) — what is planned, and what is deliberately deferred,
+  with the reasons
+- [KNOWNISSUES.md](KNOWNISSUES.md) — measured defects, split into what is still
+  **open** and what has been **closed** (kept for the record)
 - [DEVLOG.md](DEVLOG.md) — the design decisions and the bug hunts behind them
 - [CLAUDE.md](CLAUDE.md) — conventions and invariants for working in this codebase
 
 The short version: the classic game is playable from the first roll to the last
-player standing — buy, auction, develop, trade, charge rent, go bankrupt. What is
-left is polish, an AI opponent, and then the engine work the project is named for.
+player standing, and the engine the project is named for is built — M8 made the
+board a file, the rules registries and presentation a theme; M9 made a game a
+folder; M11 made a board something other than a circuit; and M12 closed the four
+gaps that stopped Ultimate Monopoly'''s printed rules. What is left is on the
+roadmap, and what is broken is measured rather than guessed at.
 
 ---
 
