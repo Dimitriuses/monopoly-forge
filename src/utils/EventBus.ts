@@ -57,6 +57,8 @@ export type GameEvent =
   | 'player:bankrupt'
   | 'property:buy'
   | 'property:auction'
+  /** Straight under the hammer, with no offer to buy first — see game/Auction.ts. */
+  | 'auction:open'
   | 'property:mortgage'
   | 'property:unmortgage'
   | 'property:buildHouse'

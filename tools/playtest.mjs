@@ -98,6 +98,39 @@ async function menuSpots(page) {
   return page.evaluate(() => (window.__menu ? window.__menu.spots() : []));
 }
 
+/** Answer a pending choice: click the tile, or press the row. */
+async function answerChoice(page, box, choice) {
+  if (choice.style === 'board') {
+    const option = choice.options.find((o) => o.tileId !== null);
+    if (!option) throw new Error(`board choice "${choice.id}" offered no tiles`);
+    const at = await page.evaluate((id) => window.__forge.tileCentre(id), option.tileId);
+    await clickGame(page, box, [at.x, at.y]);
+    return;
+  }
+  await menuPress(page, box, choice.options[0].id);
+}
+
+/**
+ * Settle the turn: answer whatever is on screen until the dice are on offer
+ * again.
+ *
+ * Polls for the *end state* rather than for the absence of prompts, because
+ * those are not the same thing for even one frame. A walk goes idle and the
+ * landing resolves immediately afterwards — so "nothing is open" was true, the
+ * card appeared a moment later, and it swallowed the click meant for the MENU
+ * button. Which is the rule in CLAUDE.md about the headless clock, met from a
+ * new direction.
+ */
+async function settleTurn(page, box, { timeout = 15000 } = {}) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (await page.evaluate(ready)) return true;
+    await settlePrompts(page, box);
+    await sleep(200);
+  }
+  return false;
+}
+
 /** Settle whatever a landing put on screen, so a menu press is not swallowed. */
 async function settlePrompts(page, box) {
   for (let guard = 0; guard < 10; guard++) {
@@ -105,10 +138,17 @@ async function settlePrompts(page, box) {
       card: window.__forge.cardOpen(),
       buy: window.__forge.buyPromptOpen(),
       auction: window.__forge.auctionOpen(),
+      choice: window.__forge.choice(),
     }));
     if (open.card)         await clickGame(page, box, HOTSPOTS.cardOk);
     else if (open.buy)     await clickGame(page, box, HOTSPOTS.pass);
     else if (open.auction) await clickGame(page, box, HOTSPOTS.auctionPass);
+    // Ultimate Monopoly's Subway and Auction square ask a *board* question:
+    // the answer is a click on one of the highlighted tiles. A run that could
+    // not answer one would sit here until the timeout, which is exactly the
+    // failure "every prompt owes a bot an answer" is about — the harness is the
+    // third driver and owes one too.
+    else if (open.choice) await answerChoice(page, box, open.choice);
     else return;
     await sleep(450);
   }
@@ -830,7 +870,11 @@ async function main() {
     // picked before a game started. Proving it changed means proving *pixels*
     // changed: the model has no colour in it to assert on.
     if (!BOTS) {
+      // A prompt left open by the last landing would still be open behind the
+      // pause menu, and the board would not be playable on the far side of the
+      // theme change through no fault of the theme.
       await waitFor(page, idle, { timeout: 9000 });
+      await settleTurn(page, box);
       const before = await page.screenshot({ clip: box });
       const wasTheme = await page.evaluate(() => window.__forge.themeId());
 
@@ -880,8 +924,7 @@ async function main() {
       // one — is in the palette the run started with. The liveness roll above
       // may have opened a prompt, and a menu press with one on screen goes to
       // the prompt instead.
-      await settlePrompts(page, box);
-      await waitFor(page, idle, { timeout: 9000 });
+      await settleTurn(page, box);
       await clickGame(page, box, HOTSPOTS.pause);
       await sleep(400);
       await menuPress(page, box, 'settings');

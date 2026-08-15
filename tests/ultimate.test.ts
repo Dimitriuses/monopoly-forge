@@ -11,6 +11,11 @@ import { PropertyTile } from '@/tiles/PropertyTile';
 import { RailroadTile, UtilityTile } from '@/tiles/SpecialTiles';
 import { isOwnable } from '@/tiles/Tile';
 import { EFFECT_TILE_TYPES, LADDERS } from '@/games/ultimate/tiles';
+import { bus } from '@/utils/EventBus';
+import { Bank } from '@/game/Bank';
+import { Dice } from '@/game/Dice';
+import { preferredOption, type ChoiceRequest } from '@/game/Choice';
+import { applyTileEffect, effectContext, type TileEffectContext } from '@/game/TileEffects';
 
 // ─── Ultimate Monopoly ────────────────────────────────────────────────────────
 // The board the engine was extended for. What is checked here is the *game* —
@@ -226,5 +231,105 @@ describe('Ultimate Monopoly — the rules it is played by', () => {
     unloadGame();
     gameById('classic');
     expect(knownTileEffects()).not.toContain('squeezePlay');
+  });
+});
+
+// ─── The two rules that stopped being deterministic ───────────────────────────
+
+describe('Subway and the Auction square ask, rather than decide', () => {
+  /** Answer the next choice with whatever `pick` returns; report what was asked. */
+  function intercept(pick: (r: ChoiceRequest) => string) {
+    const seen: ChoiceRequest[] = [];
+    bus.on<ChoiceRequest>('choice:ask', (request) => {
+      seen.push(request);
+      request.answer(pick(request));
+    });
+    return seen;
+  }
+
+  function landOn(type: string, player: Player, ctx: TileEffectContext): number {
+    const tile = board.tiles.find((t) => t.type === type)!;
+    player.position = tile.id;
+    applyTileEffect(ctx, { playerId: player.id, tileId: tile.id, effect: type });
+    return tile.id;
+  }
+
+  let ann: Player;
+  let ctx: TileEffectContext;
+
+  beforeEach(() => {
+    ann = new Player('p1', 'Ann', 'car', false, 1500);
+    const bank = new Bank(board.rules);
+    ctx = effectContext({
+      board, bank, players: [ann], rules: board.rules, dice: new Dice(),
+    });
+  });
+  afterEach(() => bus.off('choice:ask'));
+
+  it('offers the Subway every square but the one you are standing on', () => {
+    const asked = intercept((r) => r.options[0].id);
+    // Captured before the effect runs: answering it walks the player, so reading
+    // `ann.position` afterwards would be reading the *destination*.
+    const stoodOn = landOn('subway', ann, ctx);
+
+    expect(asked).toHaveLength(1);
+    expect(asked[0].style).toBe('board');
+    expect(asked[0].options).toHaveLength(board.size - 1);
+    expect(asked[0].options.some((o) => o.tileId === stoodOn)).toBe(false);
+  });
+
+  /**
+   * The point of the rewrite: the old deterministic answer is what a *bot* now
+   * picks, and a person gets the choice. So the weights have to reproduce it.
+   */
+  it('leaves a bot picking the dearest unowned deed, as it used to', () => {
+    const asked = intercept((r) => preferredOption(r).id);
+    landOn('subway', ann, ctx);
+
+    const chosen = board.getTile(Number(preferredOption(asked[0]).id));
+    expect(isOwnable(chosen)).toBe(true);
+    expect((chosen as { ownerId: string | null }).ownerId).toBeNull();
+
+    const dearest = Math.max(
+      ...board.tiles.filter((t) => isOwnable(t) && t.ownerId === null).map((t) => t.price),
+    );
+    expect((chosen as { price: number }).price).toBe(dearest);
+  });
+
+  it('offers the Auction square only the deeds nobody owns', () => {
+    const owned = board.tiles.find((t) => isOwnable(t))!;
+    (owned as { ownerId: string | null }).ownerId = ann.id;
+
+    const asked = intercept((r) => r.options[0].id);
+    landOn('auctionAny', ann, ctx);
+
+    expect(asked).toHaveLength(1);
+    expect(asked[0].options.every((o) => {
+      const tile = board.getTile(o.tileId!);
+      return isOwnable(tile) && tile.ownerId === null;
+    })).toBe(true);
+    expect(asked[0].options.some((o) => o.tileId === owned.id)).toBe(false);
+  });
+
+  /**
+   * It used to emit `property:auction`, which offers the deed to the player who
+   * nominated it *before* anybody bids — first refusal on your own nomination,
+   * which is close to the opposite of "the Banker auctions it off".
+   */
+  it('sends the nominated deed straight under the hammer', () => {
+    let opened: { subject: { id: number } } | null = null;
+    let offered = false;
+    bus.on<{ subject: { id: number } }>('auction:open', (p) => { opened = p; });
+    bus.on('property:auction', () => { offered = true; });
+
+    const asked = intercept((r) => r.options[0].id);
+    landOn('auctionAny', ann, ctx);
+
+    expect(offered).toBe(false);
+    expect(opened).not.toBeNull();
+    expect(opened!.subject.id).toBe(Number(asked[0].options[0].id));
+
+    bus.off('auction:open');
+    bus.off('property:auction');
   });
 });

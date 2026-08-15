@@ -42,7 +42,7 @@ state to a player.**
 
 **M12 is the plan that came out of it** — four engine gaps, each with at least
 three customers already in the tree, and each named by what it unlocks rather
-than by what it generalises. Not started.
+than by what it generalises. **12a is done**; the other three are not started.
 
 **M10 — refinement — is done.** The corners the rules cut are closed (10a), the
 things a player asks for are in (10b), the menus are a tree (10d), and the bots
@@ -861,44 +861,36 @@ already in the tree, which is the bar for opening a seam at all.
 They are independent — none blocks another — so the order below is by cost, not
 by dependency.
 
-### 12a — a choice a bot can answer · ~~planned~~ **done early, in 10a**
+### 12a — a choice a bot can answer · done
 
-**Unlocks:** Subway ("travel to any space"), the Auction space ("pick an unowned
-property"), the speed die's triples rule (deferred since 8b), and turns the
-contested-house lot choice from deterministic into a real decision.
+**Unlocked:** Subway ("travel to any space"), the Auction square ("pick an
+unowned property"), the speed die's triples rule (deferred since 8b), and the
+contested-house lot, which was never a choice at all.
 
-Pulled forward, because 10a turned out to need it twice as well — the speed
-die's triples and the contested-house lot — which took it from three customers to
-five. `game/Choice.ts` is the module; Ultimate Monopoly's Subway and Auction
-square still use their deterministic reductions and are the two left to rewrite
-onto it.
+Most of it landed early, in 10a, because 10a needed it twice as well — which took
+it from three customers to five. `game/Choice.ts` is the module.
 
-```ts
-// game/Choice.ts
-export interface ChoiceOption { id: string; label: string; tileId?: number }
-export interface ChoiceRequest {
-  playerId: string;
-  prompt: string;
-  options: ChoiceOption[];
-  /** How a bot ranks them when nobody is at the keyboard. */
-  rank?: string;          // a registered policy name, not a function
-}
-```
+- [x] **`ChoiceRequest`**, and **no `CHOICE_POLICIES` registry.** The registry was
+      the plan and is deliberately not built: a policy worth registering would
+      have to know what the choice *means*, and every asker already says that by
+      what it puts in an option's `weight`. `preferredOption` takes the heaviest,
+      so the rule that used to decide for everybody is now just what a bot picks.
+      Revisit only if an asker turns up that cannot express itself as a weight.
+- [x] **Both driver paths**, and the *answer* needs a home as well as the
+      question — the first batch after triples landed hung 69 of 80 Speed Die
+      games because `choice:ask` was answered and the `roll:chosen` it replied
+      with had no handler in the runner.
+- [x] **All four reductions rewritten.** Triples and the contested-house lot in
+      10a; **Subway and the Auction square in 12a.** The apologising comments are
+      gone, and each one's old deterministic answer survives as the *weight* a bot
+      ranks by — so the bots play exactly as they did and a person now gets asked.
+- [x] **Saving is refused while a choice is open**, as it is mid-trade.
 
-The shape is already in the tree twice over: the buy prompt has a human path and
-a bot path, and `TurnFlow`'s `hold()` / `resume()` is exactly "a turn parked
-waiting for an answer". So `choice:ask` holds the turn and `choice:answer`
-resumes it, `GameScene` shows a panel (highlighting tiles when an option carries
-a `tileId`), and `sim/Runner` asks `Bot`.
-
-- [ ] `ChoiceRequest` + a `CHOICE_POLICIES` registry, named by string so a rule
-      set naming one survives `JSON.stringify` — the same reason `turnOrder` is.
-- [ ] Both driver paths, and **a bot answer is not optional**: a modal that waits
-      for a click waits for ever on a bot's turn, which is the rule in CLAUDE.md
-      that every prompt has to pay.
-- [ ] Rewrite the four reductions to use it, and delete the "pick the dearest"
-      comments that apologise for them.
-- [ ] Saving is refused while a choice is open, as it already is mid-auction.
+One accuracy bug fell out of the rewrite. The Auction square emitted
+`property:auction`, which offers a deed to a player *before* anybody bids — so it
+gave the person who nominated a property first refusal on it, close to the
+opposite of "the Banker auctions it off". There is an `auction:open` event now,
+handled by both drivers, that goes straight under the hammer.
 
 ### 12b — a player can hold something the engine has never heard of
 

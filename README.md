@@ -160,7 +160,7 @@ Three axes of customisation, none of which should require editing engine code:
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 542 unit tests pin down.
+it is what the 546 unit tests pin down.
 
 ### What already supports it
 

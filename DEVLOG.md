@@ -2477,3 +2477,79 @@ down** when the pause menu closed, so the harness read where the rows *used to
 be* and clicked the board believing it was pressing a button. It did not fail —
 it silently did the wrong thing, which is the failure a debug handle should never
 have. `PauseScene` deletes the handle on the way out now.
+
+## M12a — the last two reductions — 2026-08-15
+
+Mostly an audit. 12a was planned before 10a needed the same thing twice, so three
+of its four items were already done by the time it came round; the honest work was
+checking rather than assuming, and then finishing the one item that was genuinely
+outstanding.
+
+What the audit found:
+
+- **`ChoiceRequest`** — done. **`CHOICE_POLICIES`** — deliberately *not* done, and
+  the plan was wrong rather than unfinished. A registry of ranking policies would
+  have to know what each choice means; every asker already says that by what it
+  puts in an option's `weight`. Ticked with the reasoning rather than built.
+- **Both driver paths** — done, and the harder half was the *answer* having
+  somewhere to go, which cost a batch of 69 hung games to learn.
+- **Saving refused while a choice is open** — done.
+- **The four reductions** — two of four. Triples and the contested-house lot went
+  through `askChoice` in 10a; **Subway and the Auction square were still deciding
+  for everybody.**
+
+### The shape every one of these rewrites has
+
+The old deterministic answer was never wrong as a *bot's* answer — only as a
+person's. So it becomes the `weight`: the Subway ranks squares by whether there
+is an unowned deed to buy there, the Auction square ranks by price. A bot picks
+the heaviest and plays exactly as it did; a person gets a board with the legal
+squares ringed and clicks one.
+
+That is worth stating because it is what makes these rewrites cheap and safe. No
+simulator number moved — Ultimate is still 0 unfinished in 120 games, median 76
+rounds — which is the point rather than a disappointment.
+
+### And an accuracy bug underneath one of them
+
+The Auction square emitted `property:auction`. That event is the *declined
+property* path: it offers the deed to a player and only auctions it if they say
+no. So landing on Auction gave you first refusal on the property you had just
+nominated — close to the opposite of "pick an unowned property for the Banker to
+auction off".
+
+`auction:open` goes straight under the hammer, handled by both drivers, and the
+test that pins it asserts `property:auction` is *not* emitted — which is the only
+way to catch a bug whose symptom is a prompt appearing that should not.
+
+### Three bugs the matrix found afterwards, none of them in 12a
+
+Adding two prompts to a human-playable game made `--game ultimate --turns 40`
+fail, and unpicking it turned up three separate things — two of them mine from
+M10b, sitting there passing every test I had written.
+
+**`this.chrome` was cleared and never filled.** So a palette change ran
+`buildButtons` and stacked a second, identical row of buttons on the first:
+superimposed, invisible in a screenshot, each old one still interactive at full
+alpha — and `setRollEnabled` reaching only the new. It also registered a second
+Escape handler every time.
+
+**And rebuilding was the wrong idea anyway.** It happens *while the scene is
+paused*, because the pause menu is what changes the theme — so the fresh buttons
+called `setInteractive` on an input plugin that was not processing. That is the
+same trap CLAUDE.md already records from the disable-vs-remove direction, reached
+from a new one. The buttons are restyled in place now, colours only; the hover
+handlers already read `theme()` when they fire, so they needed nothing.
+
+**The buy prompt was not on the restyle list at all.** Its background is made
+once and its contents are only rebuilt by the *next* offer, so one already open
+kept the old palette entirely.
+
+The third was the harness, and it is the one worth remembering. `settlePrompts`
+checked "is anything open?" at an instant — and a walk goes idle a moment
+*before* its landing draws a card. So nothing was open, the card appeared, and it
+swallowed the click meant for the MENU button. Settling polls for the end state
+now — the dice back on offer — which is the same lesson as the headless clock,
+arrived at sideways. The harness also gained `__forge.choice()`, because the two
+prompts 12a added are answered by clicking a board tile and nothing else on that
+handle said which tiles would be accepted.

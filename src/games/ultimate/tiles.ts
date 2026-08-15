@@ -4,6 +4,8 @@ import { Tile, isOwnable, type TileDefinition } from '@/tiles/Tile';
 import { RailroadTile, UtilityTile } from '@/tiles/SpecialTiles';
 import { registerTileType } from '@/tiles/registry';
 import { registerTileEffect } from '@/game/TileEffects';
+import { askChoice } from '@/game/Choice';
+import { tileSubject } from '@/game/Auction';
 import { TUNNELS } from './board';
 
 // ─── Ultimate Monopoly's tiles ────────────────────────────────────────────────
@@ -185,24 +187,48 @@ function registerUltimateEffects(): void {
   });
 
   /**
-   * The printed Subway lets you go to *any* space on your next turn. Choosing a
-   * space needs a prompt a bot can answer and this build has none — the same wall
-   * the speed die's triples rule hit — so it takes the best deterministic version
-   * of the same idea: on to the next property nobody owns, wherever it is.
+   * "Travel to any space on the board." A real choice since M12a — the whole
+   * board is offered and whoever is sitting there picks a square.
+   *
+   * What a bot picks is the deed it would most like to be standing on, which is
+   * the *same* answer the deterministic version used to give everybody. That is
+   * the shape of every one of these rewrites: the reduction was never wrong as a
+   * bot's answer, only as a person's.
+   *
+   * Still reduced in one way, and it is the printed rule rather than the prompt:
+   * the Subway moves you on your *next* turn, and a facing that survives a turn
+   * is per-player state this build cannot save. See KNOWNISSUES.
    */
   registerTileEffect('subway', (ctx, player, { tileId }) => {
-    const target = ctx.board.scan(
-      player.position, (tile) => isOwnable(tile) && tile.ownerId === null,
-    );
-    if (target === null) {
-      bus.emit('player:landed', { playerId: player.id, tileId });
-      return;
-    }
-    bus.emit('ui:notification', {
-      message: `🚈 ${player.name} rides the Subway to ${ctx.board.getTile(target).name}.`,
-      type: 'info',
+    const ride = (target: number) => {
+      bus.emit('ui:notification', {
+        message: `🚈 ${player.name} rides the Subway to ${ctx.board.getTile(target).name}.`,
+        type: 'info',
+      });
+      ctx.walkTo(player, target);
+    };
+
+    const asked = askChoice({
+      id: 'subway',
+      playerId: player.id,
+      prompt: 'Subway — travel to any space',
+      style: 'board',
+      options: ctx.board.tiles
+        .map((tile, id) => ({
+          id: String(id),
+          label: tile.name,
+          tileId: id,
+          // An unowned deed is worth going to, because you may buy it there.
+          // Everything else is worth nothing, and somebody else's is worth less.
+          weight: isOwnable(tile) && tile.ownerId === null ? tile.price : 0,
+        }))
+        .filter((option) => option.tileId !== player.position),
+      answer: (optionId) => ride(Number(optionId)),
     });
-    ctx.walkTo(player, target);
+    if (asked) return;
+
+    // Nobody to ask — no options at all, on a board of one tile. Nothing to do.
+    bus.emit('player:landed', { playerId: player.id, tileId });
   });
 
   /** Roll two dice; the spread decides what everybody else hands over. */
@@ -253,26 +279,46 @@ function registerUltimateEffects(): void {
   });
 
   /**
-   * Pick an unowned property for the bank to auction. The printed rule lets the
-   * player choose; without a pick-a-tile prompt this takes the dearest one, which
-   * is at least the choice a player would usually make.
+   * "Pick an unowned property for the Banker to auction off." Two things were
+   * wrong here before M12a and both are fixed: the *player* picks now, and what
+   * follows is an auction rather than an offer to buy.
+   *
+   * That second one mattered more than it looks. Emitting `property:auction`
+   * offered the square's own deed to the player who landed here — first refusal
+   * on the property they had just nominated, which is close to the opposite of
+   * the printed rule. `auction:open` goes straight under the hammer.
    */
   registerTileEffect('auctionAny', (ctx, player, { tileId }) => {
-    let best: { id: number; price: number } | null = null;
-    for (let id = 0; id < ctx.board.size; id++) {
-      const tile = ctx.board.getTile(id);
-      if (!isOwnable(tile) || tile.ownerId !== null) continue;
-      if (!best || tile.price > best.price) best = { id, price: tile.price };
-    }
-    if (!best) {
+    const unowned = ctx.board.tiles.filter((tile) => isOwnable(tile) && tile.ownerId === null);
+    if (!unowned.length) {
       bus.emit('ui:notification', { message: 'Auction — everything is owned.', type: 'info' });
       bus.emit('player:landed', { playerId: player.id, tileId });
       return;
     }
-    // The auction ends the turn itself, the way a declined property's does.
-    bus.emit('property:auction', {
-      tileId: best.id, playerId: player.id, price: best.price,
+
+    const sell = (id: number) => {
+      const tile = ctx.board.getTile(id);
+      bus.emit('ui:notification', {
+        message: `🔨 ${player.name} sends ${tile.name} to auction.`, type: 'info',
+      });
+      bus.emit('auction:open', { subject: tileSubject(id, tile.name), endsTurn: true });
+    };
+
+    const asked = askChoice({
+      id: 'auctionAny',
+      playerId: player.id,
+      prompt: 'Choose a property for the bank to auction',
+      style: 'board',
+      options: unowned.map((tile) => ({
+        id: String(tile.id),
+        label: tile.name,
+        tileId: tile.id,
+        // A bot nominates the dearest, which is what it used to do for everybody.
+        weight: (tile as typeof tile & { price: number }).price,
+      })),
+      answer: (optionId) => sell(Number(optionId)),
     });
+    if (!asked) bus.emit('player:landed', { playerId: player.id, tileId });
   });
 
   /**

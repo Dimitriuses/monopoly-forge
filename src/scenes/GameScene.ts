@@ -119,6 +119,10 @@ export class GameScene extends Phaser.Scene {
   private rollBtn!:     Phaser.GameObjects.Text;
   private jailBtn!:     Phaser.GameObjects.Text;
   private buyPrompt!:   Phaser.GameObjects.Container;
+  /** What the buy prompt is currently offering, so a restyle can redraw it. */
+  private lastBuyPrompt: {
+    tileId: number; playerId: string; price: number; tileName: string; baseRent?: number;
+  } | null = null;
   private notif!:       Notification;
   /** Not `renderer` — Phaser.Scene already owns that name for the WebGL renderer. */
   private boardView!:   BoardRenderer;
@@ -305,8 +309,10 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(t.chrome.page);
     this.boardView.redraw();
 
-    // 3 — the chrome under it.
-    this.buildButtons();
+    // 3 — the chrome under it. Restyled, never rebuilt: this runs while the
+    // scene is paused, and a button that called `setInteractive` on a paused
+    // input plugin comes back dead.
+    for (const restyle of this.chromeStyles) restyle();
     this.setRollEnabled(
       !this.turnManager.currentPlayer.isBot
       && this.turnManager.phase === 'WAITING_FOR_ROLL' && !this.isAnimating,
@@ -320,6 +326,18 @@ export class GameScene extends Phaser.Scene {
     this.refreshPanel();
     if (this.tradePanel.isOpen) this.tradePanel.show(this.tradeView());
     if (this.auction) this.auctionPanel.show(this.auctionView(this.auction));
+
+    // 4b — the buy prompt, which is a container built once with its contents
+    // rebuilt per offer. One that is *open* rebuilds nothing until it is
+    // answered, so it is drawn again here.
+    const promptBg = this.buyPrompt.list[0];
+    if (promptBg instanceof Phaser.GameObjects.Rectangle) {
+      promptBg.setFillStyle(t.panel.background, 0.97).setStrokeStyle(2, t.chrome.panelBorder);
+    }
+    if (this.buyPrompt.visible && this.lastBuyPrompt) {
+      const p = this.lastBuyPrompt;
+      this.showBuyPrompt(p.tileId, p.playerId, p.price, p.tileName, p.baseRent);
+    }
 
     // 5 — the HUD, which is a scene of its own. Told to restyle rather than
     // restarted: a restart blanks the dice and the banner, and could not be
@@ -393,8 +411,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** What the model needs to resolve a landing — see `game/Landing.ts`. */
-  /** Everything `buildButtons` drew, so a palette change can rebuild the row. */
-  private chrome: Phaser.GameObjects.GameObject[] = [];
+  /** How each button under the board repaints — see `buildButtons`. */
+  private chromeStyles: Array<() => void> = [];
 
   /** Where a restored game left off, or null for a new one. */
   private resumedPhase: TurnPhase | null = null;
@@ -514,6 +532,16 @@ export class GameScene extends Phaser.Scene {
       panelTile:   () => this.panel.tileId,
       auctionOpen: () => this.auctionPanel.isOpen,
       auctionBidder: () => this.auction?.currentBidder?.id ?? null,
+      /**
+       * The question on screen, or null. Every prompt owes the harness a way to
+       * answer it — a board-style choice waits for a tile click and nothing else
+       * on this handle says which tiles it would accept.
+       */
+      choice:      () => (this.pendingChoice ? {
+        id:      this.pendingChoice.id,
+        style:   this.pendingChoice.style,
+        options: this.pendingChoice.options.map((o) => ({ id: o.id, tileId: o.tileId ?? null })),
+      } : null),
       auctionState: () => (this.auction ? {
         subject:       this.auction.subject,
         tileId:        this.auction.tileId,
@@ -743,14 +771,22 @@ export class GameScene extends Phaser.Scene {
   // ── Buttons ───────────────────────────────────────────────────────────────────
 
   /**
-   * The buttons under the board. Rebuilt rather than restyled when the palette
-   * changes: a `Text` carries its colours in a style object, and re-deriving one
-   * button at a time is more code and more to forget than making the whole row
-   * again. Anything created here goes in `chrome` so it can be taken down.
+   * The buttons under the board. Built **once**, and *restyled* when the palette
+   * changes rather than rebuilt.
+   *
+   * Rebuilding was the first attempt and it is wrong three ways over, which is
+   * why the reasoning is here rather than in a commit message. It duplicated the
+   * Escape handler this also registers. It left the old row on screen, since the
+   * list meant to hold them was cleared and never filled — identical buttons
+   * superimposed, invisible in a screenshot, each still interactive. And the
+   * rebuild happens while the scene is **paused**, because the pause menu is
+   * what changes the theme, so the new buttons called `setInteractive` on an
+   * input plugin that was not processing.
+   *
+   * A closure per button re-applies its resting colours. The hover handlers
+   * already read `theme()` when they fire, so they need nothing.
    */
   private buildButtons(): void {
-    for (const object of this.chrome) object.destroy();
-    this.chrome = [];
     // Buttons sit below the board, inside the game area (x < 1055 = UIScene boundary)
     this.rollBtn = this.add.text(512, 738, '🎲  ROLL DICE', {
       fontFamily: theme().font.display, fontSize: '22px', color: '#ffffff',
@@ -807,6 +843,26 @@ export class GameScene extends Phaser.Scene {
       this.setJailBtnVisible(false);
       this.pushUIUpdate();
     });
+
+    // How each button repaints. Colour only — position, text and listeners stay
+    // exactly as they are, which is the whole point.
+    this.chromeStyles = [
+      () => this.rollBtn.setStyle({
+        fontFamily: theme().font.display, backgroundColor: theme().chrome.primary.fill,
+      }),
+      () => tradeBtn.setStyle({
+        fontFamily: theme().font.display, backgroundColor: theme().panel.button.on,
+      }),
+      () => menuBtn.setStyle({
+        fontFamily: theme().font.display, backgroundColor: theme().chrome.button.fill,
+      }),
+      () => muteBtn.setStyle({
+        fontFamily: theme().font.body, backgroundColor: theme().chrome.button.fill,
+      }),
+      () => this.jailBtn.setStyle({
+        fontFamily: theme().font.display, backgroundColor: theme().chrome.button.fill,
+      }),
+    ];
   }
 
   /**
@@ -851,6 +907,10 @@ export class GameScene extends Phaser.Scene {
 
   private showBuyPrompt(tileId: number, playerId: string, price: number, tileName: string, baseRent?: number): void {
     this.turnManager.offerBuy();
+    // Kept so a palette change can draw it again — its contents are only rebuilt
+    // by the *next* call, so one already on screen would otherwise keep the old
+    // colours until it was answered.
+    this.lastBuyPrompt = { tileId, playerId, price, tileName, baseRent };
     const player = this.players.find((p) => p.id === playerId)!;
 
     // Rebuild dynamic children (keep bg at index 0).
@@ -2219,6 +2279,15 @@ export class GameScene extends Phaser.Scene {
     });
 
     // ── Unowned property — show buy prompt ────────────────────────────────────
+    // A rule that puts something under the hammer *without* offering it first.
+    // `property:auction` is the declined-property path and offers a buy prompt
+    // before bidding; the Auction square is the banker selling, which is not the
+    // same thing and was being drawn as a buy prompt until M12a.
+    bus.on<{ subject: AuctionSubject; endsTurn?: boolean }>('auction:open', ({ subject, endsTurn }) => {
+      this.auctionEndsTurn = endsTurn ?? true;
+      this.startAuctionOf(subject);
+    });
+
     bus.on<AuctionPayload>('property:auction', ({ tileId, playerId, price }) => {
       const tile = this.board.getTile(tileId);
       const finalPrice = price ?? (tile as PropertyTile).price ?? 0;

@@ -196,7 +196,12 @@ is `registerTileType(name, factory)` in `tiles/registry.ts`; a new card effect i
 the set in the first place. A card effect gets a small context, not the
 `CardEffects` instance: keep what an effect may touch visible in one place.
 
-**7g. "Which one?" is `askChoice`, and it owes a bot an answer.**
+**7g. "Which one?" is `askChoice`, and it owes a bot an answer.** A rule that
+picks for everybody is a rule nobody gets to play — so what used to be the
+deterministic answer becomes an option's `weight`, and the bots keep playing
+exactly as they did while a person gets asked. There is no policy registry and
+deliberately so: an asker that cannot express itself as a weight is the thing
+that would justify one.
 `game/Choice.ts`. A choice is data — options with weights — and both drivers
 answer it: `GameScene` shows a list, or highlights tiles and takes a board click
 when the options *are* tiles; `sim/Runner` hands it straight to the heaviest
@@ -568,8 +573,14 @@ that forgot keep its old palette, which is the failure hardest to see. Order
 matters once: **the textures are re-baked first**, because the board's `refresh`
 draws houses from them and each token holds one by key.
 
-Three rules it follows, each of which cost something to learn:
+Four rules it follows, each of which cost something to learn:
 
+- **Restyle a button, never rebuild the row.** `buildButtons` runs *while the
+  scene is paused* — the pause menu is what changes the theme — so a button that
+  called `setInteractive` there came back dead, on an input plugin that was not
+  processing. Rebuilding also duplicated the Escape handler and left the old row
+  superimposed and still interactive. `chromeStyles` re-applies colours only; the
+  hover handlers already read `theme()` when they fire.
 - **Re-texture the piece, never rebuild the token.** A container is what a walk's
   tween targets; destroying one leaves the promise the walk awaits unresolved and
   the turn parked for ever.
@@ -670,6 +681,13 @@ harness presses rows **by name**. `menuPress` throws when a row is missing or
 disabled rather than clicking empty space, because a silent miss is the failure
 mode the table had. The run also walks into Game Settings, changes a rule, and
 asserts it reached `__forge.rules()`.
+
+**A prompt the harness cannot answer is a hung run.** `__forge.choice()` reports
+the question on screen and which tiles it would accept, so `settlePrompts` can
+answer a board-style choice by clicking one. And settling polls for the *end
+state* — the dice back on offer — never for "nothing is open", because a walk
+goes idle a moment before its landing draws a card, and the card then swallows
+the next click.
 
 **Nothing in the harness may assume the board's size.** `__forge.board()` reports
 the size, the tracks and which squares charge a tax. It exists because the

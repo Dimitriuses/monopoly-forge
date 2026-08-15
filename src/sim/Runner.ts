@@ -263,6 +263,11 @@ class Simulation {
     // …and the *answer* has to go somewhere too. Both halves are needed: the
     // first batch after triples landed hung 69 of 80 Speed Die games, because
     // the question was answered and the move it asked for was never made.
+    bus.on('auction:open', ({ subject }: { subject: AuctionSubject }) => {
+      this.runAuction(subject, this.players);
+      this.endTurn();
+    });
+
     bus.on('roll:chosen', ({ playerId, tileId }: { playerId: string; tileId: number }) => {
       const player = this.players.find((p) => p.id === playerId);
       if (player) this.turns.moveChosen(player, tileId);
