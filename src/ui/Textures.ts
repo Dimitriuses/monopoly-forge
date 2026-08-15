@@ -63,20 +63,49 @@ export function bakeTokenTextures(scene: Phaser.Scene, supplied: ReadonlySet<str
   }
 }
 
-/** The house and hotel drawn along a lot's colour stripe. */
+/**
+ * Every building a game can put up, drawn along a tile's colour stripe.
+ *
+ * The key **is the build level's id** (`game/BuildLadder.ts`), which is what
+ * lets `BoardRenderer` draw a board's buildings without knowing their names —
+ * and what lets a game supply artwork for one through `Game.assets` on exactly
+ * the same terms as the house and the hotel.
+ *
+ * The two pitched-roof shapes are the classic pair. A **skyscraper** is drawn
+ * flat-topped and tall because it must read as *taller than a hotel* at a
+ * glance; a **depot** and a **stand** are small and wide, because they sit on a
+ * railroad rather than on a colour stripe and are the only thing on it.
+ */
 export function bakeBuildingTextures(scene: Phaser.Scene, supplied: ReadonlySet<string> = EMPTY): void {
   const t = theme();
 
+  // key, colour, width, height, roof apex — a roof of 0 means a flat top.
   for (const [key, color, w, h, roof] of [
-    ['house', t.groups.green,   20, 18, 10],
-    ['hotel', t.groups.red,     26, 20, 13],
+    ['house',      t.groups.green,     20, 18, 10],
+    ['hotel',      t.groups.red,       26, 20, 13],
+    ['skyscraper', t.groups.darkBlue,  22, 30,  0],
+    ['trainDepot', t.groups.brown,     24, 14, 12],
+    ['cabStand',   t.groups.yellow,    24, 14, 12],
   ] as Array<[string, number, number, number, number]>) {
     if (supplied.has(key)) continue;
     if (scene.textures.exists(key)) scene.textures.remove(key);
     const g = scene.make.graphics({}, false);
     g.fillStyle(color, 1);
-    g.fillRect(2, 6, w - 4, h - 6);
-    g.fillTriangle(0, 6, roof, 0, w, 6);
+
+    if (roof === 0) {
+      // Flat-topped, with windows — a tower rather than a bigger house.
+      g.fillRect(2, 0, w - 4, h);
+      g.fillStyle(0xffffff, 0.55);
+      for (let row = 0; row < 4; row++) {
+        for (let col = 0; col < 2; col++) {
+          g.fillRect(5 + col * 7, 4 + row * 6, 4, 3);
+        }
+      }
+    } else {
+      g.fillRect(2, 6, w - 4, h - 6);
+      g.fillTriangle(0, 6, roof, 0, w, 6);
+    }
+
     g.generateTexture(key, w, h);
     g.destroy();
   }

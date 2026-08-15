@@ -256,7 +256,7 @@ describe('Estate — settling a debt', () => {
     give(ann, MEDITERRANEAN);
     const med = board.getTile(MEDITERRANEAN) as PropertyTile;
     med.level = 5;
-    bank.level = 0;                     // nothing to break the hotel into
+    bank.houses = 0;                     // nothing to break the hotel into
     const hotels = bank.hotels;
 
     settleDebt(board, bank, ann, bo, 10_000);

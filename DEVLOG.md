@@ -2774,3 +2774,149 @@ M12c did not cause that and does not fix it. It is in KNOWNISSUES with the fix
 described — announce only the destination, the way the Holland Tunnel already
 moves — because it changes what two squares pay, and that is a decision about the
 game rather than a loose end in a milestone about the dice.
+
+## M12d — buildings are a ladder, not houses-then-a-hotel — 2026-08-15
+
+The last item in M12 and by a distance the largest: it touched the tile state
+model, the bank, rent, the snapshot, the invariants, the bot, both drivers, the
+renderer, the panel and the rent tuple on every map. Twenty-odd files.
+
+### The design question the plan did not have
+
+The ROADMAP sketched one shape — a `BuildLevel` with a `consumes` count — and the
+reference says there are **two**, which is the whole finding of this milestone.
+
+A **house, hotel and skyscraper** stand on a lot. They need the colour group,
+must go up evenly across it, and each charges the *next rent tier* of the deed.
+
+A **train depot and cab stand** are not that. They stand on a railroad or a cab
+company; they need nothing but the deed — *"you don't need to own multiple
+Railroads before building a Train Depot on one"* — and they **double** the rent
+rather than reading a tier, because a railroad prices itself off how many its
+owner holds and has no tier table to step through.
+
+Forcing those into one shape would have meant either a second improvement
+mechanism beside the first, or a fake rent table on every railroad. So a level
+declares which it is: `effect: 'tier' | { multiply: 2 }`, plus `group: boolean`
+for whether the colour-group rules apply at all. One mechanism, five buildings.
+
+`consumes` did not survive contact. It is always the rung below's `perTile` — a
+hotel replaces four houses, a skyscraper replaces one hotel — so it is derived,
+and cannot disagree with itself.
+
+### One number instead of two
+
+`houses: number` + `hasHotel: boolean` became `level: number`. That is the change
+that made the rest cheap, because **the level is also the rent tier**:
+`rentTiers[level]` replaced `hasHotel ? tiers[5] : tiers[houses]`.
+
+It also deleted a state. The old pair could represent a lot with a hotel *and*
+three houses — something no rule could produce and every reader had to have an
+opinion about, including an invariant written specifically to catch it. That
+invariant is gone; the equivalent now is "a level outside this type's ladder",
+which is one comparison.
+
+`level` lives on **`Ownable`** rather than on a lot, which is what lets a railroad
+hold a depot, and was the ROADMAP's second consequence-to-face-up-front.
+
+### Where the tier count had to go
+
+`validateMap` insisted on six rent tiers. Ultimate's lots need seven. But **a map
+has no economy** (invariant 11), and how far a lot can be developed is the
+*ladder's* business — so the map now only insists a lot charges something bare and
+something built, and the count moved to `validateGame`, where map and rules meet.
+
+Worth moving rather than loosening: `rentTiers[6]` on a six-tier deed is
+`undefined`, and rent becomes `NaN` with nothing to say so.
+
+Ultimate's seventh tier is derived, not typed out. Its own lots come from one
+`lot()` helper, and the classic lots it inherits on the middle track get theirs
+from `withSkyscraper` — consistent beats a guess at somebody else's title deeds,
+which is the note already in that file about the other six.
+
+### The census was the point
+
+`sim/Invariants.ts` checked houses and hotels by name. A census that names two of
+five would have let skyscrapers be minted out of nothing and never noticed —
+which is *exactly* the shape of the deck bug the file was written after. It counts
+every kind the ladder declares now.
+
+It earns its keep immediately: putting up a hotel takes one out of the hotel box
+and puts four back in the house box, and every one of those movements is a place
+to lose count. Forty games of Ultimate broke none of it.
+
+### What the player settles and what the game settles
+
+`houseLimit`, `hotelLimit` and `housesBeforeHotel` are three numbers in the
+settings menu. The ladder is array-shaped and would be miserable to edit with
+‹ ›, so it stays out of `RULE_FIELDS` the way `movement` does.
+
+They cannot both be the truth, so the scalars win for the two rungs they describe
+and `resolveRules` writes them into the ladder after layering. The failure this
+prevents is specific: halving the house supply on Ultimate Monopoly must not take
+its skyscrapers away with it, which is the same class of bug as the three
+`themeChosen` booleans M13c deleted.
+
+### And the board looks like the board now
+
+The other half of the session's work. Ultimate's rules say *"TRANSIT STATIONS and
+RAILROAD spaces are considered one space"*, and the printed board draws them as
+one block straddling two rings. The engine has always had two tiles, and has to:
+stepping off one continues along your ring, stepping off the other crosses to the
+next, and which happens is the parity of your roll.
+
+Both are true and they are reconciled at *layout* time rather than in either.
+`mergeJunctions` gives the pair one rectangle — the union of two footprints that
+already share an edge — and keeps an `anchor` for each at the middle of its own
+half. The second of the pair is flagged `merged` so the outline is stroked once
+rather than twice, which matters because the point is that it reads as one space.
+
+A piece therefore stands in the half belonging to the ring it is about to travel
+along, and `board.tokenPoint(id)` is where it goes. The rule that follows is worth
+stating because everything that moves a token has to obey it: **a token stands on
+`tokenPoint`, never on `getLayout().x/y`**.
+
+It cost one test its premise, which is how you know it did something. "No two
+tiles share a centre" was true of the geometry until junctions started sharing
+one deliberately.
+
+### And then the merged rectangle turned out to be wrong
+
+The first version gave the pair **one rectangle**, and it overlapped the tiles
+either side of all four junctions. The reason is worth writing down because it is
+a property of concentric rings rather than a slip: **they do not share a tile
+width.** Each ring divides a different perimeter by a different count, so
+Ultimate's are 43, 49 and 64 pixels across. One rectangle has to pick a width —
+mine took the larger — and whichever it picks overhangs its neighbours on the
+other ring by half the difference. 2.9px on the outer junctions, 7.6px on the
+inner ones, and 19 overlapping pairs when I measured it.
+
+The tempting fix is the one that was suggested to me: tune the ring sizes until
+the widths agree. They cannot. Equal pitch across 13, 9 and 5 tiles a side puts
+the middle ring at an inset of ~101 and the inner at ~203 against the current
+60 and 120 — far enough apart that the two halves of a junction stop touching,
+which is the premise the whole idea rests on.
+
+So the rectangle was the wrong idea, not the wrong numbers. Each half keeps the
+width its own ring gives it, and the pair is made one space by **not stroking the
+edge between them**: two abutting rectangles, one outline, no divider. The block
+is stepped rather than square — 3px on two of them, 8px on the other two — which
+is what the shape honestly is when the rings really do have different pitches,
+and reads as a single space at a glance.
+
+The tests came out better for it. One asks about `tokenPoint` (no two *pieces*
+may stand in the same place), one pins the pair — abutting, opposite edges
+shared, each at its own ring's width — and one is simply **no tile is drawn over
+another**, checked across all 120. That last one is the check that would have
+caught the merged rectangle before a screenshot did.
+
+### Cost
+
+583 tests, up from 572, with about 60 of the old ones migrated off the two-field
+shape. Eight of those needed their *premise* rewritten rather than their syntax —
+"caps a lot at four houses" is no longer a thing that happens, because the fifth
+build is the hotel and the ladder is what stops the sixth.
+
+Ultimate plays at a median 252 turns against 240 before, 0 unfinished, no
+invariant broken. Hotels standing at the end fell from 11.0 to 1.4, which is not a
+regression: they are being upgraded into the sixteen skyscrapers.

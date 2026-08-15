@@ -86,8 +86,12 @@ export function validateMap(map: GameMap): MapProblem[] {
       complain(tile.name, 'is a property with no colour group');
       continue;
     }
-    if (!tile.rent || tile.rent.length !== 6) {
-      complain(tile.name, 'needs six rent tiers: bare, 1–4 houses, hotel');
+    // How *many* tiers is a question about the game's build ladder, and a map
+     // has no economy — `validateGame` is where the two meet. All a board can
+     // say on its own is that a lot has to charge something bare and something
+     // built.
+    if (!tile.rent || tile.rent.length < 2) {
+      complain(tile.name, 'needs at least two rent tiers: bare, and one built');
     }
     if (!tile.price || !tile.houseCost || !tile.mortgage) {
       complain(tile.name, 'needs a price, a house cost and a mortgage value');

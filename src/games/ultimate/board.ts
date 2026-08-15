@@ -41,8 +41,22 @@ function lot(
   return {
     id, type: 'property', name, group, price, houseCost,
     mortgage: Math.round(price / 2),
-    rent: [base, base * 5, base * 15, base * 45, base * 62, base * 75],
+    // Seven tiers, not six: bare, four houses, a hotel and a **skyscraper**.
+    // `validateGame` checks the count against this game's ladder, so a lot that
+    // forgot the seventh would be refused rather than charging `undefined`.
+    rent: [base, base * 5, base * 15, base * 45, base * 62, base * 75, base * 95],
   };
+}
+
+/**
+ * The classic lots on the middle track come from `CLASSIC_MAP`, which is a
+ * six-tier board. Ultimate builds a rung higher, so they need a seventh — and
+ * it is derived from the hotel tier rather than invented one deed at a time,
+ * the same bargain `lot()` above already makes with the other six.
+ */
+function withSkyscraper(tile: TileDefinition): TileDefinition {
+  if (tile.type !== 'property' || !tile.rent || tile.rent.length !== 6) return tile;
+  return { ...tile, rent: [...tile.rent, Math.round(tile.rent[5] * 1.27)] };
 }
 
 const cab = (id: number, name: string): TileDefinition =>
@@ -67,7 +81,7 @@ const MIDDLE_SWAPS: Record<number, TileDefinition> = {
 };
 
 const MIDDLE: TileDefinition[] = CLASSIC_MAP.tiles.map(
-  (tile, i) => MIDDLE_SWAPS[i] ?? { ...tile, id: i },
+  (tile, i) => MIDDLE_SWAPS[i] ?? withSkyscraper({ ...tile, id: i }),
 );
 
 // ─── Outer: thirteen a side ───────────────────────────────────────────────────

@@ -68,12 +68,12 @@ describe('Contention for the bank\'s last houses', () => {
   });
 
   it('is contested when the bank holds fewer houses than there are claimants', () => {
-    bank.level = 1;
+    bank.houses = 1;
     expect(housesContested(board, bank, players)).toBe(true);
   });
 
   it('is not contested when only one player wants one', () => {
-    bank.level = 1;
+    bank.houses = 1;
     bo.cash = 0;
     expect(housesContested(board, bank, players)).toBe(false);
   });
@@ -81,21 +81,21 @@ describe('Contention for the bank\'s last houses', () => {
   // With no houses left `canBuild` refuses outright, so nobody is claiming
   // anything and there is nothing to auction — the shortage is total, not tight.
   it('is not contested once the bank is empty', () => {
-    bank.level = 0;
+    bank.houses = 0;
     expect(housesContested(board, bank, players)).toBe(false);
   });
 
   // ─── The price, and where the house goes ────────────────────────────────────
 
   it('opens at what the house is worth to the cheapest claimant', () => {
-    bank.level = 1;
+    bank.houses = 1;
     const claims = houseClaims(board, bank, players);
     const brownCost = (board.getTile(BROWN[0]) as PropertyTile).houseCost;
     expect(houseReserve(claims)).toBe(brownCost);
   });
 
   it('will not sell a scarce house below the reserve', () => {
-    bank.level = 1;
+    bank.houses = 1;
     const claims  = houseClaims(board, bank, players);
     const reserve = houseReserve(claims);
     const auction = new Auction(
@@ -110,14 +110,14 @@ describe('Contention for the bank\'s last houses', () => {
   });
 
   it('gives the winner the lot they asked for, if they asked', () => {
-    bank.level = 1;
+    bank.houses = 1;
     const claims = houseClaims(board, bank, players);
     const baltic = board.getTile(BROWN[1]) as PropertyTile;
     expect(nominateLot(claims, ann, baltic)?.id).toBe(BROWN[1]);
   });
 
   it('gives anybody else the cheapest lot they could build on', () => {
-    bank.level = 1;
+    bank.houses = 1;
     const claims = houseClaims(board, bank, players);
     // Bo did not ask for anything — the request was Ann's, and it is not his lot.
     expect(nominateLot(claims, bo, board.getTile(BROWN[1]) as PropertyTile)?.id)

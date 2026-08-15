@@ -85,10 +85,16 @@ describe('validateMap', () => {
     expect(problemText(map)).toMatch(/mixes house costs/);
   });
 
+  /**
+   * A map can only say a lot must charge *something*. How many tiers it needs is
+   * a question about the game's build ladder — a board with skyscrapers wants
+   * seven where the classic one wants six — and a map has no economy, so that
+   * half of the check lives in `validateGame`.
+   */
   it('catches a property with no rent ladder', () => {
     const map = clone(CLASSIC_MAP);
     delete map.tiles[1].rent;
-    expect(problemText(map)).toMatch(/six rent tiers/);
+    expect(problemText(map)).toMatch(/at least two rent tiers/);
   });
 
   it('catches a railroad with no price and a tax with no amount', () => {

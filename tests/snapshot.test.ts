@@ -45,7 +45,7 @@ function playedGame(): GameParts {
   own(players[1], READING);
   (board.getTile(MEDITERRANEAN) as PropertyTile).level = 3;
   (board.getTile(BALTIC) as PropertyTile).isMortgaged = true;
-  bank.level = 29;
+  bank.houses = 29;
   bank.pot = 275;
 
   players[0].cash = 640;

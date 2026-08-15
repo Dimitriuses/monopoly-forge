@@ -45,7 +45,7 @@ afterEach(() => { bus.clear(); unloadGame(); });
 
 describe('the snapshot carries where in the turn it was', () => {
   it('bumped its version, because the shape changed', () => {
-    expect(SNAPSHOT_VERSION).toBe(10);
+    expect(SNAPSHOT_VERSION).toBe(11);
   });
 
   it('records the phase, not just whose turn it is', () => {

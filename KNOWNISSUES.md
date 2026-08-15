@@ -205,6 +205,40 @@ verdict.
 are not in it, so the only way one changes hands is a bankruptcy. Both fixes are
 per-game or per-panel work rather than a gap in the mechanism.
 
+### The roll button can die after a theme change on a short Ultimate run
+
+*Seen in M12d, and it predates it.* `node tools/playtest.mjs --game ultimate
+--turns 16` fails at the mid-game palette switch with "the roll button was dead
+after a theme change". The same command at `--turns 30`, and at six players,
+passes; so does every other game. It reproduces on the commit before the M12d
+work, so the build ladder and the merged junctions are not the cause.
+
+It is the failure mode CLAUDE.md already records twice — a button re-registered
+with the input plugin at the wrong moment — reached from a turn count that lands
+the theme change on a different phase. Ultimate is the only game that plays with
+the speed die by default, so its turn has seven phases rather than six, which is
+the first place to look.
+
+Not chased in M12d because the milestone was the ladder, and a rules change is
+the wrong thing to be holding when you go after an input-plugin bug.
+
+### Houses cannot be built on a majority ownership
+
+*Added in M12d.* Ultimate Monopoly lets you build once you own **all but one** of
+a colour group with more than two properties — "that is called a MAJORITY
+OWNERSHIP" — and reserves the full monopoly for skyscrapers. The engine requires
+the whole group for every rung, which is the classic rule and stricter than
+Ultimate's.
+
+The rent half of that distinction *is* implemented (`majorityRent` doubles a bare
+lot on a majority, `monopolyRent` triples it on the full set). What is missing is
+the building half, and the shape of the fix is already there: `BuildLevel.group`
+is a boolean today and wants to be `'majority' | 'group' | false`, with the
+skyscraper level naming `'group'` while the house and hotel name `'majority'`.
+
+It is left out because it changes how quickly every Ultimate game develops, and
+that is a balance decision rather than a mechanism gap.
+
 ### Stock certificates and Roll Three cards are still reduced
 
 *Narrowed in M12b.* The mechanism that blocked them is gone: a stock company

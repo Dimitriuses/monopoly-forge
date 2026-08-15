@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Board } from '@/game/Board';
+import { rungAt } from '@/game/BuildLadder';
 import { Bank } from '@/game/Bank';
 import { Player } from '@/game/Player';
 import { PropertyTile } from '@/tiles/PropertyTile';
@@ -94,7 +95,7 @@ describe('BuildRules — even building', () => {
     med.level = 1;
     const check = canBuild(board, bank, ann, med);
     expect(check.ok).toBe(false);
-    expect(check.reason).toMatch(/within one of each other/);
+    expect(check.reason).toMatch(/evenly across the colour group/);
     expect(canBuild(board, bank, ann, baltic).ok).toBe(true);
   });
 
@@ -105,7 +106,14 @@ describe('BuildRules — even building', () => {
       expect(canBuild(board, bank, ann, baltic).ok).toBe(true);
       baltic.level = level;
     }
-    expect(canBuild(board, bank, ann, med).ok).toBe(false); // four is the cap
+    // Four each, so the next rung is the hotel rather than a fifth house — one
+    // question now answers both, which is the point of the ladder.
+    expect(rungAt(board.rules.buildLadder, med.type, med.level + 1)?.kind.id).toBe('hotel');
+    expect(canBuild(board, bank, ann, med).ok).toBe(true);
+
+    med.level = 5;
+    expect(canBuild(board, bank, ann, med).ok).toBe(false); // the top of the ladder
+    expect(canBuild(board, bank, ann, med).reason).toMatch(/as far as it goes/);
   });
 
   it('requires four houses on every lot before a hotel goes up', () => {
@@ -113,16 +121,23 @@ describe('BuildRules — even building', () => {
     baltic.level = 3;
     const check = canBuild(board, bank, ann, med);
     expect(check.ok).toBe(false);
-    expect(check.reason).toMatch(/needs 4 houses/i);
+    expect(check.reason).toMatch(/evenly across the colour group/);
 
     baltic.level = 4;
     expect(canBuild(board, bank, ann, med).ok).toBe(true);
   });
 
-  it('refuses a hotel before four houses stand on the lot itself', () => {
+  /**
+   * The lot itself is behind, so what it may build next is a *house* — and the
+   * even-building rule allows that, because it is the lot that is behind. What
+   * it may not do is skip to the hotel, and the ladder is what stops it: rung 4
+   * is the fourth house, not a hotel.
+   */
+  it('builds the fourth house rather than the hotel when the lot is behind', () => {
     med.level = 3;
     baltic.level = 4;
-    expect(canBuild(board, bank, ann, med).ok).toBe(false);
+    expect(canBuild(board, bank, ann, med).ok).toBe(true);
+    expect(rungAt(board.rules.buildLadder, med.type, med.level + 1)?.kind.id).toBe('house');
   });
 
   it('takes houses down evenly too', () => {
@@ -132,7 +147,7 @@ describe('BuildRules — even building', () => {
     expect(canSell(board, bank, ann, med).ok).toBe(true);
   });
 
-  it('counts a hotel as the fifth building', () => {
+  it('counts a hotel as the fifth rung', () => {
     med.level = 5;
     baltic.level = 4;
     expect(buildingLevel(med)).toBe(5);
@@ -159,7 +174,7 @@ describe('BuildRules — the bank and the wallet', () => {
   });
 
   it('refuses to build when the bank has no houses left', () => {
-    bank.level = 0;
+    bank.houses = 0;
     expect(canBuild(board, bank, ann, med).reason).toMatch(/run out of houses/);
   });
 
@@ -172,9 +187,9 @@ describe('BuildRules — the bank and the wallet', () => {
   // houses, so the rules stop the sale rather than let the buildings vanish.
   it('refuses to break a hotel the bank cannot supply houses for', () => {
     med.level = 5;
-    bank.level = 3;
+    bank.houses = 3;
     expect(canSell(board, bank, ann, med).ok).toBe(false);
-    bank.level = 4;
+    bank.houses = 4;
     expect(canSell(board, bank, ann, med).ok).toBe(true);
   });
 });

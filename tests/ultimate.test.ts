@@ -13,6 +13,8 @@ import { isOwnable } from '@/tiles/Tile';
 import { EFFECT_TILE_TYPES, LADDERS } from '@/games/ultimate/tiles';
 import { bus } from '@/utils/EventBus';
 import { Bank } from '@/game/Bank';
+import { canBuild } from '@/game/BuildRules';
+import { rungAt, topLevel } from '@/game/BuildLadder';
 import { Dice } from '@/game/Dice';
 import { preferredOption, type ChoiceRequest } from '@/game/Choice';
 import { applyTileEffect, effectContext, type TileEffectContext } from '@/game/TileEffects';
@@ -279,6 +281,131 @@ describe('Ultimate Monopoly — the rules it is played by', () => {
       result.tilesOwned.map((id) => played.trackOf(id).id),
     );
     expect([...reached].sort()).toEqual(['inner', 'middle', 'outer']);
+  });
+
+  // ─── The build ladder ───────────────────────────────────────────────────────
+  // Five things can be built here, in the two shapes M12d's ladder exists to
+  // tell apart: rungs that add a rent tier, and improvements that multiply.
+
+  describe('what can be built on it', () => {
+    let bank: Bank;
+    let ann: Player;
+
+    beforeEach(() => {
+      bank = new Bank(board.rules);
+      ann  = new Player('p1', 'Ann', 'car', false, 20_000);
+    });
+
+    const own = (tile: { id: number; ownerId: string | null }) => {
+      tile.ownerId = ann.id;
+      ann.ownedTileIds.add(tile.id);
+    };
+
+    it('stocks the box the printed equipment list names', () => {
+      expect(bank.stock).toMatchObject({
+        house: 81, hotel: 31, skyscraper: 16, trainDepot: 4, cabStand: 4,
+      });
+    });
+
+    /**
+     * "If you own all of the properties of a color group, and have built hotels
+     * on each, you may then build Skyscrapers." So a lot climbs six rungs here
+     * where the classic board stops at five.
+     */
+    it('builds a skyscraper on top of a hotel', () => {
+      const group = board.groupTiles('brown');
+      for (const lot of group) own(lot);
+      const lot = group[0];
+
+      expect(topLevel(board.rules.buildLadder, lot.type)).toBe(6);
+
+      // Everything up to the hotel, evenly across the group.
+      for (let rung = 1; rung <= 5; rung++) {
+        for (const member of group) expect(bank.build(ann, member)).toBe(true);
+      }
+      expect(group.every((m) => m.level === 5)).toBe(true);
+
+      expect(rungAt(board.rules.buildLadder, lot.type, 6)?.kind.id).toBe('skyscraper');
+      expect(canBuild(board, bank, ann, lot).ok).toBe(true);
+      expect(bank.build(ann, lot)).toBe(true);
+      expect(lot.level).toBe(6);
+      expect(bank.stock.skyscraper).toBe(15);
+    });
+
+    it('charges the seventh rent tier for one', () => {
+      const lot = board.groupTiles('brown')[0] as PropertyTile;
+      expect(lot.rentTiers).toHaveLength(7);
+      lot.ownerId = ann.id;
+      lot.level = 6;
+      expect(lot.currentRent).toBe(lot.rentTiers[6]);
+      expect(lot.rentTiers[6]).toBeGreaterThan(lot.rentTiers[5]);
+    });
+
+    it('sells a skyscraper back into a hotel', () => {
+      const lot = board.groupTiles('brown')[0];
+      own(lot);
+      lot.level = 6;
+      bank.stock.skyscraper = 15;
+      expect(bank.sell(ann, lot)).toBe(true);
+      expect(lot.level).toBe(5);
+      expect(bank.stock.skyscraper).toBe(16);
+    });
+
+    /**
+     * The other shape. "You may improve your Railroads by building a Train Depot
+     * on it (cost: $100). A Train Depot doubles the rent due for the Railroad.
+     * You don't need to own multiple Railroads before building one."
+     */
+    it('puts a train depot on a single railroad, with no group to complete', () => {
+      const rail = board.tiles.find((t) => t.type === 'railroad')!;
+      own(rail as never);
+
+      expect(canBuild(board, bank, ann, rail as never).ok).toBe(true);
+      expect(bank.priceOf(rail as never, 1)).toBe(100);
+      expect(bank.build(ann, rail as never)).toBe(true);
+      expect(bank.stock.trainDepot).toBe(3);
+    });
+
+    it('doubles what the railroad charges, rather than adding a tier', () => {
+      const rails = board.tiles.filter((t) => t.type === 'railroad');
+      const rail = rails[0];
+      own(rail as never);
+
+      const bare = quoteRent(board, rail, ann, { diceTotal: 7 }).amount;
+      (rail as never as { level: number }).level = 1;
+      const improved = quoteRent(board, rail, ann, { diceTotal: 7 });
+      expect(improved.amount).toBe(bare * 2);
+      expect(improved.notes.join()).toMatch(/train depot/i);
+    });
+
+    it('sells a depot back for the price the rules print', () => {
+      const rail = board.tiles.find((t) => t.type === 'railroad')!;
+      own(rail as never);
+      (rail as never as { level: number }).level = 1;
+      bank.stock.trainDepot = 3;
+      const cash = ann.cash;
+      expect(bank.sell(ann, rail as never)).toBe(true);
+      expect(ann.cash).toBe(cash + 50);
+      expect(bank.stock.trainDepot).toBe(4);
+    });
+
+    it('puts a cab stand on a cab company at its own price', () => {
+      const cab = board.tiles.find((t) => t.type === 'cabCompany')!;
+      own(cab as never);
+      expect(bank.priceOf(cab as never, 1)).toBe(150);
+      expect(bank.build(ann, cab as never)).toBe(true);
+      expect(bank.stock.cabStand).toBe(3);
+    });
+
+    /** A depot belongs on a railroad and nowhere else. */
+    it('refuses to build on a tile no level names', () => {
+      const util = board.tiles.find((t) => t.type === 'utility')!;
+      own(util as never);
+      expect(topLevel(board.rules.buildLadder, util.type)).toBe(0);
+      const check = canBuild(board, bank, ann, util as never);
+      expect(check.ok).toBe(false);
+      expect(check.reason).toMatch(/Nothing can be built/);
+    });
   });
 
   it('keeps its registrations to itself', () => {

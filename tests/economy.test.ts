@@ -36,11 +36,17 @@ describe('PropertyTile — rent tiers', () => {
     });
   });
 
-  it('charges the hotel tier regardless of the house counter', () => {
+  /**
+   * The level *is* the tier. A lot used to carry `houses` and `hasHotel`
+   * separately and could be asked what it charged with both set, which was a
+   * state no rule could produce and every reader had to have an opinion about.
+   */
+  it('charges the tier its level names', () => {
     tile.ownerId = 'p1';
     tile.level = 5;
-    tile.level = 0;
     expect(tile.currentRent).toBe(250);
+    tile.level = 0;
+    expect(tile.currentRent).toBe(2);
   });
 
   it('charges nothing while mortgaged, even with a hotel', () => {
@@ -241,10 +247,12 @@ describe('Bank — house and hotel inventory', () => {
     expect(ann.cash).toBe(1450);
   });
 
-  it('caps a lot at four houses', () => {
-    for (let i = 0; i < 4; i++) expect(bank.build(ann, tile)).toBe(true);
+  it('climbs to the top of the ladder and stops', () => {
+    // Four houses then the hotel — five rungs on the classic board, and the
+    // sixth build is refused because there is no sixth rung.
+    for (let i = 0; i < 5; i++) expect(bank.build(ann, tile)).toBe(true);
+    expect(tile.level).toBe(5);
     expect(bank.build(ann, tile)).toBe(false);
-    expect(tile.level).toBe(4);
   });
 
   it('returns four houses to the bank when a hotel is built', () => {
@@ -252,15 +260,20 @@ describe('Bank — house and hotel inventory', () => {
     expect(bank.houses).toBe(28);
 
     expect(bank.build(ann, tile)).toBe(true);
-    expect(tile.level === 5).toBe(true);
-    expect(tile.level).toBe(0);
+    expect(tile.level).toBe(5);
     expect(bank.hotels).toBe(11);
     expect(bank.houses).toBe(32); // the four came back
   });
 
-  it('refuses a hotel before four houses are standing', () => {
+  /**
+   * The bank cannot skip a rung, which is the whole of "a hotel needs four
+   * houses first" as far as *inventory* is concerned. Whether it is legal is
+   * `BuildRules`; the bank still knows no rules.
+   */
+  it('takes the rungs in order rather than jumping to the hotel', () => {
     bank.build(ann, tile);
-    expect(bank.build(ann, tile)).toBe(false);
+    expect(tile.level).toBe(1);
+    expect(bank.hotels).toBe(12);   // nothing came out of the hotel box
   });
 
   it('refunds half the house cost on a sale and restocks the bank', () => {
@@ -273,7 +286,7 @@ describe('Bank — house and hotel inventory', () => {
   });
 
   it('refuses to build when the bank has run out of houses', () => {
-    bank.level = 0;
+    bank.houses = 0;
     expect(bank.build(ann, tile)).toBe(false);
     expect(tile.level).toBe(0);
   });

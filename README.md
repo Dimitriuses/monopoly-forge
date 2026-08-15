@@ -156,12 +156,13 @@ Three axes of customisation, none of which should require editing engine code:
 | **Maps** | A board of any length and shape — not 40 tiles in a square — with your own tiles, groups, prices and named anchors (where "jail" is, where "start" is). *Done: see the round and multi-ring boards that ship* |
 | **Rules** | New tile types and card effects registered from outside, a rule set that decides jail terms, building rules and the economy, and a turn whose phases, order and win condition come from that rule set. *Done — the speed die is the proof: its own dice and an extra phase, with the engine never learning what one is* |
 | **Presentation** | How each element draws — tiles, tokens, panels, HUD — swapped per theme, without touching the rules. *Done: two themes ship, and how a tile type draws is a registered decoration rather than a branch in the renderer* |
+| **Buildings** | A ladder rather than houses-then-a-hotel: a game says what can be built, on which tile types, how many fit, what the bank stocks, and whether it charges the next rent tier or multiplies what the tile already charges. *Done: Ultimate Monopoly builds houses, hotels, **skyscrapers**, **train depots** on its railroads and **cab stands** on its cab companies* |
 | **A game** | All three of the above in one place — a folder holding a board, a rule set, decks, a theme and whatever else it needs, picked as a single choice and launched. *Done: `src/games/<id>/` is a game, `gameById` loads it, six ship — including Ultimate Monopoly's 120 tiles and three loops — and [docs/authoring-a-game.md](docs/authoring-a-game.md) is how to add one* |
 
 **Writing the classic game first was the point, not a detour.** A configurable
 engine whose only consumer is a toy proves nothing; the standard board is the
 reference implementation that says what the engine has to be able to express, and
-it is what the 568 unit tests pin down.
+it is what the 583 unit tests pin down.
 
 ### What already supports it
 

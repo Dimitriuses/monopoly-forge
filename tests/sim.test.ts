@@ -140,7 +140,8 @@ describe('Invariants', () => {
   it('catches houses that are not where the rules say', () => {
     const ctx = table();
     ctx.bank.houses -= 3;                 // three houses left the bank and vanished
-    expect(checkInvariants(ctx).some((v) => v.what === 'houses')).toBe(true);
+    // The census is per building kind now, so the violation is named for one.
+    expect(checkInvariants(ctx).some((v) => v.what === 'house')).toBe(true);
   });
 
   // The one that caught a real bug on the simulator's first batch: a bankrupt

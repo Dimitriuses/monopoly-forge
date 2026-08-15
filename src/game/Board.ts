@@ -4,7 +4,7 @@ import { resolveRules, type GameRules } from './Rules';
 import { CLASSIC_MAP } from '@/maps/classic';
 import type { GameMap } from '@/maps/GameMap';
 import {
-  computeGeometry, type BoardGeometry, type Backdrop, type TileLayout,
+  computeGeometry, mergeJunctions, type BoardGeometry, type Backdrop, type TileLayout,
 } from './BoardLayout';
 import {
   movementNamed, type MovementStrategy, type StepContext, type TrackSpec,
@@ -85,6 +85,9 @@ export class Board {
       this.junctions.set(a, b);
       this.junctions.set(b, a);
     }
+    // A junction is one printed space across two rings. Two tiles is what
+    // *movement* needs; one rectangle is what a player reads. See mergeJunctions.
+    mergeJunctions(this.geometry, this.map.junctions ?? []);
     this.movement = movementNamed(this.rules.movement);
   }
 
@@ -98,6 +101,17 @@ export class Board {
       throw new Error(`[Board] getTile(${index}): slot ${i} is undefined (tiles.length=${this.tiles.length})`);
     }
     return tile;
+  }
+
+  /**
+   * Where a **piece** stands on a tile, which is not always the middle of the
+   * rectangle it is drawn in. A merged junction is drawn as one space across two
+   * rings and a token has to sit on the ring it is travelling: the half it
+   * stands in *is* the answer to "which way am I going next".
+   */
+  tokenPoint(index: number): { x: number; y: number } {
+    const layout = this.getLayout(index);
+    return { x: layout.x, y: layout.y };
   }
 
   getLayout(index: number): TileLayout {

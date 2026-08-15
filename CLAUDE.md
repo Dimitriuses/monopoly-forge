@@ -267,6 +267,64 @@ would swallow. A phase that holds must also *consume* whatever made it hold: the
 walk it starts comes back through it, and the speed die's bonus move would
 otherwise send the player round the board for ever.
 
+**19. What can be built is a ladder, and a level says which of two shapes it
+is.** `game/BuildLadder.ts`. A `BuildLevel` names a building, which tile types it
+stands on, how many fit, what the bank stocks — and crucially whether it charges
+the next **rent tier** (house, hotel, skyscraper: needs the colour group, goes up
+evenly) or **multiplies** what the tile already charges (train depot, cab stand:
+needs nothing but the deed, and doubles a rent that is priced off how many its
+owner holds). Forcing both into one shape is the mistake this design exists to
+avoid. `canBuild` / `canSell` are one question per *direction*, so a game adding a
+rung gets its legality, its bot and its renderer for free.
+
+**19b. A tile's `level` is the rung *and* the rent tier.** One number replaced
+`houses: number` + `hasHotel: boolean`, and `rentTiers[level]` replaced
+`hasHotel ? tiers[5] : tiers[houses]`. That is what made the change cheap — and it
+deleted a state the old pair could represent and no rule could produce (a hotel
+*and* three houses), which every reader used to need an opinion about. `level`
+lives on **`Ownable`**, not on a lot, because a railroad can hold a depot.
+
+**19c. How many rent tiers a lot needs is `validateGame`, not `validateMap`.** A
+map has no economy (invariant 11), so it can only insist a lot charges something
+bare and something built; the *count* is the ladder's business and is checked
+where map meets rules. Getting it wrong is otherwise silent — `rentTiers[6]` on a
+six-tier deed is `undefined`, and rent becomes `NaN`.
+
+**19d. The bank stocks by kind, and the census counts every one.** `bank.stock` is
+a `Record<string, number>`; `houses`/`hotels` survive as accessors because "how
+many houses are left" is still a real question. A census naming only those two
+would let a game's third building be minted out of nothing — the exact shape of
+the deck bug `sim/Invariants.ts` was written after. The exchange between rungs is
+what makes it worth checking: a hotel takes one out of one box and puts four back
+in another.
+
+**19e. The three building scalars stay the player's, and win.** `houseLimit`,
+`hotelLimit` and `housesBeforeHotel` describe the two rungs every game here has
+and remain in `RULE_FIELDS`; `resolveRules` writes them into the ladder's `house`
+and `hotel` levels after layering. So nudging "houses in the bank" cannot flatten
+a game's extra rungs — the failure invariant 11c warns about. The ladder itself is
+array-shaped and stays out of `RULE_FIELDS`, like `movement`.
+
+**20. A junction is two tiles and one space, and the space is not a rectangle.**
+Ultimate Monopoly's rules say "TRANSIT STATIONS and RAILROAD spaces are considered
+one space", and the board draws them as one block across two rings. Movement needs
+two tiles — stepping off one continues on your ring, off the other crosses — so
+`mergeJunctions` reconciles them at *layout* time.
+
+It does it by **not stroking the edge between them**, and the first attempt —
+giving the pair one merged rectangle — is the instructive failure. **Concentric
+rings do not share a tile width.** Each divides a different perimeter by a
+different count, so Ultimate's are 43, 49 and 64 across; one rectangle has to pick
+a width, and whichever it picks overhangs its neighbours on the other ring by half
+the difference. All four junctions overlapped their neighbours.
+
+Nor can the widths be tuned into agreement, which is the tempting fix: equal pitch
+across 13, 9 and 5 tiles a side needs the rings so far apart that the two halves
+stop touching, and touching is the whole premise. So each half keeps the width its
+own ring gives it, the shared edge goes unstroked, and the space is a *stepped*
+block — which is what it honestly is. `tests/movement.test.ts` pins it, including
+a check that **no tile is drawn over any other**.
+
 **8. A tile does not price itself.** `PropertyTile.currentRent` is the tier table
 and nothing more. What is actually charged — doubled for an unimproved colour
 group, scaled by how many railroads the owner holds, ten times the dice when a

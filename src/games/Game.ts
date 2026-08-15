@@ -3,7 +3,8 @@ import { knownTurnOrders, knownWinConditions } from '@/game/TurnFlow';
 import { knownVariants } from '@/game/Variants';
 import { knownMovements } from '@/game/Movement';
 import { knownRollRules } from '@/game/RollRules';
-import type { GameRules } from '@/game/Rules';
+import { resolveRules, type GameRules } from '@/game/Rules';
+import { topLevel } from '@/game/BuildLadder';
 import type { Card } from '@/cards/CardDeck';
 
 // ─── Game ─────────────────────────────────────────────────────────────────────
@@ -114,6 +115,22 @@ export function validateGame(game: Game): GameProblem[] {
   if (game.map.tracks?.length && (rules?.movement ?? 'circuit') === 'circuit') {
     complain(game.id, 'declares tracks but is played with "circuit" movement, which ignores them');
   }
+  // ── A lot needs one rent tier per rung this game can build ──────────────────
+  // The check that moved out of `validateMap` in M12d. A map is tiles and a
+  // shape; how far a lot can be developed is the *ladder's* business, so the
+  // pairing is only checkable here. Getting it wrong is silent otherwise —
+  // `rentTiers[6]` on a six-tier deed is `undefined`, and rent becomes NaN.
+  const ladder = resolveRules(rules).buildLadder;
+  for (const tile of game.map.tiles) {
+    if (tile.type !== 'property' || !tile.rent) continue;
+    const wanted = topLevel(ladder, tile.type) + 1;
+    if (tile.rent.length !== wanted) {
+      complain(tile.name,
+        `has ${tile.rent.length} rent tiers, and this game builds ${wanted - 1} `
+        + `level(s) — it needs ${wanted}`);
+    }
+  }
+
   for (const variant of [...(game.variants ?? []), ...(rules?.variants ?? [])]) {
     if (!knownVariants().includes(variant)) {
       complain(game.id, `asks for variant "${variant}", which is not registered`);

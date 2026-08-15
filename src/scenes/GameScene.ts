@@ -693,10 +693,11 @@ export class GameScene extends Phaser.Scene {
       ])),
       // Lets the harness click a tile without keeping its own copy of the
       // board geometry — unlike the button HOTSPOTS, which it must.
-      tileCentre:  (tileId: number) => {
-        const layout = this.board.getLayout(tileId);
-        return { x: layout.x, y: layout.y };
-      },
+      // The point a *piece* stands on, not the middle of the drawn rectangle:
+      // the two halves of a merged junction share one rectangle, so its centre
+      // would be the same click for both and the harness would answer a board
+      // question with whichever zone happened to be on top.
+      tileCentre:  (tileId: number) => this.board.tokenPoint(tileId),
       // How big *this* board is, and the loops it is made of. The harness used
       // to check `position <= 39`, which is the "never write 40 for the board"
       // rule broken in the one place nothing was checking it — and it passed for
@@ -729,7 +730,7 @@ export class GameScene extends Phaser.Scene {
 
   private spawnTokens(): void {
     this.players.forEach((player, i) => {
-      const layout = this.board.getLayout(player.position);
+      const at = this.board.tokenPoint(player.position);
 
       // BootScene bakes a disc-and-emblem texture per token type; the seat
       // number rides in the corner so a token matches its owner band on a tile.
@@ -745,7 +746,7 @@ export class GameScene extends Phaser.Scene {
       // One container per player: the badge has to keep its corner as the piece
       // moves, and the whole cluster scales together when a tile gets crowded.
       this.tokens.set(player.id, this.add
-        .container(layout.x, layout.y, [piece, label])
+        .container(at.x, at.y, [piece, label])
         .setDepth(10));
       this.tokenTile.set(player.id, player.position);
     });
@@ -775,10 +776,10 @@ export class GameScene extends Phaser.Scene {
     if (!token) return;
 
     const occupants = this.occupantsOf(tileIndex);
-    const layout = this.board.getLayout(tileIndex);
+    const at     = this.board.tokenPoint(tileIndex);
     const slot   = tokenSlot(Math.max(0, occupants.indexOf(playerId)), occupants.length);
-    const x = layout.x + slot.dx;
-    const y = layout.y + slot.dy;
+    const x = at.x + slot.dx;
+    const y = at.y + slot.dy;
 
     if (!animate) {
       token.setPosition(x, y).setScale(slot.scale);
@@ -828,13 +829,13 @@ export class GameScene extends Phaser.Scene {
       this.relayoutTile(next, true, playerId);
 
       const occupants = this.occupantsOf(next);
-      const layout = this.board.getLayout(next);
+      const at   = this.board.tokenPoint(next);
       const slot = tokenSlot(Math.max(0, occupants.indexOf(playerId)), occupants.length);
 
       await new Promise<void>((resolve) => {
         this.tweens.add({
           targets: token,
-          x: layout.x + slot.dx, y: layout.y + slot.dy,
+          x: at.x + slot.dx, y: at.y + slot.dy,
           scaleX: slot.scale, scaleY: slot.scale,
           duration: 110,
           ease: 'Sine.easeInOut',

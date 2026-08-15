@@ -987,7 +987,7 @@ square is now the worked example of it rather than a violation of it. Bonus is
 the shape that *does* charge more for stopping, and the two sit together in
 `games/ultimate/tiles.ts` so the difference is read once.
 
-### 12d — buildings are a ladder, not houses-then-a-hotel
+### 12d — buildings are a ladder, not houses-then-a-hotel · done
 
 **Unlocks:** skyscrapers (Ultimate Monopoly's fifth level), train depots on
 railroads, cab stands on cab companies.
@@ -1017,8 +1017,31 @@ Two consequences to face up front rather than discover:
   something that is not a `PropertyTile`, so `buildingLevel` and the build rules
   stop being about lots. `quoteRent` already counts by `tile.type`, which helps.
 
-Worth doing only when something wants it. Ultimate Monopoly does, and it is the
-only thing that does — so if this slips behind M10, nothing is blocked.
+Both consequences were faced up front and both landed:
+
+- [x] **`TileDefinition.rent` is a `number[]`.** `validateMap`'s "needs six rent
+      tiers" became "needs at least two", and the *count* moved to
+      `validateGame`, where the ladder is in scope — a map has no economy.
+      Ultimate's lots carry seven; the classic ones still carry six.
+- [x] **A railroad holds a building.** `level` lives on `Ownable`, and a level
+      says which tile types it stands on.
+
+**The design question the sketch did not have: there are two shapes, not one.**
+The reference settles it. A house, a hotel and a skyscraper stand on a lot, need
+the colour group, go up evenly and charge the next *rent tier*. A train depot and
+a cab stand stand on a railroad or a cab company, need nothing but the deed —
+"you don't need to own multiple Railroads before building a Train Depot on one" —
+and **double** what the tile charges, because a railroad prices itself off how
+many its owner holds and has no tier table to step through. So `BuildLevel.effect`
+is `'tier'` or `{ multiply }`, and one mechanism covers all five.
+
+`consumes` from the sketch is gone: it is always the rung below's `perTile` (a
+hotel consumes four houses, a skyscraper one hotel), so it is derived rather than
+declared and cannot disagree with itself.
+
+Ultimate Monopoly now builds the five its equipment list names — 81 houses, 31
+hotels, 16 skyscrapers, 4 train depots, 4 cab stands — and the invariant census
+counts every one.
 
 ### What M12 is not
 

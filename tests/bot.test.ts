@@ -169,7 +169,7 @@ describe('Bot', () => {
     it('does not plan past what the bank can supply', () => {
       give(bot, MEDITERRANEAN, BALTIC);
       bot.cash = 5000;
-      bank.level = 0;
+      bank.houses = 0;
       expect(buildPlan(ctx)).toEqual([]);
     });
 

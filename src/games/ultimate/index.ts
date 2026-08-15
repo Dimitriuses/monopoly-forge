@@ -59,6 +59,46 @@ export const ULTIMATE_GAME: Game = {
     houseLimit: 81,
     hotelLimit: 31,
 
+    /**
+     * Five things can be built here, where the classic game builds two. The
+     * equipment list is the specification: "81 Houses, 31 Hotels, 16
+     * Skyscrapers, 4 Train Depots, 4 Cab Stands".
+     *
+     * The two shapes sit side by side. A **skyscraper** is another rung on a
+     * lot: it needs the colour group like the rungs below it, goes up evenly,
+     * and charges the seventh tier of the deed — "if you own all of the
+     * properties of a color group and have built hotels on each, you may then
+     * build Skyscrapers."
+     *
+     * A **train depot** and a **cab stand** are the other shape. They stand on
+     * a railroad or a cab company, need nothing but the deed — "you don't need
+     * to own multiple Railroads before building a Train Depot on one" — and
+     * *double* the rent rather than reading a tier, because a railroad prices
+     * itself off how many its owner holds and has no tier table to step through.
+     *
+     * The house and hotel rungs are written out because a ladder replaces the
+     * whole list; their numbers still come from the three scalars above, which
+     * `resolveRules` writes back over these.
+     */
+    buildLadder: [
+      { id: 'house', label: 'House', perTile: 4, supply: 81,
+        on: ['property'], effect: 'tier', group: true },
+      { id: 'hotel', label: 'Hotel', perTile: 1, supply: 31,
+        on: ['property'], effect: 'tier', group: true },
+      { id: 'skyscraper', label: 'Skyscraper', perTile: 1, supply: 16,
+        on: ['property'], effect: 'tier', group: true },
+      // "$100. A Train Depot doubles the rent due for the Railroad. Train
+      // Depots may be sold back to the bank for $50 each."
+      { id: 'trainDepot', label: 'Train Depot', perTile: 1, supply: 4,
+        on: ['railroad'], cost: 100, refund: 50,
+        effect: { multiply: 2 }, group: false },
+      // "Cost: $150. Cab Stands double the rent owed… may be sold back to the
+      // bank for $75 each."
+      { id: 'cabStand', label: 'Cab Stand', perTile: 1, supply: 4,
+        on: ['cabCompany'], cost: 150, refund: 75,
+        effect: { multiply: 2 }, group: false },
+    ],
+
     // The board is three loops joined at four junctions; without this it is a
     // 120-tile circuit, and `validateGame` refuses the pairing outright.
     movement: 'tracks',

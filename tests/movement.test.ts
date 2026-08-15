@@ -199,14 +199,64 @@ describe('layout — concentric squares', () => {
     return board;
   };
 
-  it('lays 120 tiles out as three nested squares, none overlapping', () => {
+  /**
+   * No two *pieces* may stand in the same place. It is asked of tokenPoint
+   * rather than of the drawn rectangle because a junction is deliberately drawn
+   * as one space across two rings — the two tiles share a footprint and keep
+   * their own halves to stand in, which is the whole of that feature.
+   */
+  it('lays 120 tiles out as three nested squares, none standing on another', () => {
     const board = geometry();
     const seen = new Set<string>();
     for (let id = 0; id < board.size; id++) {
-      const { x, y } = board.getLayout(id);
+      const { x, y } = board.tokenPoint(id);
       const key = `${Math.round(x)},${Math.round(y)}`;
       expect(seen.has(key), `two tiles share ${key}`).toBe(false);
       seen.add(key);
+    }
+  });
+
+  /**
+   * One space, two halves — and each half keeps the width its own ring gives it.
+   * Forcing the pair into a single rectangle is what overlapped the neighbours:
+   * concentric rings divide different perimeters by different counts, so their
+   * tiles are 43, 49 and 64 across and any one width overhangs somebody.
+   */
+  it('draws a junction as one space, each half sized by its own ring', () => {
+    const board = geometry();
+    for (const { a, b } of gameById('ultimate').map.junctions!) {
+      const first = board.getLayout(a);
+      const second = board.getLayout(b);
+
+      // Abutting, one directly inside the other.
+      expect(Math.hypot(first.x - second.x, first.y - second.y))
+        .toBeCloseTo((first.h + second.h) / 2, 1);
+      // Opposite edges shared, so the two outlines join into one.
+      expect([first.sharedEdge, second.sharedEdge].sort()).toEqual(['bottom', 'top']);
+      // And each keeps its own ring's width.
+      expect(first.w).toBe(board.getLayout(a + 1).w);
+      expect(second.w).toBe(board.getLayout(b + 1).w);
+    }
+  });
+
+  /** The glitch itself: no tile may be drawn over another. */
+  it('draws no tile on top of another', () => {
+    const board = geometry();
+    const box = (i: number) => {
+      const l = board.getLayout(i);
+      const vertical = Math.abs(Math.round(l.rotation)) % 180 === 90;
+      const w = vertical ? l.h : l.w;
+      const h = vertical ? l.w : l.h;
+      return { x1: l.x - w / 2, x2: l.x + w / 2, y1: l.y - h / 2, y2: l.y + h / 2 };
+    };
+    for (let i = 0; i < board.size; i++) {
+      for (let j = i + 1; j < board.size; j++) {
+        const A = box(i); const B = box(j);
+        const overlap = Math.min(A.x2, B.x2) - Math.max(A.x1, B.x1) > 0.5
+                     && Math.min(A.y2, B.y2) - Math.max(A.y1, B.y1) > 0.5;
+        expect(overlap, `${board.getTile(i).name} overlaps ${board.getTile(j).name}`)
+          .toBe(false);
+      }
     }
   });
 

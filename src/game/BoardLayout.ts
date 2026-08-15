@@ -25,6 +25,15 @@ export interface TileLayout {
   isCorner: boolean;
   /** Which side of a square board this is, or null on a shape that has no sides. */
   side: BoardSide | null;
+  /**
+   * Which of this tile's own edges it shares with the tile it is joined to, in
+   * its local frame — `top` faces the board's interior, `bottom` the rim.
+   *
+   * Set on both halves of a junction, and the only thing that makes them read as
+   * one space: the shared edge is **not stroked**, so two abutting rectangles
+   * are drawn as a single outline around both. See `mergeJunctions`.
+   */
+  sharedEdge?: 'top' | 'bottom';
 }
 
 /** The board's own outline, drawn under the tiles. */
@@ -286,4 +295,62 @@ function ringsGeometry(rings: RingSpec[], depth: number, tileCount: number): Boa
     backdrop: { kind: 'circle', x: centre.x, y: centre.y, size: outer + depth / 2 + 6 },
     centre,
   };
+}
+
+/**
+ * Draw a junction's two tiles as one space.
+ *
+ * On the printed Ultimate Monopoly board a RAILROAD and the TRANSIT STATION
+ * beside it **are one square** — the rules say so outright ("TRANSIT STATIONS
+ * and RAILROAD spaces are considered one space"), and the board draws them as a
+ * single block straddling two rings with the tracks running through it. The
+ * engine has always had them as two tiles because that is what movement needs:
+ * stepping off one continues on your ring, stepping off the other crosses to
+ * the next, and which happens is the parity of your roll.
+ *
+ * The reconciliation is **not** to give the pair one rectangle, and that is the
+ * whole lesson here. Concentric rings do not share a tile width — Ultimate's
+ * are 43, 49 and 64 pixels across, because each ring divides a different
+ * perimeter by a different count — so a single rectangle has to pick one, and
+ * whichever it picks overhangs its neighbours on the other ring by half the
+ * difference. That was a visible overlap on all four junctions.
+ *
+ * Nor can the widths be tuned into agreement: equal pitch across 13, 9 and 5
+ * tiles a side would need the rings so far apart that the two halves of a
+ * junction would no longer touch, which is the one thing the whole idea rests
+ * on.
+ *
+ * So each tile keeps its own rectangle, exactly as the ring around it demands,
+ * and the pair is made one space by **not stroking the edge between them**. The
+ * result is a single outline around a slightly stepped block — which is what the
+ * shape honestly is, since the rings really do have different pitches.
+ *
+ * Only pairs that actually abut are joined: two tiles at opposite corners of the
+ * board are a junction in the topology and nowhere near each other on screen.
+ */
+export function mergeJunctions(
+  geometry: BoardGeometry, junctions: Array<{ a: number; b: number }>,
+): void {
+  for (const { a, b } of junctions) {
+    const first  = geometry.tiles[a];
+    const second = geometry.tiles[b];
+    if (!first || !second) continue;
+    // Different orientations cannot share a straight edge.
+    if (Math.round(first.rotation) !== Math.round(second.rotation)) continue;
+
+    // Touching means their centres sit half a depth apart on each side. Allow a
+    // pixel of slack for the inset arithmetic and refuse anything further.
+    const gap = Math.hypot(first.x - second.x, first.y - second.y);
+    if (gap > (first.h + second.h) / 2 + 1) continue;
+
+    // Which way the partner lies. `top` faces the board's interior, so the tile
+    // further out shares its top edge and the one further in shares its bottom.
+    const { x: cx, y: cy } = geometry.centre;
+    const outer = Math.hypot(first.x - cx, first.y - cy)
+                > Math.hypot(second.x - cx, second.y - cy) ? first : second;
+    const inner = outer === first ? second : first;
+
+    outer.sharedEdge = 'top';
+    inner.sharedEdge = 'bottom';
+  }
 }

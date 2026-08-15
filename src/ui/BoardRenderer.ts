@@ -94,7 +94,7 @@ export class BoardRenderer {
       g.save();
       g.translateCanvas(layout.x, layout.y);
       g.rotateCanvas(Phaser.Math.DegToRad(layout.rotation));
-      g.strokeRect(-half.w, -half.h, layout.w, layout.h);
+      strokeTile(g, layout, half);
 
       // What goes *inside* the outline is the tile type's own business — a lot's
       // colour band, a railroad's glyph, whatever a game registered. See TileDecor.
@@ -333,4 +333,41 @@ export class BoardRenderer {
       y: layout.y + localX * sin + localY * cos,
     };
   }
+}
+
+/**
+ * A tile's outline, in its own frame.
+ *
+ * Four sides for every tile on every board but one: a junction's two halves each
+ * leave out the edge they share, so the pair is drawn as a single outline around
+ * both. They are not the same width — concentric rings divide different
+ * perimeters by different counts — so the result is a stepped block rather than
+ * a rectangle, which is what the shape honestly is. See `mergeJunctions`.
+ */
+function strokeTile(
+  g: Phaser.GameObjects.Graphics, layout: TileLayout, half: { w: number; h: number },
+): void {
+  if (!layout.sharedEdge) {
+    g.strokeRect(-half.w, -half.h, layout.w, layout.h);
+    return;
+  }
+  const top = -half.h;
+  const bottom = half.h;
+  const left = -half.w;
+  const right = half.w;
+
+  g.beginPath();
+  if (layout.sharedEdge === 'top') {
+    // Open at the top: up the left side, across the bottom, back up the right.
+    g.moveTo(left, top);
+    g.lineTo(left, bottom);
+    g.lineTo(right, bottom);
+    g.lineTo(right, top);
+  } else {
+    g.moveTo(left, bottom);
+    g.lineTo(left, top);
+    g.lineTo(right, top);
+    g.lineTo(right, bottom);
+  }
+  g.strokePath();
 }
