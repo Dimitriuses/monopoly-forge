@@ -1081,10 +1081,12 @@ All 24 are accounted for below — **3** wrong, **4** softened, **2** balance,
 rather than in the game — which is worth more than the fix, because it had been
 misread as the third appearance of an input-plugin bug.
 
-**13b is three of four**: majority-ownership building, the speed die's lap rule,
-and holdings that can be traded *and* spent. The one left is the stock
-certificates, which the milestone always called the largest and which is a
-game's own behaviour rather than a seam the engine is missing.
+**13b is done bar one**, and the one is the interesting result: majority-ownership
+building, the speed die's lap rule, holdings that can be traded and spent, and
+the stock exchange all landed. **Roll Three did not**, and stopped on something
+structural rather than on effort — a card is three numbers and a holding is a
+count, so it wants a deck of things a player *holds* rather than plays. That is a
+seam the engine does not have, which is a better answer than a hack.
 
 ### 13a — the three that are simply wrong · done
 
@@ -1110,7 +1112,7 @@ Defects, in the order they would bite somebody.
       menu that cannot express "this rule is not available for this game"; the
       real answer is a field that knows when it does not apply.
 
-### 13b — printed rules still softened · three of four, and the fourth is a game's own work
+### 13b — printed rules still softened · done, bar one that found a real gap
 
 Each of these is a reduction taken deliberately, with the reason recorded. Closing
 one is a *balance* decision as much as an engineering one, which is why they are
@@ -1133,11 +1135,14 @@ listed rather than assumed.
       both drivers before the dice because a voucher *is* a move. Bots still do
       not *propose* a trade containing a holding, which is a `proposeTrade`
       shape rather than a missing mechanism.
-- [ ] **Stock certificates and Roll Three cards.** The mechanism is no longer what
-      blocks them — a stock company is a holding kind and a Roll Three card is a
-      number you keep. What is left is each rule's own behaviour, which is a
-      *game's* work rather than the engine's, and is the largest thing on this
-      list.
+- [x] **Stock certificates** — six companies, five shares each, each a holding
+      kind. Dividends to *every* shareholder whenever anyone lands, which is the
+      first rule here that pays somebody for a square they are not on. A declined
+      share is not yet auctioned.
+- [ ] **Roll Three** — stopped for a reason worth more than the rule: a card is
+      three numbers, and a holding is a *count*. It wants a game-supplied deck of
+      things a player **holds** rather than plays, which is a seam that does not
+      exist. See KNOWNISSUES.
 
 ### 13c — the balance work
 

@@ -3,10 +3,11 @@ import { rng } from '@/utils/PRNG';
 import { Tile, isOwnable, type PassContext, type TileDefinition } from '@/tiles/Tile';
 import { RailroadTile, UtilityTile } from '@/tiles/SpecialTiles';
 import { registerTileType } from '@/tiles/registry';
-import { registerTileEffect } from '@/game/TileEffects';
-import { giveHolding, registerHolding, takeHolding } from '@/game/Holdings';
+import { registerTileEffect, type TileEffectContext } from '@/game/TileEffects';
+import { countHeld, giveHolding, registerHolding, takeHolding } from '@/game/Holdings';
 import { askChoice } from '@/game/Choice';
 import { tileSubject } from '@/game/Auction';
+import type { Player } from '@/game/Player';
 import { TUNNELS } from './board';
 
 // ─── Ultimate Monopoly's tiles ────────────────────────────────────────────────
@@ -149,6 +150,22 @@ class TransitTile extends Tile {
 export const VOUCHER = 'travelVoucher';
 
 export function registerUltimateTiles(): void {
+  // Six companies, five certificates each — thirty, as the equipment list says.
+  // Each is its own kind, which is what makes "how many of Acme does she hold"
+  // a count rather than a list of objects with identity.
+  for (const company of STOCK_COMPANIES) {
+    registerHolding(stockKind(company), {
+      label: `${STOCK_LABELS[company]} share`,
+      plural: `${STOCK_LABELS[company]} shares`,
+      // The block is five, and a player may hold all of it — that is the
+      // "entire block" the dividend ladder rewards.
+      limit: SHARES_PER_COMPANY,
+      value: STOCK_PAR,
+      // A share is an asset, so it goes with the estate.
+      onBankruptcy: 'transfer',
+    });
+  }
+
   registerHolding(VOUCHER, {
     label: 'travel voucher',
     plural: 'travel vouchers',
@@ -460,14 +477,32 @@ function registerUltimateEffects(): void {
    * hold. What survives is the dividend — the part everybody at the table feels —
    * paid to whoever stops here.
    */
+  /**
+   * "The STOCK EXCHANGE allows you to purchase stocks when landing on the STOCK
+   * EXCHANGE space and get paid dividends when anyone lands on it."
+   *
+   * Six companies, five shares each — the equipment list's thirty certificates —
+   * and a share is a **holding**, which is the whole reason this rule became
+   * reachable. It is countable and keyed by kind, so it is saved, traded,
+   * transferred on bankruptcy and counted by the invariant census without any of
+   * those learning what a share is.
+   *
+   * Two halves, in the order the rule states them:
+   *
+   *   1. **Dividends to every shareholder**, because the trigger is *anyone*
+   *      landing here, not the owner doing something. This is the first rule in
+   *      the build that pays somebody for a square they are not standing on.
+   *   2. **The lander may buy one share** at par, from what the bank has left.
+   *
+   * How many shares the bank has left is *derived* — issued is what the players
+   * hold between them — rather than stored. A second copy of that number is a
+   * second thing to get wrong, and `sim/Invariants.ts` would not catch it: the
+   * holdings census is deliberately not a conservation law, because a game mints
+   * vouchers. Stock does not mint, and this is what keeps that true.
+   */
   registerTileEffect('stockExchange', (ctx, player, { tileId }) => {
-    const dividend = 100 + 50 * Math.floor(rng.next() * 4);
-    ctx.award(player, dividend);
-    bus.emit('ui:notification', {
-      message: `📈 Stock Exchange — ${player.name} drew a $${dividend} dividend.`,
-      type: 'success',
-    });
-    bus.emit('player:landed', { playerId: player.id, tileId });
+    payDividends(ctx, player);
+    offerShare(ctx, player, tileId);
   });
 
   /**
@@ -509,3 +544,128 @@ export const EFFECT_TILE_TYPES = [
   'tunnel', 'subway', 'squeezePlay', 'taxRefund', 'birthdayGift',
   'auctionAny', 'busTicket', 'rollThree', 'stockExchange', 'reverse',
 ] as const;
+
+// ─── The stock exchange ───────────────────────────────────────────────────────
+
+/**
+ * The six companies, and the five certificates each that the equipment list
+ * counts. The par value and the dividend ladder are **derived rather than
+ * quoted**: the rules say both are "printed on the STOCK CERTIFICATES" and the
+ * certificates are not in the reference, so they are made consistent instead of
+ * guessed at one company at a time — the same bargain `board.ts` makes with the
+ * sixty-four title deeds.
+ */
+export const STOCK_COMPANIES = [
+  'generalRadio', 'unitedRailways', 'nationalUtilities',
+  'acmeMotors', 'alliedSteamships', 'motionPictures',
+] as const;
+
+export const STOCK_LABELS: Record<string, string> = {
+  generalRadio:      'General Radio',
+  unitedRailways:    'United Railways',
+  nationalUtilities: 'National Utilities',
+  acmeMotors:        'Acme Motors',
+  alliedSteamships:  'Allied Steamships',
+  motionPictures:    'Motion Pictures',
+};
+
+/** Certificates the bank starts with, per company. */
+export const SHARES_PER_COMPANY = 5;
+/** What one costs from the bank. */
+export const STOCK_PAR = 150;
+
+/**
+ * What a shareholder is paid per landing, by how many of that company they hold.
+ *
+ * "It is an advantage to own the entire block of Stock of a Company, as the
+ * Dividends increase considerably with the amount owned in any one Company" —
+ * so this rises faster than the share count, which is the whole of that
+ * sentence. `[1]` is one share.
+ */
+export const STOCK_DIVIDEND = [0, 25, 60, 110, 180, 300];
+
+/** The holding kind for a company's shares. */
+export const stockKind = (company: string): string => `stock.${company}`;
+
+/** How many of a company are out in players' hands — the bank holds the rest. */
+function sharesIssued(players: Player[], company: string): number {
+  return players.reduce((n, p) => n + countHeld(p, stockKind(company)), 0);
+}
+
+/** The bank pays every shareholder, whoever landed. */
+function payDividends(ctx: TileEffectContext, lander: Player): void {
+  for (const holder of ctx.players) {
+    if (holder.isBankrupt) continue;
+    let paid = 0;
+    for (const company of STOCK_COMPANIES) {
+      const held = countHeld(holder, stockKind(company));
+      paid += STOCK_DIVIDEND[Math.min(held, SHARES_PER_COMPANY)] ?? 0;
+    }
+    if (paid <= 0) continue;
+    ctx.award(holder, paid);
+    bus.emit('ui:notification', {
+      message: holder.id === lander.id
+        ? `📈 ${holder.name} collects $${paid} in dividends.`
+        : `📈 ${holder.name} collects $${paid} in dividends from ${lander.name}'s landing.`,
+      type: 'success',
+    });
+  }
+}
+
+/**
+ * "You have the option of buying from the Bank one share of Stock in any
+ * Company you choose, paying the Par Value price."
+ *
+ * A bot ranks by how many of that company it already holds, which is the
+ * dividend ladder read backwards — the block is worth more than the spread, and
+ * that is the printed advice rather than a policy of ours.
+ */
+function offerShare(ctx: TileEffectContext, player: Player, tileId: number): void {
+  const available = STOCK_COMPANIES.filter(
+    (company) => sharesIssued(ctx.players, company) < SHARES_PER_COMPANY,
+  );
+  const land = () => bus.emit('player:landed', { playerId: player.id, tileId });
+
+  if (!available.length || !player.canAfford(STOCK_PAR)) {
+    land();
+    return;
+  }
+
+  const asked = askChoice({
+    id: 'stock',
+    playerId: player.id,
+    prompt: `Buy a share at $${STOCK_PAR}?`,
+    style: 'list',
+    options: [
+      ...available.map((company) => ({
+        id: company,
+        label: `${STOCK_LABELS[company]} — $${STOCK_PAR}`,
+        weight: 1 + countHeld(player, stockKind(company)),
+      })),
+      { id: 'none', label: 'Buy nothing', weight: 0 },
+    ],
+    answer: (optionId) => {
+      // Checked again rather than trusted. `askChoice` only ever offers what is
+      // available, but an answer arrives from outside this function — a driver,
+      // a bot, a restored prompt — and the one thing that must not happen here
+      // is a sixth certificate of a five-share company, which nothing downstream
+      // would catch: the holdings census counts kinds, not issues.
+      if (optionId === 'none'
+          || !available.includes(optionId as typeof available[number])
+          || !player.canAfford(STOCK_PAR)) {
+        land();
+        return;
+      }
+      ctx.charge(player, null, STOCK_PAR);
+      giveHolding(player, stockKind(optionId), 1);
+      bus.emit('ui:notification', {
+        message: `📈 ${player.name} buys a share of ${STOCK_LABELS[optionId]}.`,
+        type: 'info',
+      });
+      land();
+    },
+  });
+
+  // A rule that asks must survive nobody listening.
+  if (!asked) land();
+}

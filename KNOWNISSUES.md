@@ -88,14 +88,6 @@ refused is **two**, not three:
   localStorage. Saving it would mean the *asker* being re-entrant — able to ask
   again from saved state — which is per-asker work rather than one mechanism.
 
-#### Stock certificates and Roll Three cards are still reduced
-
-*Narrowed in M12b.* The mechanism that blocked them is gone: a stock company
-would be a holding kind (`stock.acmeMotors`) and a Roll Three card is a number
-you keep. What is left is each rule's own behaviour — a dividend paid to every
-shareholder when anybody lands on the Stock Exchange, three numbers matched
-against a roll — which is a game's work, not the engine's.
-
 #### Three things a bot still cannot be asked
 
 *Narrowed in M10a.* `game/Choice.ts` closed the "nothing can ask a player to pick
@@ -180,6 +172,34 @@ step the same run depends on. Testing it needs a second pass with a different se
 of assertions.
 
 ---
+
+#### A Roll Three card needs an identity, and a holding is a count
+
+*Narrowed in M13b, and the reason it stopped is worth more than the rule.*
+
+Roll Three is fully specified in the reference and would be easy but for one
+thing: **a Roll Three card is three numbers.** A holding is a *count* keyed by a
+kind — that is what makes it trivially saveable, tradeable and countable — and
+three numbers are an identity. Invariant 18 draws exactly this line: "anything
+needing identity is a card, and cards have a home."
+
+The engine's home for cards is the **action** deck: `CardDeck` deals a `Card`
+with a `CardAction`, drawn and returned and discarded. A Roll Three card is not
+an action; it is a possession that happens to carry data, and there is no seam
+for one.
+
+Three ways out, none of them free:
+
+- **A kind per combination** (`rollThree.1-3-6`). Countable, saveable and
+  tradeable for nothing, and 56 registered kinds for a rule that has 20 cards.
+- **A field on `Player`.** Cheap, and puts a game's state on the engine's player,
+  which is the thing M12b built holdings to avoid.
+- **A game-supplied deck of non-action cards.** The honest one, and a real seam:
+  a deck of things a player *holds* rather than plays.
+
+Until then the space pays out as it should — the odds and prizes are the printed
+ones — against numbers rolled on the spot rather than against a card each player
+keeps. So a landing is right and a *hand* does not exist.
 
 ### Architecture
 
@@ -465,6 +485,38 @@ carries you past GO is a jump rather than a lap, which is the same distinction
 `hasLapped` is per-player state, so it is in the snapshot. A save written before
 the field existed restores it as `true`: the speed die simply stays live, which
 is the safer of the two guesses about a game already in progress.
+
+#### Stock certificates are still reduced
+
+*Closed in M13b.* Six companies, five certificates each — the equipment list's
+thirty — and each is a **holding kind**, which is precisely what M12b built and
+what this rule was waiting for. A share is saved, traded, transferred on
+bankruptcy and counted by the census without any of those learning what a share
+is.
+
+The rule has two halves and the second is unusual: **dividends are paid to every
+shareholder when *anyone* lands on the Stock Exchange**, so it is the first rule
+in the build that pays somebody for a square they are not standing on. The
+lander may then buy one share at par from what the bank has left.
+
+How many the bank has left is **derived** from what the players hold, not
+stored. A second copy would be a second thing to get wrong, and nothing would
+catch it: the holdings census is deliberately not a conservation law, because a
+game mints travel vouchers. The purchase re-checks availability rather than
+trusting the answer, because a sixth certificate of a five-share company is
+exactly the silent kind of wrong.
+
+The par value and the dividend ladder are derived rather than quoted — the rules
+say both are "printed on the STOCK CERTIFICATES" and the certificates are not in
+the reference — so they are made consistent instead of guessed at one company at
+a time, the same bargain the board file makes with its sixty-four title deeds.
+The ladder rises faster than the share count, which is the whole of "it is an
+advantage to own the entire block".
+
+One reduction remains: a **declined share is not auctioned**. The printed rule
+puts it under the hammer, and `Auction` sells an `AuctionSubject` — so it is a
+new `kind` and a branch in the two places invariant 7e names, rather than
+anything structural.
 
 #### A bot never spends a travel voucher, and nobody can trade one
 

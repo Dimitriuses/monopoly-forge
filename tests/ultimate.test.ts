@@ -10,12 +10,15 @@ import { unloadGame } from '@/games/scope';
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { RailroadTile, UtilityTile } from '@/tiles/SpecialTiles';
 import { isOwnable } from '@/tiles/Tile';
-import { EFFECT_TILE_TYPES, LADDERS } from '@/games/ultimate/tiles';
+import {
+  EFFECT_TILE_TYPES, LADDERS, STOCK_COMPANIES, STOCK_DIVIDEND, STOCK_PAR,
+  SHARES_PER_COMPANY, stockKind,
+} from '@/games/ultimate/tiles';
 import { bus } from '@/utils/EventBus';
 import { Bank } from '@/game/Bank';
 import { walkTo } from '@/game/Landing';
 import { canBuild, isProperty, ownsMajority, ownsWholeGroup } from '@/game/BuildRules';
-import { giveHolding } from '@/game/Holdings';
+import { countHeld, giveHolding, knownHoldings } from '@/game/Holdings';
 import { rungAt, topLevel } from '@/game/BuildLadder';
 import { Dice } from '@/game/Dice';
 import { preferredOption, type ChoiceRequest } from '@/game/Choice';
@@ -605,6 +608,94 @@ describe('Ultimate Monopoly — the rules it is played by', () => {
       const ctx = { board, player, players: [player] };
       const answers = Array.from({ length: 8 }, () => game().botSpends!(ctx));
       expect(new Set(answers).size).toBe(1);
+    });
+  });
+
+  // ─── The stock exchange ─────────────────────────────────────────────────────
+  // "Purchase stocks when landing on the STOCK EXCHANGE space, and get paid
+  // dividends when *anyone* lands on it."
+
+  describe('the stock exchange', () => {
+    const exchange = () => board.tiles.find((t) => t.type === 'stockExchange')!.id;
+
+    function table(): Player[] {
+      return [
+        new Player('p1', 'Ann', 'car', false, 5_000),
+        new Player('p2', 'Bo', 'dog', false, 5_000),
+      ];
+    }
+
+    /** Land somebody on the exchange and answer whatever it asks. */
+    function land(players: Player[], who: Player, pick: string | null): void {
+      const off = bus.on<ChoiceRequest>('choice:ask', (request) => {
+        request.answer(pick ?? 'none');
+      });
+      const ctx = effectContext({
+        board, bank: new Bank(board.rules), players, rules: board.rules, diceTotal: 7,
+      } as unknown as Parameters<typeof effectContext>[0]);
+      applyTileEffect(ctx, { playerId: who.id, tileId: exchange(), effect: 'stockExchange' });
+      off?.();
+    }
+
+    it('registers thirty certificates across six companies', () => {
+      expect(STOCK_COMPANIES).toHaveLength(6);
+      for (const company of STOCK_COMPANIES) {
+        expect(knownHoldings()).toContain(stockKind(company));
+      }
+    });
+
+    it('sells the lander one share at par', () => {
+      const players = table();
+      const [ann] = players;
+      const before = ann.cash;
+
+      land(players, ann, 'acmeMotors');
+      expect(countHeld(ann, stockKind('acmeMotors'))).toBe(1);
+      expect(ann.cash).toBe(before - STOCK_PAR);
+    });
+
+    it('sells nothing when the lander declines', () => {
+      const players = table();
+      const [ann] = players;
+      const before = ann.cash;
+      land(players, ann, null);
+      expect(countHeld(ann, stockKind('acmeMotors'))).toBe(0);
+      expect(ann.cash).toBe(before);
+    });
+
+    /**
+     * The half that makes this rule unusual: the trigger is *anyone* landing,
+     * so a shareholder is paid for a square they are not standing on. It is the
+     * first rule in the build that does that.
+     */
+    it('pays every shareholder when somebody else lands', () => {
+      const players = table();
+      const [ann, bo] = players;
+      giveHolding(ann, stockKind('generalRadio'), 2);
+      const annBefore = ann.cash;
+
+      land(players, bo, null);
+      expect(ann.cash).toBe(annBefore + STOCK_DIVIDEND[2]);
+    });
+
+    it('pays a whole block considerably more than the shares apart', () => {
+      // "It is an advantage to own the entire block."
+      expect(STOCK_DIVIDEND[5]).toBeGreaterThan(STOCK_DIVIDEND[1] * 5);
+    });
+
+    /**
+     * The bank has five of each and no more. How many are left is *derived* from
+     * what the players hold, so there is no second copy of the number to drift —
+     * and the holdings census would not catch it if there were, because it is
+     * deliberately not a conservation law.
+     */
+    it('stops selling a company once its block is out', () => {
+      const players = table();
+      const [ann, bo] = players;
+      giveHolding(ann, stockKind('acmeMotors'), SHARES_PER_COMPANY);
+
+      land(players, bo, 'acmeMotors');
+      expect(countHeld(bo, stockKind('acmeMotors'))).toBe(0);
     });
   });
 
