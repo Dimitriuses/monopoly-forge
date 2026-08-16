@@ -1081,10 +1081,10 @@ All 24 are accounted for below — **3** wrong, **4** softened, **2** balance,
 rather than in the game — which is worth more than the fix, because it had been
 misread as the third appearance of an input-plugin bug.
 
-**13b is three-quarters done**: majority-ownership building, the speed die's lap
-rule, and trading a holding. What is left is not engine work — a bot *spending*
-a voucher, and the stock certificates, both of which are a game's own behaviour
-rather than a seam the engine is missing.
+**13b is three of four**: majority-ownership building, the speed die's lap rule,
+and holdings that can be traded *and* spent. The one left is the stock
+certificates, which the milestone always called the largest and which is a
+game's own behaviour rather than a seam the engine is missing.
 
 ### 13a — the three that are simply wrong · done
 
@@ -1110,7 +1110,7 @@ Defects, in the order they would bite somebody.
       menu that cannot express "this rule is not available for this game"; the
       real answer is a field that knows when it does not apply.
 
-### 13b — printed rules still softened · three of four
+### 13b — printed rules still softened · three of four, and the fourth is a game's own work
 
 Each of these is a reduction taken deliberately, with the reason recorded. Closing
 one is a *balance* decision as much as an engineering one, which is why they are
@@ -1129,9 +1129,10 @@ listed rather than assumed.
 - [x] **Nobody can trade a holding** — closed. `TradeOffer` carries them, the
       panel has a stepper per kind, and a trade cannot be used to push somebody
       past a kind's limit. A bot prices them at the kind's `value`.
-- [ ] **A bot never spends one**, and does not propose a trade containing one.
-      Both are per-game policy rather than mechanism; the seams (`SPENDABLE`,
-      `askChoice`) are in place.
+- [x] **A bot spends one** — `Game.spendable` and `Game.botSpends`, asked by
+      both drivers before the dice because a voucher *is* a move. Bots still do
+      not *propose* a trade containing a holding, which is a `proposeTrade`
+      shape rather than a missing mechanism.
 - [ ] **Stock certificates and Roll Three cards.** The mechanism is no longer what
       blocks them — a stock company is a holding kind and a Roll Three card is a
       number you keep. What is left is each rule's own behaviour, which is a

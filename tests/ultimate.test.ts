@@ -15,6 +15,7 @@ import { bus } from '@/utils/EventBus';
 import { Bank } from '@/game/Bank';
 import { walkTo } from '@/game/Landing';
 import { canBuild, isProperty, ownsMajority, ownsWholeGroup } from '@/game/BuildRules';
+import { giveHolding } from '@/game/Holdings';
 import { rungAt, topLevel } from '@/game/BuildLadder';
 import { Dice } from '@/game/Dice';
 import { preferredOption, type ChoiceRequest } from '@/game/Choice';
@@ -553,6 +554,57 @@ describe('Ultimate Monopoly — the rules it is played by', () => {
       theirs.isMortgaged = true;
 
       expect(canBuild(board, bank, ann, mine[0]).ok).toBe(true);
+    });
+  });
+
+  // ─── Spending one ───────────────────────────────────────────────────────────
+  // Valuing a holding generalises and playing one does not, so *when* to play a
+  // travel voucher is the game's own policy — `Game.botSpends`.
+
+  describe('a bot spending a voucher', () => {
+    const game = () => gameById('ultimate');
+
+    function seat(vouchers: number, cash = 5_000): Player {
+      const p = new Player('p1', 'Ann', 'car', true, cash);
+      giveHolding(p, 'travelVoucher', vouchers);
+      return p;
+    }
+
+    it('declares how a voucher is played, so both drivers agree', () => {
+      expect(game().spendable).toEqual({ travelVoucher: 'playVoucher' });
+    });
+
+    it('plays one when there is an unowned deed it could pay for', () => {
+      const player = seat(2);
+      expect(game().botSpends!({ board, player, players: [player] })).toBe('travelVoucher');
+    });
+
+    /** The last one is kept: it is worth $60 in an estate and trades well. */
+    it('keeps its last voucher rather than spending down to nothing', () => {
+      const player = seat(1);
+      expect(game().botSpends!({ board, player, players: [player] })).toBeNull();
+    });
+
+    it('does not play one it cannot follow up', () => {
+      const player = seat(3, 0);   // nothing is affordable
+      expect(game().botSpends!({ board, player, players: [player] })).toBeNull();
+    });
+
+    it('holds off once every deed is taken', () => {
+      const player = seat(3);
+      for (const tile of board.tiles) if (isOwnable(tile)) tile.ownerId = 'p9';
+      expect(game().botSpends!({ board, player, players: [player] })).toBeNull();
+    });
+
+    /**
+     * The rule every bot decision in this repo obeys: no randomness, or a seeded
+     * game stops replaying (invariant 3).
+     */
+    it('is a pure function of the state', () => {
+      const player = seat(2);
+      const ctx = { board, player, players: [player] };
+      const answers = Array.from({ length: 8 }, () => game().botSpends!(ctx));
+      expect(new Set(answers).size).toBe(1);
     });
   });
 

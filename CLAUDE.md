@@ -188,6 +188,13 @@ in the driver. `rulesFor(game, overrides)` is the same idea for a rule set: it i
 the only place one is assembled, because the simulator once resolved `game.rules`
 and dropped `game.variants`, and Speed Die played without the speed die.
 
+**12c. A finished simulation stops listening.** `Simulation` subscribes to the
+global bus and `simulate()` calls `dispose()` in a `finally`. It used to hold on
+for ever, which is invisible in the CLI — a run is a process — and poison in the
+unit suite, where a later test emitting `player:move` had its landing resolved by
+a game that had already ended. Anything else that subscribes for the length of a
+run owes the same.
+
 **12b. An invariant that does not always hold is worse than none.** `sim/Invariants.ts`
 checks positions, non-negative cash, both halves of ownership agreeing, the
 building census, the deck census and that a bankrupt player holds nothing. It
@@ -549,8 +556,13 @@ Checking first refused Ultimate Monopoly's own saves.
 
 **18d. Spending is a game's business, not the engine's.** The registry knows a
 voucher exists, is worth $60 and survives its owner; it does not know that
-playing one asks where you would like to go. `GameScene.SPENDABLE` maps a kind to
-the tile effect that plays it.
+playing one asks where you would like to go. **`Game.spendable`** maps a kind to
+the tile effect that plays it and **`Game.botSpends`** says whether a bot wants
+to — both on the *game*, because this was a hardcoded map inside `GameScene`
+until M13b and that was the same knowledge in the wrong place. `botSpends` must
+draw no randomness, like everything else a bot decides, and both drivers ask it
+**before the dice**: a voucher is a move, and spending one afterwards is a
+different rule.
 
 **18f. A menu screen is as long as the table, so it must not grow per seat.**
 The Inventory listed every player's cash, deeds, buildings and holdings on one

@@ -1,6 +1,9 @@
 import { CHANCE_CARDS, COMMUNITY_CHEST_CARDS, type Card } from '@/cards/CardDeck';
 import type { Game } from '../Game';
 import { ULTIMATE_MAP } from './board';
+import { countHeld } from '@/game/Holdings';
+import { isOwnable } from '@/tiles/Tile';
+import { VOUCHER } from './tiles';
 import { registerUltimateTiles } from './tiles';
 import './theme';
 
@@ -51,6 +54,36 @@ export const ULTIMATE_GAME: Game = {
   map: ULTIMATE_MAP,
   cards: { chance: ULTIMATE_CHANCE, community: COMMUNITY_CHEST_CARDS },
   theme: 'ultimate',
+
+  /** A travel voucher is played by choosing a square — `playVoucher`. */
+  spendable: { travelVoucher: 'playVoucher' },
+
+  /**
+   * When a bot plays one.
+   *
+   * The rule it is reaching for is the printed one: a voucher moves you to any
+   * space, so it is worth spending when there is somewhere worth being. "Worth
+   * being" is read narrowly and on purpose — **an unowned deed this player could
+   * pay for** — because that is the one outcome a voucher reliably converts into
+   * something (a $60 holding becomes a property nobody else has). Landing on
+   * somebody's hotel is what happens when you spend one hopefully.
+   *
+   * It holds the last voucher back. Four is the limit and they are worth $60
+   * each in an estate, so a bot that spends down to nothing has traded a real
+   * asset for a maybe; keeping one is also what makes them turn up in trades.
+   *
+   * Deliberately not clever. A policy worth more than this wants measuring
+   * against `--mirror`, and it would still be *this game's* policy rather than
+   * anything the engine should learn.
+   */
+  botSpends({ board, player }) {
+    if (countHeld(player, VOUCHER) <= 1) return null;
+
+    const reachable = board.tiles.some((tile) => (
+      isOwnable(tile) && tile.ownerId === null && player.canAfford(tile.price)
+    ));
+    return reachable ? VOUCHER : null;
+  },
 
   rules: {
     // The printed game deals $3,200 a player and supplies 81 houses and 31

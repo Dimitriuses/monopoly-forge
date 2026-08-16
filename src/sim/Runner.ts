@@ -24,6 +24,7 @@ import {
 import { PropertyTile } from '@/tiles/PropertyTile';
 import { isOwnable } from '@/tiles/Tile';
 import { gameById, decksFor, rulesFor, type Game } from '@/games';
+import { countHeld } from '@/game/Holdings';
 import {
   applyTileEffect, effectContext, type TileEffectPayload,
 } from '@/game/TileEffects';
@@ -104,7 +105,15 @@ export interface SimResult {
 const DEFAULT_MAX_TURNS = 2000;
 
 export function simulate(options: SimOptions): SimResult {
-  return new Simulation(options).run();
+  const sim = new Simulation(options);
+  try {
+    return sim.run();
+  } finally {
+    // A finished simulation stops listening. In the CLI a run is a process and
+    // this changes nothing; in the unit suite it is the difference between a
+    // test standing on its own and a previous game answering its events.
+    sim.dispose();
+  }
 }
 
 class Simulation {
@@ -185,6 +194,10 @@ class Simulation {
       this.developFor(player);
       if (player.inJail) this.leaveJail(player);
 
+      // Before the dice, exactly as the scene does it: a voucher is a move, and
+      // spending one after rolling would be a different rule.
+      if (this.spendFor(player)) continue;
+
       this.turns.rollDice();
 
       // A phase a variant added can hold the turn — the speed die's bonus move
@@ -227,14 +240,34 @@ class Simulation {
 
   // ── Driving ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Every unsubscribe this run created. A simulation used to subscribe to the
+   * global bus and never let go, so a finished one went on answering events for
+   * the rest of the process — invisible in the CLI, where a run is a process,
+   * and *very* visible in the unit suite, where a later test emitting
+   * `player:move` had its landing resolved by a game that had already ended.
+   */
+  private unsubscribe: Array<() => void> = [];
+
+  /** Stop listening. Called when the run finishes, however it finishes. */
+  dispose(): void {
+    for (const off of this.unsubscribe) off();
+    this.unsubscribe = [];
+  }
+
   private listen(): void {
+    // Every subscription this run makes, remembered so `dispose` can undo it.
+    const on = <T,>(event: string, fn: (payload: T) => void): void => {
+      this.unsubscribe.push(bus.on<T>(event, fn));
+    };
+
     // A move is a position change. `TurnManager` has already set it; all that is
     // left is what the scene would do once its tween finished.
-    bus.on('player:move', () => this.turns.resolveLanding());
+    on('player:move', () => this.turns.resolveLanding());
 
-    bus.on('rent:modifier', ({ rule }: { rule: ArrivalRent }) => { this.arrivalRent = rule; });
+    on('rent:modifier', ({ rule }: { rule: ArrivalRent }) => { this.arrivalRent = rule; });
 
-    bus.on('rent:pay', (payload: Parameters<typeof payRent>[1]) => {
+    on('rent:pay', (payload: Parameters<typeof payRent>[1]) => {
       const outcome = payRent(this.context(), payload, this.arrivalRent);
       if (outcome.kind === 'salary') return;   // paid mid-walk; the turn goes on
       if (outcome.kind === 'none') return;
@@ -242,7 +275,7 @@ class Simulation {
       this.endTurn();
     });
 
-    bus.on('tax:pay', ({ playerId, amount }: { playerId: string; amount: number }) => {
+    on('tax:pay', ({ playerId, amount }: { playerId: string; amount: number }) => {
       payTax(this.context(), playerId, amount);
       this.endTurn();
     });
@@ -250,35 +283,35 @@ class Simulation {
     // A tile asking for a rule it cannot resolve alone. The effect ends the turn
     // the way any other landing does — by emitting `player:landed`, or by moving
     // the player and letting the walk resolve it.
-    bus.on('tile:effect', (payload: TileEffectPayload) => {
+    on('tile:effect', (payload: TileEffectPayload) => {
       applyTileEffect(effectContext(this.context()), payload);
     });
 
     // A prompt with no bot path waits for ever on a bot's turn, and every seat
     // here is a bot. Answered synchronously: there is no panel to open and no
     // clock to wait on, which is the whole difference between the two drivers.
-    bus.on('choice:ask', (request: ChoiceRequest) => {
+    on('choice:ask', (request: ChoiceRequest) => {
       request.answer(preferredOption(request).id);
     });
 
     // …and the *answer* has to go somewhere too. Both halves are needed: the
     // first batch after triples landed hung 69 of 80 Speed Die games, because
     // the question was answered and the move it asked for was never made.
-    bus.on('auction:open', ({ subject }: { subject: AuctionSubject }) => {
+    on('auction:open', ({ subject }: { subject: AuctionSubject }) => {
       this.runAuction(subject, this.players);
       this.endTurn();
     });
 
-    bus.on('roll:chosen', ({ playerId, tileId }: { playerId: string; tileId: number }) => {
+    on('roll:chosen', ({ playerId, tileId }: { playerId: string; tileId: number }) => {
       const player = this.players.find((p) => p.id === playerId);
       if (player) this.turns.moveChosen(player, tileId);
     });
 
-    bus.on('property:auction', (p: { tileId: number; playerId: string; price?: number }) => {
+    on('property:auction', (p: { tileId: number; playerId: string; price?: number }) => {
       this.decideBuy(p.tileId, p.playerId, p.price);
     });
 
-    bus.on('card:draw', ({ playerId, deckType }: { playerId: string; deckType: string }) => {
+    on('card:draw', ({ playerId, deckType }: { playerId: string; deckType: string }) => {
       const player = this.players.find((q) => q.id === playerId)!;
       const deck   = deckType === 'chance' ? this.chanceDeck : this.commDeck;
       const card   = drawCard(deck);
@@ -291,35 +324,35 @@ class Simulation {
       if (!isSelfTerminating(card)) this.endTurn();
     });
 
-    bus.on('jail:exit', ({ method, card, amount }: { method: string; card?: Card; amount?: number }) => {
+    on('jail:exit', ({ method, card, amount }: { method: string; card?: Card; amount?: number }) => {
       if (this.rules.freeParkingJackpot && amount) this.bank.addToPot(amount);
       if (method !== 'card' || !card) return;
       const deck = [this.chanceDeck, this.commDeck].find((d) => d.owns(card));
       deck?.returnToBottom(card);
     });
 
-    bus.on('card:return', ({ cards }: { cards: Card[] }) => {
+    on('card:return', ({ cards }: { cards: Card[] }) => {
       for (const card of cards) {
         [this.chanceDeck, this.commDeck].find((d) => d.owns(card))?.returnToBottom(card);
       }
     });
 
-    bus.on('jail:enter', () => this.endTurn());
-    bus.on('jail:stay',  () => this.endTurn());
+    on('jail:enter', () => this.endTurn());
+    on('jail:stay',  () => this.endTurn());
 
     // A free landing: Go, Just Visiting, Free Parking, your own deed. Nothing is
     // charged, the house rules that pay out do so, and the turn is over.
-    bus.on('player:landed', ({ playerId, tileId }: { playerId: string; tileId: number }) => {
+    on('player:landed', ({ playerId, tileId }: { playerId: string; tileId: number }) => {
       applyLandingRules(this.context(), playerId, tileId);
       this.endTurn();
     });
 
-    bus.on('player:bankrupt', (p: { playerId: string; creditorId: string | null; returned?: number[] }) => {
+    on('player:bankrupt', (p: { playerId: string; creditorId: string | null; returned?: number[] }) => {
       this.bankruptcies.push(p.playerId);
       if (p.creditorId === null) this.queueEstate(p.returned ?? []);
     });
 
-    bus.on('game:end', ({ winnerId }: { winnerId: string | null }) => {
+    on('game:end', ({ winnerId }: { winnerId: string | null }) => {
       this.over = true;
       this.winnerId = winnerId;
     });
@@ -479,6 +512,30 @@ class Simulation {
     }
   }
 
+  /**
+   * Play a holding, if this game says a bot wants to.
+   *
+   * Returns true when one was played, and the caller skips the roll: a voucher
+   * *is* the move. The effect resolves its own landing the way every tile effect
+   * does, so nothing here has to finish the turn either.
+   */
+  private spendFor(player: Player): boolean {
+    const game = this.game;
+    if (!game.botSpends || player.isBankrupt) return false;
+
+    const kind = game.botSpends({ board: this.board, player, players: this.players });
+    if (!kind || countHeld(player, kind) <= 0) return false;
+
+    const effect = game.spendable?.[kind];
+    if (!effect) return false;
+
+    applyTileEffect(
+      effectContext(this.context()),
+      { playerId: player.id, tileId: player.position, effect },
+    );
+    return true;
+  }
+
   /** The last houses go under the hammer rather than to whoever asked first. */
   private startContention(builder: Player, lot: PropertyTile): boolean {
     if (!this.rules.houseAuctions) return false;
@@ -516,3 +573,4 @@ function housesOn(ladder: BuildLevel[], tile: { type: string; level: number }): 
 function topOf(ladder: BuildLevel[], tile: { type: string; level: number }): string | null {
   return standingOn(ladder, tile.type, tile.level)?.kind.id ?? null;
 }
+

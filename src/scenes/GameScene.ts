@@ -62,7 +62,7 @@ import {
   applyTileEffect, effectContext, type TileEffectPayload,
 } from '@/game/TileEffects';
 import { askChoice, preferredOption, type ChoiceRequest } from '@/game/Choice';
-import { describeHolding, heldByPlayer } from '@/game/Holdings';
+import { countHeld, describeHolding, heldByPlayer } from '@/game/Holdings';
 import { refundOf, rungAt, rungsFor, standingOn } from '@/game/BuildLadder';
 
 /** One seat's holdings, as the pause menu's Inventory screen shows them. */
@@ -83,14 +83,17 @@ export interface InventoryView {
 }
 
 /**
- * Holdings a player may *play*, and the tile effect that plays one.
+ * Holdings a player may *play*, and the tile effect that plays one — declared by
+ * the **game** (`Game.spendable`).
  *
- * A map rather than a flag on `HoldingKind`, because what spending does is a
- * *game's* business and `game/Holdings.ts` is the engine's: the registry knows a
- * voucher exists, is worth $60 and survives its owner, and deliberately does not
- * know that playing one asks where you would like to go.
+ * It was a hardcoded map here until M13b, which was the right idea in the wrong
+ * place: what spending does is a game's business and this scene is the engine's.
+ * The registry still knows only that a voucher exists, is worth $60 and survives
+ * its owner.
  */
-const SPENDABLE = new Map<string, string>([['travelVoucher', 'playVoucher']]);
+function spendableFor(gameId: string): Record<string, string> {
+  return GAMES[gameId]?.spendable ?? {};
+}
 import { Menu } from '@/ui/Menu';
 import { gameById, decksFor, rulesFor, GAMES } from '@/games';
 import { Auction, tileSubject, type AuctionSubject } from '@/game/Auction';
@@ -329,7 +332,7 @@ export class GameScene extends Phaser.Scene {
           // Only the seat whose turn it is, and only a person: a bot spends its
           // own on its own turn, and a holding nothing can do anything with is
           // shown but not offered.
-          spendable: SPENDABLE.has(name)
+          spendable: Boolean(spendableFor(this.gameId)[name])
             && player.id === this.turnManager.currentPlayer.id
             && !player.isBot && !player.isBankrupt,
         })),
@@ -338,12 +341,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Play one of something held. The effect it names does the rest. */
-  private spendHolding(playerId: string, holding: string): void {
-    const effect = SPENDABLE.get(holding);
-    if (!effect) return;
+  private spendHolding(playerId: string, holding: string): boolean {
+    const effect = spendableFor(this.gameId)[holding];
+    if (!effect) return false;
     const player = this.players.find((p) => p.id === playerId);
-    if (!player) return;
+    if (!player) return false;
     bus.emit('tile:effect', { playerId, tileId: player.position, effect });
+    return true;
   }
 
   /**
@@ -1142,7 +1146,28 @@ export class GameScene extends Phaser.Scene {
       this.botAct(() => this.botRollWhenClear(), BOT_THINK);
       return;
     }
+    // Anything the game says is worth playing goes before the dice, because a
+    // voucher is a *move* and moving twice is the point of it. The choice it
+    // opens is answered for a bot rather than shown (`askChoiceOnScreen`), so
+    // this cannot park the turn waiting for a click.
+    if (this.botSpendHolding()) return;
     this.turnManager.rollDice();
+  }
+
+  /**
+   * Play a holding on a bot's behalf, if this game says one is worth playing.
+   *
+   * Returns true when something was played — the effect moves the player and its
+   * landing carries the turn on from there, so the roll must not also happen.
+   */
+  private botSpendHolding(): boolean {
+    const game = GAMES[this.gameId];
+    const player = this.turnManager.currentPlayer;
+    if (!game?.botSpends || !player.isBot || player.isBankrupt) return false;
+
+    const kind = game.botSpends({ board: this.board, player, players: this.players });
+    if (!kind || countHeld(player, kind) <= 0) return false;
+    return this.spendHolding(player.id, kind);
   }
 
   /**

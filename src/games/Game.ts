@@ -1,4 +1,6 @@
 import { validateMap, type GameMap, type MapProblem } from '@/maps';
+import type { Board } from '@/game/Board';
+import type { Player } from '@/game/Player';
 import { knownTurnOrders, knownWinConditions } from '@/game/TurnFlow';
 import { knownVariants } from '@/game/Variants';
 import { knownMovements } from '@/game/Movement';
@@ -29,6 +31,13 @@ import type { Card } from '@/cards/CardDeck';
 //     the theme it names are *defaults*; the menu layers the player's switches
 //     over them, and `resolveRules` has always worked that way round.
 
+/** What a game's spend policy is allowed to look at. */
+export interface SpendContext {
+  board: Board;
+  player: Player;
+  players: Player[];
+}
+
 export interface Game {
   id: string;
   name: string;
@@ -41,6 +50,29 @@ export interface Game {
    * rules; the player's switches go on top of both.
    */
   rules?: Partial<GameRules>;
+  /**
+   * Holdings a player may **play**, and the tile effect that plays one.
+   *
+   * The registry knows a travel voucher exists, is worth $60 and survives its
+   * owner; it deliberately does not know that playing one asks where you would
+   * like to go. That is this game's business, which is why it is declared here
+   * rather than in `game/Holdings.ts` — and why it used to be a hardcoded map
+   * inside `GameScene`, which is the same knowledge in the wrong place.
+   */
+  spendable?: Record<string, string>;
+  /**
+   * Whether a bot wants to play one right now, and which kind — or null.
+   *
+   * **Pure, and it must draw no randomness**, for the same reason nothing in
+   * `Bot.ts` may: a bot that called `rng` would move the dice stream and stop a
+   * seeded game replaying. Called on a bot's own turn, before it rolls, by both
+   * drivers.
+   *
+   * It lives on the game because *valuing* a held thing generalises and playing
+   * one does not — what a voucher is worth is a number, and what it is *for* is
+   * a rule only this game knows.
+   */
+  botSpends?(ctx: SpendContext): string | null;
   /**
    * The decks it deals from. A card that names a tile only makes sense on the
    * board it was written for, which is why these belong to the game rather than

@@ -88,26 +88,6 @@ refused is **two**, not three:
   localStorage. Saving it would mean the *asker* being re-entrant — able to ask
   again from saved state — which is per-asker work rather than one mechanism.
 
-#### A bot never spends a travel voucher
-
-*Narrowed in M13b — the trading half is closed.* A `TradeOffer` carries
-`fromHoldings` / `toHoldings`, so anything a game hands out can be put on the
-table: `validateTrade` refuses what a player does not hold and refuses an offer
-that would take the receiver past the kind's limit (a trade must not be the way
-round a cap), `executeTrade` moves them through `giveHolding` / `takeHolding`,
-and the trade panel grows a stepper row per kind. A bot prices them at the
-kind's declared `value` when judging an offer.
-
-What is left is **spending**. A bot still never plays a voucher, because valuing
-a held thing generalises and *playing* one does not — a travel voucher is played
-by choosing where on the board you would like to be, and no generic policy
-answers that well. Bots also do not yet *propose* a trade containing one: they
-accept and price them, but `proposeTrade` builds offers out of deeds and cash.
-
-Both are per-game work rather than gaps in the mechanism, and the seam is
-already there: `GameScene.SPENDABLE` maps a kind to the tile effect that plays
-it, and `askChoice` gives a bot the heaviest option when one is asked.
-
 #### Stock certificates and Roll Three cards are still reduced
 
 *Narrowed in M12b.* The mechanism that blocked them is gone: a stock company
@@ -485,6 +465,33 @@ carries you past GO is a jump rather than a lap, which is the same distinction
 `hasLapped` is per-player state, so it is in the snapshot. A save written before
 the field existed restores it as `true`: the speed die simply stays live, which
 is the safer of the two guesses about a game already in progress.
+
+#### A bot never spends a travel voucher, and nobody can trade one
+
+*Closed in M13b.* Both halves, and they wanted different homes.
+
+**Trading** is engine work: a `TradeOffer` carries `fromHoldings` /
+`toHoldings`, `validateTrade` refuses what a player does not hold *and* refuses
+an offer that would take the receiver past a kind's limit — a trade must not be
+the way round a cap, or `giveHolding` would clamp and the excess would quietly
+evaporate — and the trade panel grows a stepper row per kind.
+
+**Spending** is the game's: `Game.spendable` says which tile effect plays a
+kind, and `Game.botSpends` says whether a bot wants to and which. Ultimate's
+policy is deliberately plain — play one when there is an unowned deed this
+player could pay for, and keep the last one, because a voucher is worth $60 in
+an estate and trades well. Both drivers ask before the dice, since a voucher
+*is* a move.
+
+`GameScene.SPENDABLE` is gone: it was the right idea in the wrong place, since
+what spending does is a game's business and the scene is the engine's.
+
+Measured over 60 games of Ultimate: auctions rose from a median 22 to 27 — the
+bots travel to unowned deeds and put them under the hammer — and games ran a
+little longer, 241 to 266 turns. 0 unfinished, no invariant broken.
+
+Bots still do not *propose* a trade containing a holding: they price and accept
+them. That is a `proposeTrade` shape rather than a missing mechanism.
 
 #### The Subway and a travel voucher pay salaries they should not
 
