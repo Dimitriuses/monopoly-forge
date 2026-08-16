@@ -5,6 +5,7 @@ import {
 } from './BuildRules';
 import { rungAt } from './BuildLadder';
 import { countOwnedOfType } from './Rent';
+import { holdingKind } from './Holdings';
 import { RailroadTile, UtilityTile } from '@/tiles/SpecialTiles';
 import { trafficOf } from './BoardOdds';
 import type { Board } from './Board';
@@ -369,8 +370,17 @@ export function acceptTrade(ctx: BotContext, offer: TradeOffer): boolean {
     if (gettingCash < asking) return false;
   }
 
-  const given = giving.reduce((sum, id) => sum + valueOf(ctx, id), givingCash);
-  const gained = getting.reduce((sum, id) => sum + valueOf(ctx, id), gettingCash);
+  // Holdings count at what the kind says one is worth. That is the whole of the
+  // general answer — a bot can price a thing it has never heard of, and cannot
+  // be expected to know what *playing* one would be worth, which is why the
+  // spending half is a per-game policy and not this function's business.
+  const givingHeld  = iAmProposer ? offer.fromHoldings : offer.toHoldings;
+  const gettingHeld = iAmProposer ? offer.toHoldings : offer.fromHoldings;
+
+  const given = giving.reduce((sum, id) => sum + valueOf(ctx, id), givingCash)
+    + worthOfHoldings(givingHeld);
+  const gained = getting.reduce((sum, id) => sum + valueOf(ctx, id), gettingCash)
+    + worthOfHoldings(gettingHeld);
   return gained > given;
 }
 
@@ -664,4 +674,11 @@ function completesGroupFor(board: Board, other: Player, tileId: number): boolean
   if (!(tile instanceof PropertyTile)) return false;
   const group = board.groupTiles(tile.group);
   return group.every((t) => t.id === tile.id || t.ownerId === other.id);
+}
+
+/** What a side of an offer is worth in holdings, at each kind's declared value. */
+function worthOfHoldings(holdings: Record<string, number>): number {
+  return Object.entries(holdings).reduce(
+    (sum, [name, count]) => sum + count * (holdingKind(name)?.value ?? 0), 0,
+  );
 }

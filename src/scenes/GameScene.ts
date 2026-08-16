@@ -1459,8 +1459,10 @@ export class GameScene extends Phaser.Scene {
 
     return {
       mode:  this.tradeMode,
-      left:  this.tradeSide(from, offer.fromTileIds, offer.fromCash, offer.fromJailCards, this.tradeScroll.left),
-      right: this.tradeSide(to,   offer.toTileIds,   offer.toCash,   offer.toJailCards,   this.tradeScroll.right),
+      left:  this.tradeSide(from, offer.fromTileIds, offer.fromCash, offer.fromJailCards,
+                            this.tradeScroll.left, offer.fromHoldings),
+      right: this.tradeSide(to,   offer.toTileIds,   offer.toCash,   offer.toJailCards,
+                            this.tradeScroll.right, offer.toHoldings),
       partners: this.players
         .filter((p) => p.id !== from.id && !p.isBankrupt)
         .map((p) => ({ id: p.id, name: p.name, active: p.id === to.id })),
@@ -1471,6 +1473,7 @@ export class GameScene extends Phaser.Scene {
 
   private tradeSide(
     player: Player, offered: number[], cash: number, jailCards: number, scroll: number,
+    holdings: Record<string, number> = {},
   ): TradeSideView {
     const rows: TradeRow[] = [...player.ownedTileIds]
       .map((id) => this.board.getTile(id))
@@ -1493,6 +1496,15 @@ export class GameScene extends Phaser.Scene {
       offeredCash: cash,
       jailCards: player.getOutOfJailCards,
       offeredJailCards: jailCards,
+      // What this player holds, and how much of it is on the table. Everything a
+      // game handed out is offerable — the engine has no opinion about which of
+      // them somebody would want.
+      holdings: heldByPlayer(player).map(({ name, count }) => ({
+        name,
+        label: describeHolding(name, 1).replace(/^1 /, ''),
+        held: count,
+        offered: holdings[name] ?? 0,
+      })),
       rows,
       scroll: Math.min(scroll, Math.max(0, rows.length - 1)),
     };
@@ -1522,6 +1534,16 @@ export class GameScene extends Phaser.Scene {
       case 'jailCards': {
         if (action.side === 'left') offer.fromJailCards = Math.max(0, offer.fromJailCards + action.delta);
         else                        offer.toJailCards   = Math.max(0, offer.toJailCards + action.delta);
+        break;
+      }
+      case 'holding': {
+        // Clamped at zero here and at what the player holds by the panel, which
+        // is what greys the + out; `validateTrade` is what refuses an offer that
+        // gets past both.
+        const held = action.side === 'left' ? offer.fromHoldings : offer.toHoldings;
+        const next = Math.max(0, (held[action.name] ?? 0) + action.delta);
+        if (next === 0) delete held[action.name];
+        else            held[action.name] = next;
         break;
       }
       case 'scroll': {

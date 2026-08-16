@@ -7,6 +7,10 @@ import {
   countHeld, giveHolding, takeHolding, heldByPlayer, valueOfHoldings,
 } from '@/game/Holdings';
 import { settleDebt, liquidValue, estateValue } from '@/game/Estate';
+import {
+  emptyOffer, executeTrade, isEmptyOffer, reverseOffer, validateTrade,
+  type TradeOffer,
+} from '@/game/Trade';
 import { captureGame, restoreGame, validateSnapshot } from '@/game/Snapshot';
 import { checkInvariants } from '@/sim/Invariants';
 import { CardDeck, CardEffects, CHANCE_CARDS, COMMUNITY_CHEST_CARDS } from '@/cards/CardDeck';
@@ -256,5 +260,64 @@ describe('the batch counts them', () => {
     giveHolding(ann, 'token', 1);
     ann.isBankrupt = true;
     expect(checkInvariants(ctx()).map((v) => v.what)).toContain('bankruptcy');
+  });
+});
+
+// ─── Trading one ──────────────────────────────────────────────────────────────
+// Until M13b an offer was deeds, cash and jail cards, so the only way a holding
+// ever changed hands was a bankruptcy.
+
+describe('a holding can change hands in a trade', () => {
+  const board = () => new Board();
+
+  function offerOf(extra: Partial<TradeOffer>): TradeOffer {
+    return { ...emptyOffer(ann.id, bo.id), ...extra };
+  }
+
+  it('moves what the offer names, and nothing else', () => {
+    giveHolding(ann, 'token', 3);
+    const offer = offerOf({ fromHoldings: { token: 2 } });
+
+    expect(validateTrade(board(), [ann, bo], offer).ok).toBe(true);
+    expect(executeTrade(board(), [ann, bo], offer)).toBe(true);
+    expect(countHeld(ann, 'token')).toBe(1);
+    expect(countHeld(bo, 'token')).toBe(2);
+  });
+
+  it('refuses what the offering player does not hold', () => {
+    giveHolding(ann, 'token', 1);
+    const check = validateTrade(board(), [ann, bo], offerOf({ fromHoldings: { token: 2 } }));
+    expect(check.ok).toBe(false);
+    expect(check.reason).toMatch(/does not hold/);
+  });
+
+  it('refuses a kind nobody has registered', () => {
+    const check = validateTrade(board(), [ann, bo], offerOf({ fromHoldings: { ghost: 1 } }));
+    expect(check.ok).toBe(false);
+  });
+
+  /**
+   * A trade must not be the way round a limit. `giveHolding` would clamp and the
+   * excess would evaporate — an offer that quietly delivers less than it says.
+   */
+  it("refuses an offer that would take the receiver over the kind's limit", () => {
+    giveHolding(ann, 'capped', 2);
+    giveHolding(bo, 'capped', 1);
+    const check = validateTrade(board(), [ann, bo], offerOf({ fromHoldings: { capped: 2 } }));
+    expect(check.ok).toBe(false);
+    expect(check.reason).toMatch(/cannot hold that many/);
+  });
+
+  it('counts as something, so an offer of only a holding is not empty', () => {
+    giveHolding(ann, 'token', 1);
+    expect(isEmptyOffer(offerOf({ fromHoldings: { token: 1 } }))).toBe(false);
+    expect(isEmptyOffer(offerOf({ fromHoldings: { token: 0 } }))).toBe(true);
+  });
+
+  it('survives being reversed into a counter-offer', () => {
+    giveHolding(ann, 'token', 1);
+    const reversed = reverseOffer(offerOf({ fromHoldings: { token: 1 } }));
+    expect(reversed.toHoldings).toEqual({ token: 1 });
+    expect(reversed.fromHoldings).toEqual({});
   });
 });

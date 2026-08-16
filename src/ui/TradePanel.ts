@@ -40,6 +40,12 @@ export interface TradeSideView {
   offeredCash: number;
   jailCards: number;
   offeredJailCards: number;
+  /**
+   * Anything a *game* handed out that this player holds, and how many of each is
+   * on the table. One row apiece, under the jail cards — a game that hands out
+   * nothing shows none of this, which is every board but Ultimate Monopoly.
+   */
+  holdings: Array<{ name: string; label: string; held: number; offered: number }>;
   rows: TradeRow[];
   /** Row index the list starts at, for paging. */
   scroll: number;
@@ -61,6 +67,7 @@ export type TradeAction =
   | { kind: 'toggleTile';  side: 'left' | 'right'; tileId: number }
   | { kind: 'cash';        side: 'left' | 'right'; delta: number }
   | { kind: 'jailCards';   side: 'left' | 'right'; delta: number }
+  | { kind: 'holding';     side: 'left' | 'right'; name: string; delta: number }
   | { kind: 'scroll';      side: 'left' | 'right'; delta: number }
   | { kind: 'partner';     playerId: string }
   | { kind: 'propose' }
@@ -81,11 +88,12 @@ const CENTRE = { x: 420, y: 390 };
  * edge of the panel and shifted to its centre at the end, so adding a row moves
  * the buttons down by exactly one row and nothing else has to be adjusted.
  */
-function metrics(rowsShown: number, paging: boolean) {
+function metrics(rowsShown: number, paging: boolean, holdingRows = 0) {
   const listTop  = 76;
   const cashRow  = listTop + rowsShown * ROW_H + (paging ? 22 : 0) + 8;
   const cardRow  = cashRow + 24;
-  const summary  = cardRow + 22;
+  // Each holding kind adds a stepper row between the jail cards and the summary.
+  const summary  = cardRow + 22 + holdingRows * 20;
   const height   = summary + 76;
   const half     = height / 2;
 
@@ -152,7 +160,8 @@ export class TradePanel {
       ROWS_MAX, Math.max(1, view.left.rows.length, view.right.rows.length),
     );
     const paging = view.left.rows.length > rowsShown || view.right.rows.length > rowsShown;
-    const m = metrics(rowsShown, paging);
+    const holdingRows = Math.max(view.left.holdings.length, view.right.holdings.length);
+    const m = metrics(rowsShown, paging, holdingRows);
 
     this.spotMap.clear();
     s.begin();
@@ -349,6 +358,24 @@ export class TradePanel {
         editable && side.offeredJailCards < side.jailCards,
         { kind: 'jailCards', side: which, delta: 1 });
     }
+
+    // One stepper per kind this player holds, below the jail cards. The rows are
+    // named by kind rather than by index so the retained surface keeps the right
+    // one under the cursor when a count changes (10c).
+    side.holdings.forEach((holding, i) => {
+      const y = m.cardRow + 22 + i * 20;
+      s.text(key(`hold:${holding.name}`), x + 4, y + 3,
+        `🎟️ ${holding.label}  ${holding.offered} of ${holding.held}`, {
+          fontFamily: t.font.display, fontSize: '10px',
+          color: holding.offered > 0 ? t.panel.accent : t.panel.subtitle,
+        });
+      this.stepButton(key(`holdMinus:${holding.name}`), '−', x + 148, y + 8,
+        editable && holding.offered > 0,
+        { kind: 'holding', side: which, name: holding.name, delta: -1 });
+      this.stepButton(key(`holdPlus:${holding.name}`), '+', x + 186, y + 8,
+        editable && holding.offered < holding.held,
+        { kind: 'holding', side: which, name: holding.name, delta: 1 });
+    });
   }
 
   /** A small stepper, the shape used for paging, cash and jail cards. */

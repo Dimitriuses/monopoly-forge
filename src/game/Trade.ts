@@ -5,6 +5,9 @@ import { chargeMortgageInterest } from './Estate';
 import type { Bank } from './Bank';
 import type { Board } from './Board';
 import type { Player } from './Player';
+import {
+  countHeld, describeHolding, giveHolding, holdingKind, takeHolding,
+} from './Holdings';
 
 // ─── Trade ────────────────────────────────────────────────────────────────────
 // A two-sided swap of deeds, cash and Get Out of Jail Free cards. Both halves are
@@ -25,6 +28,16 @@ export interface TradeOffer {
   toCash: number;
   fromJailCards: number;
   toJailCards: number;
+  /**
+   * Anything a *game* handed out, by kind (`game/Holdings.ts`). Until M13b an
+   * offer was deeds, cash and jail cards, so the only way a travel voucher ever
+   * changed hands was a bankruptcy.
+   *
+   * A `Record` rather than a list because a holding is a count, which is also
+   * why it needs no identity to move: two vouchers are two vouchers.
+   */
+  fromHoldings: Record<string, number>;
+  toHoldings: Record<string, number>;
 }
 
 export interface TradeCheck {
@@ -41,6 +54,7 @@ export function emptyOffer(fromId: string, toId: string): TradeOffer {
     fromTileIds: [], toTileIds: [],
     fromCash: 0, toCash: 0,
     fromJailCards: 0, toJailCards: 0,
+    fromHoldings: {}, toHoldings: {},
   };
 }
 
@@ -51,13 +65,21 @@ export function reverseOffer(offer: TradeOffer): TradeOffer {
     fromTileIds: [...offer.toTileIds], toTileIds: [...offer.fromTileIds],
     fromCash: offer.toCash, toCash: offer.fromCash,
     fromJailCards: offer.toJailCards, toJailCards: offer.fromJailCards,
+    fromHoldings: { ...offer.toHoldings }, toHoldings: { ...offer.fromHoldings },
   };
 }
 
 export function isEmptyOffer(offer: TradeOffer): boolean {
   return offer.fromTileIds.length === 0 && offer.toTileIds.length === 0
       && offer.fromCash === 0 && offer.toCash === 0
-      && offer.fromJailCards === 0 && offer.toJailCards === 0;
+      && offer.fromJailCards === 0 && offer.toJailCards === 0
+      && countHoldings(offer.fromHoldings ?? {}) === 0
+      && countHoldings(offer.toHoldings ?? {}) === 0;
+}
+
+/** How many things a side of an offer is putting up, across every kind. */
+export function countHoldings(holdings: Record<string, number>): number {
+  return Object.values(holdings).reduce((n, count) => n + count, 0);
 }
 
 export function validateTrade(board: Board, players: Player[], offer: TradeOffer): TradeCheck {
@@ -68,12 +90,28 @@ export function validateTrade(board: Board, players: Player[], offer: TradeOffer
   if (from.isBankrupt || to.isBankrupt) return denied('A bankrupt player cannot trade.');
   if (isEmptyOffer(offer)) return denied('There is nothing in this offer.');
 
-  const sides: Array<[Player, number[], number, number]> = [
-    [from, offer.fromTileIds, offer.fromCash, offer.fromJailCards],
-    [to,   offer.toTileIds,   offer.toCash,   offer.toJailCards],
+  const sides: Array<[Player, number[], number, number, Record<string, number>, Player]> = [
+    [from, offer.fromTileIds, offer.fromCash, offer.fromJailCards, offer.fromHoldings ?? {}, to],
+    [to,   offer.toTileIds,   offer.toCash,   offer.toJailCards,   offer.toHoldings ?? {},   from],
   ];
 
-  for (const [player, tileIds, cash, jailCards] of sides) {
+  for (const [player, tileIds, cash, jailCards, holdings, receiver] of sides) {
+    for (const [name, count] of Object.entries(holdings)) {
+      if (count < 0) return denied('An offer cannot include a negative number of anything.');
+      if (count === 0) continue;
+      if (!holdingKind(name)) return denied(`Nobody knows what a ${name} is.`);
+      if (countHeld(player, name) < count) {
+        return denied(`${player.name} does not hold ${describeHolding(name, count)}.`);
+      }
+      // A kind may cap how many one player may hold, and a trade must not be the
+      // way round it — `giveHolding` would silently drop the excess, which is a
+      // trade that quietly delivers less than it promised.
+      const limit = holdingKind(name)?.limit;
+      if (limit !== undefined && countHeld(receiver, name) + count > limit) {
+        return denied(`${receiver.name} cannot hold that many ${describeHolding(name, 2).replace(/^2 /, '')}.`);
+      }
+    }
+
     if (cash < 0)                return denied('An offer cannot include negative cash.');
     if (!player.canAfford(cash)) return denied(`${player.name} does not have $${cash}.`);
     if (jailCards < 0)           return denied('An offer cannot include negative cards.');
@@ -121,6 +159,9 @@ export function executeTrade(
   moveJailCards(from, to, offer.fromJailCards);
   moveJailCards(to, from, offer.toJailCards);
 
+  moveHoldings(from, to, offer.fromHoldings ?? {});
+  moveHoldings(to, from, offer.toHoldings ?? {});
+
   // After everything has moved and the cash has settled: a player raising money
   // for the interest must not be able to sell something this trade is still in
   // the middle of handing over.
@@ -167,6 +208,20 @@ function moveTiles(
     if (tile.isMortgaged) mortgaged.push(tile);
   }
   return mortgaged;
+}
+
+/**
+ * Through `takeHolding` / `giveHolding` rather than by writing to the record:
+ * a kind may have a limit, and the helpers are what respect it. `validateTrade`
+ * has already refused an offer that would breach one, so nothing is dropped
+ * here — but the two agreeing is worth more than the shortcut.
+ */
+function moveHoldings(from: Player, to: Player, holdings: Record<string, number>): void {
+  for (const [name, count] of Object.entries(holdings)) {
+    if (count <= 0) continue;
+    const taken = takeHolding(from, name, count);
+    giveHolding(to, name, taken);
+  }
 }
 
 function moveJailCards(from: Player, to: Player, count: number): void {

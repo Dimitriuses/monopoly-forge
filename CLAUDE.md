@@ -530,6 +530,13 @@ census is a census, not a conservation law — a game mints holdings, so a fixed
 total would be checking something untrue, which is the mistake M8d nearly made
 with total cash.
 
+**18g. A trade moves holdings, and a limit is not negotiable.** `TradeOffer`
+carries `fromHoldings` / `toHoldings`; `validateTrade` refuses an offer that
+would take the receiver past a kind's `limit`, because `giveHolding` would clamp
+and the excess would evaporate — an offer that quietly delivers less than it
+says. Read them as `?? {}`: an offer built before the fields existed is still a
+valid offer.
+
 **18e. `estateValue` counts a holding; `liquidValue` must never.** Wealth and
 what a fire sale can raise are different questions and this is the first thing
 to separate them — nothing can sell a travel voucher, so counting one in

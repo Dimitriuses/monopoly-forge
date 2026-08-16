@@ -88,26 +88,25 @@ refused is **two**, not three:
   localStorage. Saving it would mean the *asker* being re-entrant — able to ask
   again from saved state — which is per-asker work rather than one mechanism.
 
-#### A bot hoards travel vouchers, and nobody can trade one
+#### A bot never spends a travel voucher
 
-*Added in M12b.* Holdings work: a game gives a player something the engine has
-never heard of, and it is saved, transferred or forfeited on bankruptcy, counted
-by an invariant, and worth something — `estateValue` counts it, so it can decide
-a round-limited game.
+*Narrowed in M13b — the trading half is closed.* A `TradeOffer` carries
+`fromHoldings` / `toHoldings`, so anything a game hands out can be put on the
+table: `validateTrade` refuses what a player does not hold and refuses an offer
+that would take the receiver past the kind's limit (a trade must not be the way
+round a cap), `executeTrade` moves them through `giveHolding` / `takeHolding`,
+and the trade panel grows a stepper row per kind. A bot prices them at the
+kind's declared `value` when judging an offer.
 
-Two things are missing, and they are the same shape.
+What is left is **spending**. A bot still never plays a voucher, because valuing
+a held thing generalises and *playing* one does not — a travel voucher is played
+by choosing where on the board you would like to be, and no generic policy
+answers that well. Bots also do not yet *propose* a trade containing one: they
+accept and price them, but `proposeTrade` builds offers out of deeds and cash.
 
-**A bot never spends one.** Valuing a holding generalises; *playing* one does
-not, because a travel voucher is played by choosing where on the board you would
-like to be, and no generic policy answers that well. So bots draw them, hold them
-to the limit of four and never use them, while a person plays one from the
-inventory. It costs them little, but a bots-only Ultimate game ends with vouchers
-unspent — which is why the simulator's numbers for it are a floor rather than a
-verdict.
-
-**Nobody can offer one in a trade.** A `TradeOffer` is deeds and cash; holdings
-are not in it, so the only way one changes hands is a bankruptcy. Both fixes are
-per-game or per-panel work rather than a gap in the mechanism.
+Both are per-game work rather than gaps in the mechanism, and the seam is
+already there: `GameScene.SPENDABLE` maps a kind to the tile effect that plays
+it, and `askChoice` gives a bot the heaviest option when one is asked.
 
 #### Stock certificates and Roll Three cards are still reduced
 
